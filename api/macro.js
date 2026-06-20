@@ -187,7 +187,7 @@ export default async function handler(req, res) {
   const errors = [];
   const indicators = {};
 
-  // ── FRED: 6 series en paralelo ──
+  // ── FRED: 6 series en paralelo (participan en el score) ──
   const [dgs10, dgs2, dff, bbb, cpi, m2v] = await Promise.allSettled([
     fetchFredSeries('DGS10', apiKey, 5),
     fetchFredSeries('DGS2', apiKey, 5),
@@ -195,6 +195,22 @@ export default async function handler(req, res) {
     fetchFredSeries('BAMLC0A4CBBB', apiKey, 5),
     fetchFredSeries('CPIAUCSL', apiKey, 14),
     fetchFredSeries('M2V', apiKey, 5)
+  ]);
+
+  // ── FRED: series de SEGUIMIENTO (1.2) — informativas, NO participan
+  // en el cálculo del score total. Alta frecuencia, pensadas para
+  // detectar pronto cuándo la foto macro de 1.1 empieza a cambiar.
+  // Inflación esperada a dos horizontes: 1 año (capta el shock
+  // inmediato) y 5 años (si el mercado cree que ese shock se queda
+  // pegado o es transitorio — la misma lógica de contagio estructural
+  // de las ventanas 0-3/3-6/6+ meses). EXPINF1YR es mensual (modelo
+  // Cleveland Fed, no breakeven puro); T5YIE es diario (breakeven de
+  // mercado puro, nominal vs TIPS). ──
+  const [highYield, breakeven5y, expectedInf1y, claims] = await Promise.allSettled([
+    fetchFredSeries('BAMLH0A0HYM2', apiKey, 5),
+    fetchFredSeries('T5YIE', apiKey, 5),
+    fetchFredSeries('EXPINF1YR', apiKey, 3),
+    fetchFredSeries('ICSA', apiKey, 5)
   ]);
 
   // Curva USD (10Y - 2Y)
@@ -401,6 +417,72 @@ export default async function handler(req, res) {
     detail: 'Valor manual — BIS Credit Impulse'
   };
 
+  // ── Indicadores de SEGUIMIENTO (1.2) ──
+  // Informativos, no llevan score ni peso: no participan en el cálculo
+  // del score total (−17/+17). Sirven para vigilar el día a día y
+  // detectar pronto si la foto macro de 1.1 empieza a moverse.
+  const seguimiento = {};
+
+  if (highYield.status === 'fulfilled' && highYield.value[0]) {
+    seguimiento.highYieldSpread = {
+      label: 'High Yield Spread (OAS)',
+      value: highYield.value[0].value,
+      unit: '%',
+      date: highYield.value[0].date,
+      detail: 'FRED BAMLH0A0HYM2 — primero en moverse en pánico de crédito'
+    };
+  } else {
+    errors.push('highYieldSpread: ' + (highYield.reason?.message || highYield.reason));
+  }
+
+  if (expectedInf1y.status === 'fulfilled' && expectedInf1y.value[0]) {
+    seguimiento.inflacionEsperada1y = {
+      label: 'Inflación Esperada 1Y',
+      value: expectedInf1y.value[0].value,
+      unit: '%',
+      date: expectedInf1y.value[0].date,
+      detail: 'FRED EXPINF1YR — modelo Cleveland Fed, mensual. Capta el shock inmediato'
+    };
+  } else {
+    errors.push('inflacionEsperada1y: ' + (expectedInf1y.reason?.message || expectedInf1y.reason));
+  }
+
+  if (breakeven5y.status === 'fulfilled' && breakeven5y.value[0]) {
+    seguimiento.inflacionEsperada5y = {
+      label: 'Inflación Esperada 5Y (breakeven)',
+      value: breakeven5y.value[0].value,
+      unit: '%',
+      date: breakeven5y.value[0].date,
+      detail: 'FRED T5YIE — breakeven de mercado, diario. Si el shock se queda pegado o es transitorio'
+    };
+  } else {
+    errors.push('inflacionEsperada5y: ' + (breakeven5y.reason?.message || breakeven5y.reason));
+  }
+
+  if (claims.status === 'fulfilled' && claims.value[0]) {
+    seguimiento.paroSemanalUS = {
+      label: 'Solicitudes de Paro Semanales (US)',
+      value: claims.value[0].value,
+      unit: '',
+      date: claims.value[0].date,
+      detail: 'FRED ICSA — ajustado estacionalmente'
+    };
+  } else {
+    errors.push('paroSemanalUS: ' + (claims.reason?.message || claims.reason));
+  }
+
+  // Paro semanal zona euro: no existe serie semanal comparable a ICSA en
+  // FRED (Eurostat publica con frecuencia mensual). Queda pendiente como
+  // manual hasta encontrar una fuente de mayor frecuencia.
+  seguimiento.paroSemanalEUR = {
+    label: 'Paro Zona Euro',
+    value: null,
+    unit: '',
+    date: null,
+    manual: true,
+    detail: 'Pendiente — Eurostat solo publica con frecuencia mensual, sin serie semanal equivalente a ICSA'
+  };
+
   // ── Cálculo de score total ──
   let scoreAdelantados = 0;
   let scoreMonetarios = 0;
@@ -494,6 +576,7 @@ export default async function handler(req, res) {
     riesgoContagio,
     fearGreed,
     indicators,
+    seguimiento,
     errors: errors.length > 0 ? errors : undefined
   });
 }

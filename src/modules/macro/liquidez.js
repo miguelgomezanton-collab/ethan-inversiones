@@ -1,10 +1,8 @@
 // ═══════════════════════════════════════════════
 // MÓDULO: Liquidez Global (1.3)
-// M2 US (FRED) con histórico — proxy de M2 Global hasta integrar
-// ECB + PBOC + BoJ.
+// Monitor de lo que mueve la bolsa por el lado de flujo de dinero:
+// M2 (proxy US), Velocidad de M2 y Reservas Bancarias.
 // ═══════════════════════════════════════════════
-
-let chartLib = null; // reservado para cuando /api/macro exponga histórico
 
 export async function render(container, { actionsSlot }) {
   actionsSlot.innerHTML = `<button class="btn btn-primary" id="btn-refresh-liq">↻ Actualizar</button>`;
@@ -35,6 +33,7 @@ export async function render(container, { actionsSlot }) {
 
   function paint(macro) {
     const m2 = macro.indicators.m2Global;
+    const velocidad = macro.indicators.velocidadM2;
     const reservas = macro.indicators.reservasBancarias;
 
     el.innerHTML = `
@@ -43,6 +42,11 @@ export async function render(container, { actionsSlot }) {
           <div class="kpi-label">M2 (proxy US)</div>
           <div class="kpi-value ${m2?.score >= 0 ? 'up' : 'down'}">${m2 ? (m2.value >= 0 ? '+' : '') + m2.value + '%' : '—'}</div>
           <div class="kpi-sub">YoY — ${m2?.date || '—'}</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Velocidad M2</div>
+          <div class="kpi-value ${velocidad?.score >= 0 ? 'up' : 'down'}">${velocidad ? (velocidad.value >= 0 ? '+' : '') + velocidad.value + '%' : '—'}</div>
+          <div class="kpi-sub">${velocidad?.detail || ''}</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Reservas Bancarias</div>

@@ -1,18 +1,25 @@
 // ═══════════════════════════════════════════════
 // MÓDULO: Indicadores de Seguimiento (1.2)
-// Tabla completa de los 8 indicadores monetarios ponderados.
+// Vigilancia de alta frecuencia: spreads de crédito, inflación
+// esperada y mercado laboral. Son señales de alerta temprana para
+// detectar cuándo la foto macro de 1.1 empieza a moverse — NO
+// recalculan el score total (eso sigue viviendo en /api/macro,
+// igual que siempre, sin importar en qué pestaña se muestre cada
+// indicador).
 // ═══════════════════════════════════════════════
 
 import { getMacroData } from './macro-data.js';
 
-const MONETARIOS_KEYS = [
-  'm2Global', 'creditoVsNominal', 'impulsoCrediticio', 'velocidadM2',
-  'reservasBancarias', 'tipoReal', 'bbbSpread', 'putCall'
-];
+// Indicadores "Monetarios" del backend que se muestran aquí porque son
+// señales de seguimiento de ciclo crediticio (BBB ya vivía aquí; los
+// otros dos siguen sin fuente automática y quedan en su propio bloque
+// de pendientes, no se mueven a Liquidez ni se ocultan).
+const SEGUIMIENTO_SCORED_KEYS = ['bbbSpread'];
+const PENDIENTES_KEYS = ['creditoVsNominal', 'impulsoCrediticio', 'putCall'];
 
 export async function render(container, { actionsSlot }) {
   actionsSlot.innerHTML = `
-    <button class="btn" id="btn-edit-manual">✎ Editar manuales</button>
+    <button class="btn" id="btn-edit-manual">✎ Editar pendientes</button>
     <button class="btn btn-primary" id="btn-refresh">↻ Actualizar</button>
   `;
 
@@ -40,6 +47,8 @@ export async function render(container, { actionsSlot }) {
     }
   }
 
+  // curvaEUR se preserva si ya había un override antiguo guardado, pero
+  // ya no se pregunta desde este módulo (ver nota más abajo en el listener).
   async function getMacroDataWithOverrides(forceRefresh) {
     const params = new URLSearchParams();
     if (manualOverrides.creditoVsNominal !== undefined) params.set('creditoVsNominal', manualOverrides.creditoVsNominal);
@@ -58,61 +67,99 @@ export async function render(container, { actionsSlot }) {
     return getMacroData(forceRefresh);
   }
 
-  function paint(macro) {
-    const scoreColor = macro.scoreMonetarios >= 4 ? 'var(--green)' : macro.scoreMonetarios >= 0 ? 'var(--amber)' : 'var(--red)';
+  function fmtValue(ind, decimals = null) {
+    if (ind?.value === null || ind?.value === undefined) return 'Sin dato';
+    const v = decimals !== null ? ind.value.toFixed(decimals) : ind.value;
+    return `${ind.value > 0 && ind.unit !== '' ? '+' : ''}${v}${ind.unit}`;
+  }
 
-    const rows = MONETARIOS_KEYS
-      .map(k => macro.indicators[k])
+  function paint(macro) {
+    const seg = macro.seguimiento || {};
+    const hy = seg.highYieldSpread;
+    const inf1y = seg.inflacionEsperada1y;
+    const inf5y = seg.inflacionEsperada5y;
+    const claims = seg.paroSemanalUS;
+    const claimsParo = seg.paroSemanalEUR;
+    const bbb = macro.indicators.bbbSpread;
+
+    // ── Tarjetas de alerta temprana ──
+    const alertCards = `
+      <div class="kpi-row" style="grid-template-columns:repeat(5,1fr);">
+        <div class="kpi-card">
+          <div class="kpi-label">High Yield Spread</div>
+          <div class="kpi-value">${fmtValue(hy, 2)}</div>
+          <div class="kpi-sub">${hy?.date || '—'} · primero en moverse en pánico</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">BBB Spread</div>
+          <div class="kpi-value">${fmtValue(bbb)}</div>
+          <div class="kpi-sub">${bbb?.date || '—'} · investment grade</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Inflación Esperada 1Y</div>
+          <div class="kpi-value">${fmtValue(inf1y, 2)}</div>
+          <div class="kpi-sub">${inf1y?.date || '—'} · shock inmediato (mensual)</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Inflación Esperada 5Y</div>
+          <div class="kpi-value">${fmtValue(inf5y, 2)}</div>
+          <div class="kpi-sub">${inf5y?.date || '—'} · ¿se queda pegado o es transitorio?</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Paro Semanal (US)</div>
+          <div class="kpi-value">${claims?.value !== null && claims?.value !== undefined ? Number(claims.value).toLocaleString('es-ES') : 'Sin dato'}</div>
+          <div class="kpi-sub">${claims?.date || '—'} · initial claims</div>
+        </div>
+      </div>
+    `;
+
+    // ── Tabla de seguimiento (sin score, son informativos) ──
+    const seguimientoRows = [hy, bbb, inf1y, inf5y, claims, claimsParo]
       .filter(Boolean)
-      .map(ind => {
-        const pondScore = ind.score !== null ? ind.score * ind.weight : null;
-        const signColor = ind.score > 0 ? 'good' : ind.score < 0 ? 'bad' : 'warn';
-        const valueStr = ind.value !== null && ind.value !== undefined
-          ? `${ind.value > 0 && ind.unit !== '' ? '+' : ''}${ind.value}${ind.unit}`
-          : '— (sin dato)';
-        return `
-          <tr>
-            <td style="text-align:left">
-              ${ind.label}${ind.manual ? ' <span class="tag warn" style="margin-left:6px;">manual</span>' : ''}
-              ${ind.detail ? `<div style="font-size:9px;color:var(--text3);margin-top:2px;">${ind.detail}</div>` : ''}
-            </td>
-            <td>${valueStr}</td>
-            <td>×${ind.weight}</td>
-            <td><span class="tag ${ind.score === null ? '' : signColor}">${ind.score === null ? 'N/D' : (ind.score > 0 ? '+' + ind.score : ind.score)}</span></td>
-            <td style="font-weight:600;">${pondScore === null ? '—' : (pondScore > 0 ? '+' + pondScore : pondScore)}</td>
-          </tr>
-        `;
-      }).join('');
+      .map(ind => `
+        <tr>
+          <td style="text-align:left">
+            ${ind.label}${ind.manual ? ' <span class="tag warn" style="margin-left:6px;">pendiente</span>' : ''}
+            ${ind.detail ? `<div style="font-size:9px;color:var(--text3);margin-top:2px;">${ind.detail}</div>` : ''}
+          </td>
+          <td>${fmtValue(ind, ind === claims ? 0 : null)}</td>
+          <td>${ind.date || '—'}</td>
+        </tr>
+      `).join('');
 
     el.innerHTML = `
-      <div class="kpi-row">
-        <div class="kpi-card">
-          <div class="kpi-label">Score Monetarios</div>
-          <div class="kpi-value" style="color:${scoreColor}">${macro.scoreMonetarios >= 0 ? '+' : ''}${macro.scoreMonetarios}/${macro.maxMonetarios}</div>
-          <div class="kpi-sub">8 indicadores ponderados</div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-label">Velocidad M2</div>
-          <div class="kpi-value ${macro.indicators.velocidadM2?.score >= 0 ? 'up' : 'down'}">${macro.indicators.velocidadM2?.value ?? '—'}%</div>
-          <div class="kpi-sub">FRED M2V</div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-label">Put/Call Ratio</div>
-          <div class="kpi-value ${macro.indicators.putCall?.score === null || macro.indicators.putCall?.score === undefined ? '' : (macro.indicators.putCall.score >= 0 ? 'up' : 'down')}">${macro.indicators.putCall?.value ?? 'Sin dato'}</div>
-          <div class="kpi-sub">Manual — CBOE</div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-label">BBB Spreads</div>
-          <div class="kpi-value ${macro.indicators.bbbSpread?.score >= 0 ? 'up' : 'down'}">${macro.indicators.bbbSpread?.value ?? '—'}%</div>
-          <div class="kpi-sub">FRED BAMLC0A4CBBB</div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 18px;margin-bottom:20px;">
+        <div style="font-size:11px;color:var(--text2);line-height:1.7;">
+          Esta sección vigila el día a día para detectar pronto si la foto macro de 1.1 Coyuntura empieza a moverse.
+          Los indicadores aquí mostrados son informativos y <strong style="color:var(--text1);">no participan en el score total</strong>.
         </div>
       </div>
 
-      <div class="section-title">Indicadores Monetarios Ponderados</div>
+      ${alertCards}
+
+      <div class="section-title" style="margin-top:24px;">Seguimiento de Alta Frecuencia</div>
       <table class="data-table">
-        <thead><tr><th>Indicador</th><th>Valor</th><th>Peso</th><th>Score</th><th>Ponderado</th></tr></thead>
-        <tbody>${rows}</tbody>
+        <thead><tr><th>Indicador</th><th>Valor</th><th>Fecha</th></tr></thead>
+        <tbody>${seguimientoRows}</tbody>
       </table>
+
+      <div class="section-title" style="margin-top:24px;">Pendientes de Clasificar</div>
+      <div style="background:var(--surface);border:1px dashed var(--border);border-radius:10px;padding:14px 18px;margin-bottom:8px;">
+        <div style="font-size:11px;color:var(--text2);line-height:1.7;margin-bottom:10px;">
+          Estos indicadores sí forman parte del score total (categoría Monetarios), pero aún no tienen fuente
+          automática ni una ubicación visual definitiva entre Seguimiento y Liquidez.
+        </div>
+        ${PENDIENTES_KEYS.map(k => {
+          const ind = macro.indicators[k];
+          if (!ind) return '';
+          return `
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border);font-size:11px;">
+              <span>${ind.label}</span>
+              <span style="font-family:var(--mono);color:${ind.value === null ? 'var(--text3)' : 'var(--text1)'}">${fmtValue(ind)}</span>
+            </div>
+          `;
+        }).join('')}
+      </div>
 
       ${macro.errors ? `
         <div class="section-title" style="margin-top:24px;color:var(--amber);">⚠ Avisos</div>
@@ -129,14 +176,8 @@ export async function render(container, { actionsSlot }) {
     const impulsoCrediticio = prompt('Impulso Crediticio (valor numérico, positivo o negativo):', manualOverrides.impulsoCrediticio ?? '');
     const putCall = prompt('Put/Call Ratio (CBOE — consulta cboe.com/delayed_quotes o tu bróker):', manualOverrides.putCall ?? '');
 
-    // Nota: Curva EUR ya no se edita aquí — viene siempre del ECB Data
-    // Portal (indicador Adelantado, vive en 1.1 Coyuntura). Si en el
-    // futuro se necesita forzar un override, debe gestionarse desde ahí,
-    // no mezclado con los manuales Monetarios de esta sección.
-    manualOverrides = {
-      curvaEUR: manualOverrides.curvaEUR // se preserva si ya existía, pero no se vuelve a preguntar aquí
-    };
-    if (manualOverrides.curvaEUR === undefined) delete manualOverrides.curvaEUR;
+    // Nota: Curva EUR (1.1) ya no se edita desde aquí — viene siempre
+    // del ECB Data Portal automáticamente.
     if (creditoVsNominal !== null && creditoVsNominal !== '') manualOverrides.creditoVsNominal = parseFloat(creditoVsNominal);
     if (impulsoCrediticio !== null && impulsoCrediticio !== '') manualOverrides.impulsoCrediticio = parseFloat(impulsoCrediticio);
     if (putCall !== null && putCall !== '') manualOverrides.putCall = parseFloat(putCall);
