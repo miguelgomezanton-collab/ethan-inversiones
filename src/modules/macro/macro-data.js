@@ -4,15 +4,13 @@
 
 let cachedMacro = null;
 let cachedMacroAt = 0;
-let cachedFearGreed = null;
-let cachedFearGreedAt = 0;
 
 const CACHE_MS = 5 * 60 * 1000; // 5 minutos
 
 /**
- * Llama a /api/macro (nuestra función serverless con FRED + CBOE + LEI).
- * Cachea en memoria 5 min para no disparar la API en cada navegación entre
- * sub-páginas de Macro.
+ * Llama a /api/macro (nuestra función serverless con FRED + CBOE + LEI +
+ * CNN Fear & Greed). Cachea en memoria 5 min para no disparar la API en
+ * cada navegación entre sub-páginas de Macro.
  */
 export async function getMacroData(forceRefresh = false) {
   const now = Date.now();
@@ -27,23 +25,6 @@ export async function getMacroData(forceRefresh = false) {
   const data = await res.json();
   cachedMacro = data;
   cachedMacroAt = now;
-  return data;
-}
-
-/**
- * Llama directamente a feargreedchart.com (tiene CORS habilitado, no
- * necesita pasar por nuestro proxy serverless).
- */
-export async function getFearGreed(forceRefresh = false) {
-  const now = Date.now();
-  if (!forceRefresh && cachedFearGreed && (now - cachedFearGreedAt) < CACHE_MS) {
-    return cachedFearGreed;
-  }
-  const res = await fetch('https://feargreedchart.com/api/?action=all');
-  if (!res.ok) throw new Error(`Fear & Greed: HTTP ${res.status}`);
-  const data = await res.json();
-  cachedFearGreed = data;
-  cachedFearGreedAt = now;
   return data;
 }
 

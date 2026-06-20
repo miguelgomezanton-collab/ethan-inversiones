@@ -1,10 +1,10 @@
 // ═══════════════════════════════════════════════
 // MÓDULO: Coyuntura Macroeconómica (1.1)
-// Conectado a FRED + CBOE + Conference Board (vía /api/macro)
-// y Fear & Greed Index (feargreedchart.com, directo).
+// Conectado a FRED + CBOE + Conference Board + CNN Fear & Greed
+// (todo vía /api/macro).
 // ═══════════════════════════════════════════════
 
-import { getMacroData, getFearGreed, fearGreedLabel, fearGreedColor } from './macro-data.js';
+import { getMacroData, fearGreedLabel, fearGreedColor } from './macro-data.js';
 
 export async function render(container, { actionsSlot }) {
   actionsSlot.innerHTML = `<button class="btn btn-primary" id="btn-refresh-macro">↻ Actualizar</button>`;
@@ -15,36 +15,21 @@ export async function render(container, { actionsSlot }) {
   async function load(forceRefresh = false) {
     el.innerHTML = `<div class="empty"><div class="loader-ring"></div></div>`;
     try {
-      const [macro, fearGreed] = await Promise.allSettled([
-        getMacroData(forceRefresh),
-        getFearGreed(forceRefresh)
-      ]);
-
-      if (macro.status === 'rejected') {
-        el.innerHTML = `
-          <div class="empty">
-            <div class="empty-icon">⚠</div>
-            <div class="empty-title">No se pudo cargar el score macro</div>
-            <div class="empty-desc">${macro.reason.message}</div>
-          </div>
-        `;
-        return;
-      }
-
-      paint(macro.value, fearGreed.status === 'fulfilled' ? fearGreed.value : null);
+      const macro = await getMacroData(forceRefresh);
+      paint(macro);
     } catch (err) {
       el.innerHTML = `
         <div class="empty">
           <div class="empty-icon">⚠</div>
-          <div class="empty-title">Error al cargar datos macro</div>
+          <div class="empty-title">No se pudo cargar el score macro</div>
           <div class="empty-desc">${err.message}</div>
         </div>
       `;
     }
   }
 
-  function paint(macro, fearGreed) {
-    const fgScore = fearGreed?.score?.score ?? null;
+  function paint(macro) {
+    const fgScore = macro.fearGreed?.score ?? null;
     const fgLabel = fgScore !== null ? fearGreedLabel(fgScore) : '—';
     const fgColor = fgScore !== null ? fearGreedColor(fgScore) : 'var(--text3)';
 
@@ -65,7 +50,7 @@ export async function render(container, { actionsSlot }) {
           <div class="kpi-sub">${macro.zone.emoji} ${macro.zone.label}</div>
         </div>
         <div class="kpi-card">
-          <div class="kpi-label">Fear &amp; Greed</div>
+          <div class="kpi-label">Fear &amp; Greed (CNN)</div>
           <div class="kpi-value" style="color:${fgColor}">${fgScore ?? '—'}</div>
           <div class="kpi-sub">${fgLabel}</div>
         </div>

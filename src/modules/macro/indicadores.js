@@ -45,6 +45,7 @@ export async function render(container, { actionsSlot }) {
     if (manualOverrides.creditoVsNominal !== undefined) params.set('creditoVsNominal', manualOverrides.creditoVsNominal);
     if (manualOverrides.impulsoCrediticio !== undefined) params.set('impulsoCrediticio', manualOverrides.impulsoCrediticio);
     if (manualOverrides.curvaEUR !== undefined) params.set('curvaEUR', manualOverrides.curvaEUR);
+    if (manualOverrides.putCall !== undefined) params.set('putCall', manualOverrides.putCall);
 
     if (params.toString()) {
       const res = await fetch('/api/macro?' + params.toString());
@@ -97,8 +98,8 @@ export async function render(container, { actionsSlot }) {
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Put/Call Ratio</div>
-          <div class="kpi-value ${macro.indicators.putCall?.score >= 0 ? 'up' : 'down'}">${macro.indicators.putCall?.value ?? '—'}</div>
-          <div class="kpi-sub">CBOE — ${macro.indicators.putCall?.date || '—'}</div>
+          <div class="kpi-value ${macro.indicators.putCall?.score === null || macro.indicators.putCall?.score === undefined ? '' : (macro.indicators.putCall.score >= 0 ? 'up' : 'down')}">${macro.indicators.putCall?.value ?? 'Sin dato'}</div>
+          <div class="kpi-sub">Manual — CBOE</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">BBB Spreads</div>
@@ -126,12 +127,14 @@ export async function render(container, { actionsSlot }) {
   document.getElementById('btn-edit-manual').addEventListener('click', () => {
     const creditoVsNominal = prompt('Crédito vs Nominal GDP (%):', manualOverrides.creditoVsNominal ?? '');
     const impulsoCrediticio = prompt('Impulso Crediticio (valor numérico, positivo o negativo):', manualOverrides.impulsoCrediticio ?? '');
-    const curvaEUR = prompt('Curva EUR 10Y-2Y (%):', manualOverrides.curvaEUR ?? '0.70');
+    const curvaEUR = prompt('Curva EUR 10Y-2Y (%) — déjalo vacío para usar el dato automático del ECB, o escribe un valor para forzarlo:', manualOverrides.curvaEUR ?? '');
+    const putCall = prompt('Put/Call Ratio (CBOE — consulta cboe.com/delayed_quotes o tu bróker):', manualOverrides.putCall ?? '');
 
     manualOverrides = {};
     if (creditoVsNominal !== null && creditoVsNominal !== '') manualOverrides.creditoVsNominal = parseFloat(creditoVsNominal);
     if (impulsoCrediticio !== null && impulsoCrediticio !== '') manualOverrides.impulsoCrediticio = parseFloat(impulsoCrediticio);
     if (curvaEUR !== null && curvaEUR !== '') manualOverrides.curvaEUR = parseFloat(curvaEUR);
+    if (putCall !== null && putCall !== '') manualOverrides.putCall = parseFloat(putCall);
 
     sessionStorage.setItem('ethan_macro_manual', JSON.stringify(manualOverrides));
     load(true);

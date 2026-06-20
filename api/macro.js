@@ -11,8 +11,17 @@
 // Variable de entorno requerida en Vercel: FRED_API_KEY
 
 const FRED_BASE = 'https://api.stlouisfed.org/fred/series/observations';
-const CBOE_PUTCALL_URL = 'https://cdn.cboe.com/resources/options/volume_and_call_put_ratios/totalpc.csv';
 const LEI_URL = 'https://www.conference-board.org/topics/us-leading-indicators/';
+const FEAR_GREED_URL = 'https://production.dataviz.cnn.io/index/fearandgreed/graphdata';
+// Curva EUR (10Y-2Y): spread ya calculado por el propio ECB sobre la curva
+// soberana AAA de la zona euro (modelo Svensson). Gratis, sin API key.
+const ECB_CURVA_EUR_URL = 'https://data-api.ecb.europa.eu/service/data/YC/B.U2.EUR.4F.G_N_A.SV_C_YM.SRS_10Y_2Y?lastNObservations=1&format=csvdata';
+
+// NOTA: Put/Call Ratio (CBOE) — el CSV público de cdn.cboe.com que se usaba
+// como fuente quedó descontinuado en 2019 (Cboe dejó de actualizar esa serie
+// legacy). No existe alternativa gratuita y viva conocida a fecha de hoy,
+// así que este indicador pasa a ser MANUAL (igual que curva EUR e impulso
+// crediticio) hasta encontrar una fuente fiable.
 
 // ───────────────────────────────────────────────
 // Helpers de fetch
@@ -29,20 +38,6 @@ async function fetchFredSeries(seriesId, apiKey, limit = 14) {
   return obs; // más reciente primero
 }
 
-async function fetchLatestPutCall() {
-  const res = await fetch(CBOE_PUTCALL_URL);
-  if (!res.ok) throw new Error(`CBOE: HTTP ${res.status}`);
-  const text = await res.text();
-  const lines = text.trim().split('\n').filter(l => /^\d{1,2}\/\d{1,2}\/\d{4}/.test(l));
-  if (lines.length === 0) throw new Error('CBOE: no se encontraron filas de datos');
-  const lastLine = lines[lines.length - 1];
-  const parts = lastLine.split(',');
-  const date = parts[0];
-  const ratio = parseFloat(parts[4]);
-  if (isNaN(ratio)) throw new Error('CBOE: no se pudo parsear el ratio');
-  return { date, ratio };
-}
-
 async function fetchLEI() {
   const res = await fetch(LEI_URL, {
     headers: { 'User-Agent': 'Mozilla/5.0 (compatible; EthanMercados/1.0)' }
@@ -55,6 +50,51 @@ async function fetchLEI() {
   const sign = match[1] === '-' || match[1] === '−' ? -1 : 1;
   const value = sign * parseFloat(match[2]);
   return { value, raw: match[0] };
+}
+
+async function fetchFearGreed() {
+  // Endpoint interno no documentado que usa la propia página de CNN
+  // (edition.cnn.com/markets/fear-and-greed). No tiene CORS habilitado
+  // para llamadas desde el navegador, así que pasa por nuestro proxy.
+  const res = await fetch(FEAR_GREED_URL, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; EthanMercados/1.0)', 'Accept': 'application/json' }
+  });
+  if (!res.ok) throw new Error(`CNN Fear & Greed: HTTP ${res.status}`);
+  const data = await res.json();
+  const fg = data.fear_and_greed;
+  if (!fg || typeof fg.score !== 'number') throw new Error('CNN Fear & Greed: formato de respuesta inesperado');
+  return {
+    score: Math.round(fg.score),
+    rating: fg.rating,
+    timestamp: fg.timestamp,
+    previousClose: fg.previous_close !== undefined ? Math.round(fg.previous_close) : null,
+    previousWeek: fg.previous_1_week !== undefined ? Math.round(fg.previous_1_week) : null,
+    previousMonth: fg.previous_1_month !== undefined ? Math.round(fg.previous_1_month) : null,
+    previousYear: fg.previous_1_year !== undefined ? Math.round(fg.previous_1_year) : null
+  };
+}
+
+async function fetchCurvaEUR() {
+  // ECB Data Portal (SDMX API), gratuita y sin API key. Serie YC con el
+  // spread 10Y-2Y ya calculado por el propio ECB sobre la curva soberana
+  // AAA de la zona euro (modelo Svensson). Devuelve CSV con cabecera +
+  // una fila de datos (pedimos solo la última observación).
+  const res = await fetch(ECB_CURVA_EUR_URL, {
+    headers: { 'Accept': 'text/csv' }
+  });
+  if (!res.ok) throw new Error(`ECB: HTTP ${res.status}`);
+  const text = await res.text();
+  const lines = text.trim().split('\n');
+  if (lines.length < 2) throw new Error('ECB: respuesta sin datos');
+  const headers = lines[0].split(',');
+  const lastLine = lines[lines.length - 1].split(',');
+  const dateIdx = headers.indexOf('TIME_PERIOD');
+  const valueIdx = headers.indexOf('OBS_VALUE');
+  if (dateIdx === -1 || valueIdx === -1) throw new Error('ECB: formato CSV inesperado');
+  const date = lastLine[dateIdx];
+  const value = parseFloat(lastLine[valueIdx]);
+  if (isNaN(value)) throw new Error('ECB: no se pudo parsear el valor');
+  return { date, value: +value.toFixed(2) };
 }
 
 // ───────────────────────────────────────────────
@@ -102,6 +142,7 @@ function scoreBBBSpread(spreadPct) {
 }
 
 function scorePutCall(ratio) {
+  if (ratio === null || ratio === undefined) return null;
   if (ratio > 1.0) return 1;
   if (ratio < 0.7) return -1;
   return 0;
@@ -135,10 +176,13 @@ export default async function handler(req, res) {
   }
 
   // Inputs manuales opcionales (curva EUR, crédito vs nominal, impulso crediticio)
-  // pasados como query params por el frontend si el usuario los ha editado
-  const curvaEURManual = req.query.curvaEUR ? parseFloat(req.query.curvaEUR) : 0.70;
+  // pasados como query params por el frontend si el usuario los ha editado.
+  // curvaEUR ahora se obtiene en vivo del ECB; el query param solo se usa
+  // como override manual si el usuario explícitamente quiere forzar un valor.
+  const curvaEURManual = req.query.curvaEUR ? parseFloat(req.query.curvaEUR) : null;
   const creditoVsNominalManual = req.query.creditoVsNominal ? parseFloat(req.query.creditoVsNominal) : null;
   const impulsoCrediticioManual = req.query.impulsoCrediticio ? parseFloat(req.query.impulsoCrediticio) : null;
+  const putCallManual = req.query.putCall ? parseFloat(req.query.putCall) : null; // sin dato por defecto — requiere input manual del usuario
 
   const errors = [];
   const indicators = {};
@@ -171,17 +215,35 @@ export default async function handler(req, res) {
     errors.push('curvaUSD: ' + (dgs10.reason || dgs2.reason));
   }
 
-  // Curva EUR (manual)
-  indicators.curvaEUR = {
-    label: 'Curva EUR (10Y−2Y)',
-    value: curvaEURManual,
-    unit: '%',
-    date: null,
-    score: scoreCurva(curvaEURManual),
-    weight: 1,
-    manual: true,
-    detail: 'Valor manual — sin API gratuita disponible (ECB)'
-  };
+  // Curva EUR (10Y-2Y) — real, vía ECB Data Portal. Si el usuario fuerza
+  // un valor manual (override), se usa ese en su lugar.
+  if (curvaEURManual !== null) {
+    indicators.curvaEUR = {
+      label: 'Curva EUR (10Y−2Y)',
+      value: curvaEURManual,
+      unit: '%',
+      date: null,
+      score: scoreCurva(curvaEURManual),
+      weight: 1,
+      manual: true,
+      detail: 'Valor manual (override del usuario)'
+    };
+  } else {
+    try {
+      const eur = await fetchCurvaEUR();
+      indicators.curvaEUR = {
+        label: 'Curva EUR (10Y−2Y)',
+        value: eur.value,
+        unit: '%',
+        date: eur.date,
+        score: scoreCurva(eur.value),
+        weight: 1,
+        detail: 'ECB — curva soberana AAA zona euro (Svensson)'
+      };
+    } catch (e) {
+      errors.push('curvaEUR: ' + e.message);
+    }
+  }
 
   // Tipo Real = FFR - CPI YoY
   if (dff.status === 'fulfilled' && cpi.status === 'fulfilled' && dff.value[0] && cpi.value.length >= 13) {
@@ -278,20 +340,19 @@ export default async function handler(req, res) {
     errors.push('reservasBancarias: ' + e.message);
   }
 
-  // ── CBOE: Put/Call Ratio ──
-  try {
-    const pc = await fetchLatestPutCall();
-    indicators.putCall = {
-      label: 'Put/Call Ratio',
-      value: pc.ratio,
-      unit: '',
-      date: pc.date,
-      score: scorePutCall(pc.ratio),
-      weight: 1
-    };
-  } catch (e) {
-    errors.push('putCall: ' + e.message);
-  }
+  // ── Put/Call Ratio (manual — CBOE descontinuó su CSV público en 2019) ──
+  indicators.putCall = {
+    label: 'Put/Call Ratio (CBOE)',
+    value: putCallManual,
+    unit: '',
+    date: null,
+    score: scorePutCall(putCallManual),
+    weight: 1,
+    manual: true,
+    detail: putCallManual === null
+      ? 'Sin dato — CBOE descontinuó el CSV público en 2019. Consulta cboe.com/delayed_quotes o tu bróker y edítalo manualmente.'
+      : 'Valor manual — CBOE descontinuó el CSV público en 2019'
+  };
 
   // ── Conference Board: LEI ──
   try {
@@ -307,6 +368,14 @@ export default async function handler(req, res) {
     };
   } catch (e) {
     errors.push('lei: ' + e.message);
+  }
+
+  // ── CNN: Fear & Greed Index ──
+  let fearGreed = null;
+  try {
+    fearGreed = await fetchFearGreed();
+  } catch (e) {
+    errors.push('fearGreed: ' + e.message);
   }
 
   // ── Manuales: Crédito vs Nominal, Impulso Crediticio ──
@@ -423,6 +492,7 @@ export default async function handler(req, res) {
     zone,
     probabilities,
     riesgoContagio,
+    fearGreed,
     indicators,
     errors: errors.length > 0 ? errors : undefined
   });
