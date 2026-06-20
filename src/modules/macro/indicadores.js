@@ -127,13 +127,18 @@ export async function render(container, { actionsSlot }) {
   document.getElementById('btn-edit-manual').addEventListener('click', () => {
     const creditoVsNominal = prompt('Crédito vs Nominal GDP (%):', manualOverrides.creditoVsNominal ?? '');
     const impulsoCrediticio = prompt('Impulso Crediticio (valor numérico, positivo o negativo):', manualOverrides.impulsoCrediticio ?? '');
-    const curvaEUR = prompt('Curva EUR 10Y-2Y (%) — déjalo vacío para usar el dato automático del ECB, o escribe un valor para forzarlo:', manualOverrides.curvaEUR ?? '');
     const putCall = prompt('Put/Call Ratio (CBOE — consulta cboe.com/delayed_quotes o tu bróker):', manualOverrides.putCall ?? '');
 
-    manualOverrides = {};
+    // Nota: Curva EUR ya no se edita aquí — viene siempre del ECB Data
+    // Portal (indicador Adelantado, vive en 1.1 Coyuntura). Si en el
+    // futuro se necesita forzar un override, debe gestionarse desde ahí,
+    // no mezclado con los manuales Monetarios de esta sección.
+    manualOverrides = {
+      curvaEUR: manualOverrides.curvaEUR // se preserva si ya existía, pero no se vuelve a preguntar aquí
+    };
+    if (manualOverrides.curvaEUR === undefined) delete manualOverrides.curvaEUR;
     if (creditoVsNominal !== null && creditoVsNominal !== '') manualOverrides.creditoVsNominal = parseFloat(creditoVsNominal);
     if (impulsoCrediticio !== null && impulsoCrediticio !== '') manualOverrides.impulsoCrediticio = parseFloat(impulsoCrediticio);
-    if (curvaEUR !== null && curvaEUR !== '') manualOverrides.curvaEUR = parseFloat(curvaEUR);
     if (putCall !== null && putCall !== '') manualOverrides.putCall = parseFloat(putCall);
 
     sessionStorage.setItem('ethan_macro_manual', JSON.stringify(manualOverrides));
