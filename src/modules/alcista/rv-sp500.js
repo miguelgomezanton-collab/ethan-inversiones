@@ -49,7 +49,8 @@ const PROXIES = [
 ];
 
 async function fetchOHLC(ticker) {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1y&events=history`;
+  // range=10y para tener suficientes datos mensuales para Stochastic(89)
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=10y&events=history`;
   for (const fn of PROXIES) {
     try {
       const r = await fetch(fn(url), { signal: AbortSignal.timeout(8000) });
@@ -162,9 +163,11 @@ function analyzeAsset(raw) {
     w_rsi[wi]>67, w_ema20[wi]&&W.closes[wi]>w_ema20[wi]
   ];
 
-  const score=mc_ok.filter(x=>x).length+sc_ok.filter(x=>x).length;
   const mensualOk=mc_ok.every(x=>x), semanalOk=sc_ok.every(x=>x);
   const dailyReady=d_macd.m[di]>d_macd.sl[di]&&d_macd.m[di-1]<=d_macd.sl[di-1]&&d_rsi[di]>57&&d_macd.m[di]>0;
+
+  // Score sobre 10: 5 mensuales + 4 semanales + 1 diaria (igual que el original)
+  const score=mc_ok.filter(x=>x).length + sc_ok.filter(x=>x).length + (dailyReady?1:0);
 
   let estado='watching';
   if (mensualOk&&semanalOk&&dailyReady) estado='ready';
@@ -315,7 +318,7 @@ export async function render(container, { actionsSlot }) {
             <tr>
               <td class="sc2-ticker">${r.ticker}</td>
               <td class="sc2-sector">${r.sector ? SECTOR_NAMES[r.sector] : '—'}</td>
-              <td class="sc2-score" style="color:${scoreColor(r.score)}">${r.score}/9</td>
+              <td class="sc2-score" style="color:${scoreColor(r.score)}">${r.score}/10</td>
               <td style="color:${r.estado==='ready'?'var(--green)':r.estado==='diario'?'var(--amber)':'var(--text3)'}">${estadoLabel[r.estado]||'—'}</td>
               <td class="sc2-price">${r.price ? r.price.toFixed(2) : '—'}</td>
               <td class="sc2-vol">${r.avgVol11 >= 1e6 ? (r.avgVol11/1e6).toFixed(1)+'M' : Math.round(r.avgVol11/1e3)+'k'}</td>
