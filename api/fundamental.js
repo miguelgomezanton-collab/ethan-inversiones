@@ -200,69 +200,87 @@ export default async function handler(req, res) {
     const price = data.price || {};
 
     // ── Extracción de datos financieros ─────────────
+    // financialData = datos TTM actualizados con nombres consistentes
+    // incomeStatementHistory = histórico anual para crecimientos YoY
+    // balanceSheetHistory = balance para equity, deuda
+    // cashflowStatementHistory = FCF
+    // defaultKeyStatistics = ratios de mercado (PER, PEG, EPS)
+
     const incCur  = inc[0] || {};
     const incPrev = inc[1] || {};
     const balCur  = bal[0] || {};
     const cfCur   = cf[0]  || {};
 
-    const revenue    = val(incCur.totalRevenue);
-    const revPrev    = val(incPrev.totalRevenue);
-    const ebit       = val(incCur.ebit);
-    const netIncome  = val(incCur.netIncome);
-    const grossProfit = val(incCur.grossProfit);
+    // ── Datos P&L — priorizar financialData (TTM) ──
+    const revenue   = val(fin.totalRevenue) || val(incCur.totalRevenue);
+    const revPrev   = val(incPrev.totalRevenue);
+    const ebitda    = val(fin.ebitda);
+    const ebit      = val(fin.ebit) || val(incCur.ebit) ||
+                      val(incCur.operatingIncome);
+    const netIncome = val(fin.netIncomeToCommon) || val(incCur.netIncome) ||
+                      val(incCur.netIncomeApplicableToCommonShares);
 
-    // EBITDA: Yahoo no siempre lo da directamente en incomeStatement,
-    // usamos ebitda de financialData o calculamos EBIT + D&A
-    const ebitdaFin   = val(fin.ebitda);
-    const da          = val(incCur.depreciationAndAmortization) || 0;
-    const ebitda      = ebitdaFin || (ebit !== null ? ebit + da : null);
+    // EBITDA año anterior para crecimiento YoY (aproximado)
+    const ebitPrev   = val(incPrev.ebit) || val(incPrev.operatingIncome);
+    const daPrev     = val(incPrev.depreciationAndAmortization) || 0;
+    const ebitdaPrev = ebitPrev !== null ? ebitPrev + daPrev : null;
 
-    // Año anterior para EBITDA (aproximado con EBIT + D&A)
-    const ebitPrev    = val(incPrev.ebit);
-    const daPrev      = val(incPrev.depreciationAndAmortization) || 0;
-    const ebitdaPrev  = ebitPrev !== null ? ebitPrev + daPrev : null;
+    // ── Márgenes — priorizar % directos de financialData ──
+    const opMarginPct  = val(fin.operatingMargins);  // ya viene en decimal (ej. 0.285)
+    const netMarginPct = val(fin.profitMargins);
+    const opMargin  = opMarginPct !== null ? opMarginPct * 100
+                      : (revenue && ebit ? (ebit / revenue) * 100 : null);
+    const netMargin = netMarginPct !== null ? netMarginPct * 100
+                      : (revenue && netIncome ? (netIncome / revenue) * 100 : null);
 
-    const fcf        = val(cfCur.freeCashFlow) ||
-                       (val(cfCur.totalCashFromOperatingActivities) && val(cfCur.capitalExpenditures)
-                         ? val(cfCur.totalCashFromOperatingActivities) + val(cfCur.capitalExpenditures)
-                         : null);
+    // ── FCF — priorizar financialData ──
+    const fcf = val(fin.freeCashflow) ||
+                val(cfCur.freeCashFlow) ||
+                (val(cfCur.totalCashFromOperatingActivities) !== null && val(cfCur.capitalExpenditures) !== null
+                  ? val(cfCur.totalCashFromOperatingActivities) + val(cfCur.capitalExpenditures)
+                  : null);
 
-    const equity     = val(balCur.totalStockholderEquity);
-    const totalDebt  = (val(balCur.longTermDebt) || 0) + (val(balCur.shortLongTermDebt) || 0);
-    const cash       = val(balCur.cash) || val(balCur.totalCash) || 0;
+    // ── Balance — Yahoo da equity solo en balanceSheetHistory ──
+    const equityBal = val(balCur.totalStockholderEquity) ||
+                      val(balCur.stockholdersEquity);
+    const equityFin = equityBal;
 
-    const marketCap  = val(price.marketCap) || val(summ.marketCap);
-    const priceVal   = val(price.regularMarketPrice);
-    const eps        = val(stats.trailingEps);
-    const per        = val(summ.trailingPE) || (priceVal && eps && eps > 0 ? priceVal / eps : null);
-    const pegRatio   = val(stats.pegRatio);
+    const totalDebt = val(fin.totalDebt) ||
+                      ((val(balCur.longTermDebt) || 0) + (val(balCur.shortLongTermDebt) || val(balCur.currentPortionOfLongTermDebt) || 0));
+    const cash      = val(fin.totalCash) ||
+                      val(balCur.cash) || val(balCur.cashAndCashEquivalents) || 0;
 
-    // Cálculos derivados
-    const opMargin   = revenue && ebit   ? (ebit / revenue) * 100 : null;
-    const netMargin  = revenue && netIncome ? (netIncome / revenue) * 100 : null;
-    const fcfPct     = revenue && fcf    ? (fcf / revenue) * 100 : null;
-    const roe        = equity && netIncome && equity > 0 ? (netIncome / equity) * 100 : null;
-    const deudaEquity = equity && totalDebt && equity > 0 ? totalDebt / equity : null;
-    const pfcf       = marketCap && fcf && fcf > 0 ? marketCap / fcf : null;
+    // ── Ratios de mercado ──
+    const marketCap = val(price.marketCap) || val(summ.marketCap);
+    const priceVal  = val(price.regularMarketPrice) || val(summ.regularMarketPrice);
+    const eps       = val(stats.trailingEps);
+    const per       = val(summ.trailingPE) || val(fin.trailingPe) ||
+                      (priceVal && eps && eps > 0 ? priceVal / eps : null);
+    const pegRatio  = val(stats.pegRatio);
+
+    // ── Cálculos derivados ──
+    const fcfPct      = revenue && fcf ? (fcf / revenue) * 100 : null;
+    const roe         = equityFin && netIncome && equityFin > 0 ? (netIncome / equityFin) * 100 : null;
+    const deudaEquity = equityFin && totalDebt && equityFin > 0 ? totalDebt / equityFin : null;
+    const pfcf        = marketCap && fcf && fcf > 0 ? marketCap / fcf : null;
 
     const crecIngresos = revenue && revPrev && revPrev > 0
       ? ((revenue - revPrev) / Math.abs(revPrev)) * 100 : null;
+
+    // Para crecimiento EBITDA: si tenemos ebitda TTM y ebitdaPrev del historial
     const crecEBITDA = ebitda && ebitdaPrev && ebitdaPrev > 0
       ? ((ebitda - ebitdaPrev) / Math.abs(ebitdaPrev)) * 100 : null;
 
     // EV/EBITDA
-    const ev       = (marketCap || 0) + totalDebt - cash;
+    const ev       = (marketCap || 0) + (totalDebt || 0) - (cash || 0);
     const evEbitda = ev > 0 && ebitda && ebitda > 0 ? ev / ebitda : null;
 
     // ROIC
     const nopat  = ebit ? ebit * 0.75 : null;
-    const capInv = (equity || 0) + totalDebt;
+    const capInv = (equityFin || 0) + (totalDebt || 0);
     const roic   = nopat && capInv > 0 ? (nopat / capInv) * 100 : null;
 
-    // PEG — Yahoo ya lo da directamente en defaultKeyStatistics
-    const peg = pegRatio || null;
-
-    // Crecimiento BPA — calculado del PEG y PER si están disponibles
+    const peg     = pegRatio || null;
     const crecBPA = peg && per && peg > 0 ? per / peg : null;
 
     // ── INDICADOR FUNDAMENTAL ───────────────────────
@@ -333,7 +351,7 @@ export default async function handler(req, res) {
         ebit:      ebit      ? Math.round(ebit    / 1e6)   : null,
         netIncome: netIncome ? Math.round(netIncome / 1e6) : null,
         fcf:       fcf       ? Math.round(fcf     / 1e6)   : null,
-        equity:    equity    ? Math.round(equity  / 1e6)   : null,
+        equity:    equityFin    ? Math.round(equityFin  / 1e6)   : null,
         totalDebt: totalDebt ? Math.round(totalDebt / 1e6) : null,
         cash:      cash      ? Math.round(cash    / 1e6)   : null,
         eps, per, peg, pfcf, evEbitda, roe, roic,
