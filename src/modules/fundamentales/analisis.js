@@ -193,9 +193,13 @@ export async function render(container, { actionsSlot }) {
           ['EBIT', fmtM(d.datos.ebit)],
           ['Beneficio Neto', fmtM(d.datos.netIncome)],
           ['Free Cash Flow', fmtM(d.datos.fcf)],
-          ['Equity', fmtM(d.datos.equity)],
+          ['Equity (Book)', fmtM(d.datos.equity)],
           ['Deuda Total', fmtM(d.datos.totalDebt)],
-          ['Cash', fmtM(d.datos.cash)]
+          ['Cash', fmtM(d.datos.cash)],
+          ['Beta', d.datos.beta !== null && d.datos.beta !== undefined ? d.datos.beta.toFixed(2) : '—'],
+          ['Dividendo Yield', d.datos.divYield !== null && d.datos.divYield !== undefined ? d.datos.divYield.toFixed(2) + '%' : '—'],
+          ['ROE', fmtPct(d.datos.roe)],
+          ['Crec. Ingresos YoY', fmtPct(d.datos.crecIngresos)]
         ].map(([l,v]) => `
           <div class="fund-data-item">
             <div class="fund-data-label">${l}</div>

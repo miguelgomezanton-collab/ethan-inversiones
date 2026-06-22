@@ -15,13 +15,16 @@ const YF_CRUMB_URL = 'https://query1.finance.yahoo.com/v1/test/getcrumb';
 const YF_CONSENT_URL = 'https://finance.yahoo.com';
 const YF_BASE = 'https://query1.finance.yahoo.com/v10/finance/quoteSummary';
 const YF_BASE2 = 'https://query2.finance.yahoo.com/v10/finance/quoteSummary';
+
+// Módulos estables post-Nov2024: evitamos incomeStatementHistory,
+// balanceSheetHistory, cashflowStatementHistory cuyos campos cambiaron.
+// Usamos financialData + defaultKeyStatistics + summaryDetail + price
+// que tienen la mayoría de los datos que necesitamos de forma TTM.
 const YF_MODULES = [
-  'incomeStatementHistory',
-  'balanceSheetHistory',
-  'cashflowStatementHistory',
+  'financialData',
   'defaultKeyStatistics',
   'summaryDetail',
-  'financialData',
+  'summaryProfile',
   'price'
 ].join(',');
 
@@ -34,23 +37,18 @@ const BASE_HEADERS = {
   'Referer': 'https://finance.yahoo.com/'
 };
 
-// Obtiene el crumb + cookie necesarios para llamadas server-side a Yahoo
 async function getYahooCrumb() {
-  // 1. Visitar la home de Yahoo Finance para obtener cookies de sesión
   const homeRes = await fetch(YF_CONSENT_URL, {
     headers: { ...BASE_HEADERS, 'Accept': 'text/html' },
     redirect: 'follow'
   });
   const cookie = homeRes.headers.get('set-cookie') || '';
-
-  // 2. Obtener el crumb usando las cookies de sesión
   const crumbRes = await fetch(YF_CRUMB_URL, {
     headers: { ...BASE_HEADERS, 'Cookie': cookie }
   });
   if (!crumbRes.ok) throw new Error(`Crumb: HTTP ${crumbRes.status}`);
   const crumb = await crumbRes.text();
   if (!crumb || crumb.length < 5) throw new Error('Crumb inválido');
-
   return { crumb: crumb.trim(), cookie };
 }
 
@@ -59,9 +57,7 @@ async function fetchYahoo(ticker) {
 
   const tryFetch = async (base) => {
     const url = `${base}/${encodeURIComponent(ticker)}?modules=${YF_MODULES}&crumb=${encodeURIComponent(crumb)}`;
-    const res = await fetch(url, {
-      headers: { ...BASE_HEADERS, 'Cookie': cookie }
-    });
+    const res = await fetch(url, { headers: { ...BASE_HEADERS, 'Cookie': cookie } });
     if (!res.ok) throw new Error(`Yahoo Finance: HTTP ${res.status}`);
     const json = await res.json();
     if (json.quoteSummary?.error) throw new Error(`Yahoo Finance: ${json.quoteSummary.error.description}`);
@@ -70,11 +66,8 @@ async function fetchYahoo(ticker) {
     return result;
   };
 
-  try {
-    return await tryFetch(YF_BASE);
-  } catch (e1) {
-    return await tryFetch(YF_BASE2);
-  }
+  try { return await tryFetch(YF_BASE); }
+  catch (e1) { return await tryFetch(YF_BASE2); }
 }
 
 // ───────────────────────────────────────────────
@@ -191,97 +184,83 @@ export default async function handler(req, res) {
   try {
     const data = await fetchYahoo(ticker);
 
-    const inc  = data.incomeStatementHistory?.incomeStatementHistory || [];
-    const bal  = data.balanceSheetHistory?.balanceSheetHistory || [];
-    const cf   = data.cashflowStatementHistory?.cashflowStatementHistory || [];
     const stats = data.defaultKeyStatistics || {};
-    const summ  = data.summaryDetail || {};
     const fin   = data.financialData || {};
+    const summ  = data.summaryDetail || {};
+    const prof  = data.summaryProfile || {};
     const price = data.price || {};
 
-    // ── Extracción de datos financieros ─────────────
-    // financialData = datos TTM actualizados con nombres consistentes
-    // incomeStatementHistory = histórico anual para crecimientos YoY
-    // balanceSheetHistory = balance para equity, deuda
-    // cashflowStatementHistory = FCF
-    // defaultKeyStatistics = ratios de mercado (PER, PEG, EPS)
-
-    const incCur  = inc[0] || {};
-    const incPrev = inc[1] || {};
-    const balCur  = bal[0] || {};
-    const cfCur   = cf[0]  || {};
-
-    // ── Datos P&L — priorizar financialData (TTM) ──
-    const revenue   = val(fin.totalRevenue) || val(incCur.totalRevenue);
-    const revPrev   = val(incPrev.totalRevenue);
+    // ── P&L — todo de financialData (TTM, estable post-Nov2024) ──
+    const revenue   = val(fin.totalRevenue);
     const ebitda    = val(fin.ebitda);
-    const ebit      = val(fin.ebit) || val(incCur.ebit) ||
-                      val(incCur.operatingIncome);
-    const netIncome = val(fin.netIncomeToCommon) || val(incCur.netIncome) ||
-                      val(incCur.netIncomeApplicableToCommonShares);
-
-    // EBITDA año anterior para crecimiento YoY (aproximado)
-    const ebitPrev   = val(incPrev.ebit) || val(incPrev.operatingIncome);
-    const daPrev     = val(incPrev.depreciationAndAmortization) || 0;
-    const ebitdaPrev = ebitPrev !== null ? ebitPrev + daPrev : null;
-
-    // ── Márgenes — priorizar % directos de financialData ──
-    const opMarginPct  = val(fin.operatingMargins);  // ya viene en decimal (ej. 0.285)
+    const ebit      = val(fin.operatingCashflow) !== null
+                      ? null  // operatingCashflow no es EBIT
+                      : null;
+    // EBIT: Yahoo financialData no lo tiene directamente como campo.
+    // Lo calculamos desde los márgenes si tenemos revenue.
+    const opMarginPct  = val(fin.operatingMargins);   // decimal, ej. 0.285
     const netMarginPct = val(fin.profitMargins);
-    const opMargin  = opMarginPct !== null ? opMarginPct * 100
-                      : (revenue && ebit ? (ebit / revenue) * 100 : null);
-    const netMargin = netMarginPct !== null ? netMarginPct * 100
-                      : (revenue && netIncome ? (netIncome / revenue) * 100 : null);
+    const ebitCalc     = revenue && opMarginPct !== null ? revenue * opMarginPct : null;
+    const netIncome    = val(fin.netIncomeToCommon);
 
-    // ── FCF — priorizar financialData ──
-    const fcf = val(fin.freeCashflow) ||
-                val(cfCur.freeCashFlow) ||
-                (val(cfCur.totalCashFromOperatingActivities) !== null && val(cfCur.capitalExpenditures) !== null
-                  ? val(cfCur.totalCashFromOperatingActivities) + val(cfCur.capitalExpenditures)
-                  : null);
+    const opMargin  = opMarginPct !== null ? opMarginPct * 100 : null;
+    const netMargin = netMarginPct !== null ? netMarginPct * 100 : null;
 
-    // ── Balance — Yahoo da equity solo en balanceSheetHistory ──
-    const equityBal = val(balCur.totalStockholderEquity) ||
-                      val(balCur.stockholdersEquity);
-    const equityFin = equityBal;
+    const fcf     = val(fin.freeCashflow);
+    const totalDebt = val(fin.totalDebt);
+    const cash    = val(fin.totalCash);
 
-    const totalDebt = val(fin.totalDebt) ||
-                      ((val(balCur.longTermDebt) || 0) + (val(balCur.shortLongTermDebt) || val(balCur.currentPortionOfLongTermDebt) || 0));
-    const cash      = val(fin.totalCash) ||
-                      val(balCur.cash) || val(balCur.cashAndCashEquivalents) || 0;
+    // Equity: no está en financialData, usamos book value per share × shares
+    const bvps   = val(stats.bookValue);
+    const shares = val(stats.sharesOutstanding) || val(price.sharesOutstanding);
+    const equityCalc = bvps && shares ? bvps * shares : null;
 
-    // ── Ratios de mercado ──
+    // ── Datos de mercado ──
     const marketCap = val(price.marketCap) || val(summ.marketCap);
-    const priceVal  = val(price.regularMarketPrice) || val(summ.regularMarketPrice);
+    const priceVal  = val(price.regularMarketPrice) || val(fin.currentPrice);
     const eps       = val(stats.trailingEps);
-    const per       = val(summ.trailingPE) || val(fin.trailingPe) ||
+    const per       = val(summ.trailingPE) ||
                       (priceVal && eps && eps > 0 ? priceVal / eps : null);
     const pegRatio  = val(stats.pegRatio);
+    const beta      = val(summ.beta) || val(stats.beta);
+    const divYield  = val(summ.dividendYield);
+
+    // ── Crecimientos YoY — de financialData ──
+    const revenueGrowth  = val(fin.revenueGrowth);   // decimal YoY
+    const earningsGrowth = val(fin.earningsGrowth);  // decimal YoY
+    const crecIngresos   = revenueGrowth !== null ? revenueGrowth * 100 : null;
+    // Para EBITDA growth Yahoo no tiene un campo directo en financialData,
+    // usamos earningsGrowth como proxy del momentum de beneficios
+    const crecEBITDA     = earningsGrowth !== null ? earningsGrowth * 100 : null;
 
     // ── Cálculos derivados ──
     const fcfPct      = revenue && fcf ? (fcf / revenue) * 100 : null;
-    const roe         = equityFin && netIncome && equityFin > 0 ? (netIncome / equityFin) * 100 : null;
-    const deudaEquity = equityFin && totalDebt && equityFin > 0 ? totalDebt / equityFin : null;
+    const roe         = equityCalc && netIncome && equityCalc !== 0
+                        ? (netIncome / equityCalc) * 100 : null;
+    const deudaEquity = equityCalc && totalDebt && equityCalc !== 0
+                        ? totalDebt / equityCalc : null;
     const pfcf        = marketCap && fcf && fcf > 0 ? marketCap / fcf : null;
-
-    const crecIngresos = revenue && revPrev && revPrev > 0
-      ? ((revenue - revPrev) / Math.abs(revPrev)) * 100 : null;
-
-    // Para crecimiento EBITDA: si tenemos ebitda TTM y ebitdaPrev del historial
-    const crecEBITDA = ebitda && ebitdaPrev && ebitdaPrev > 0
-      ? ((ebitda - ebitdaPrev) / Math.abs(ebitdaPrev)) * 100 : null;
 
     // EV/EBITDA
     const ev       = (marketCap || 0) + (totalDebt || 0) - (cash || 0);
     const evEbitda = ev > 0 && ebitda && ebitda > 0 ? ev / ebitda : null;
+    // También disponible directamente en enterpriseToEbitda
+    const evEbitdaDirect = val(stats.enterpriseToEbitda);
+    const evEbitdaFinal  = evEbitdaDirect || evEbitda;
 
-    // ROIC
-    const nopat  = ebit ? ebit * 0.75 : null;
-    const capInv = (equityFin || 0) + (totalDebt || 0);
+    // ROIC — usando EBIT calculado desde márgenes operativos
+    const nopat  = ebitCalc ? ebitCalc * 0.75 : null;
+    const capInv = (equityCalc || 0) + (totalDebt || 0);
     const roic   = nopat && capInv > 0 ? (nopat / capInv) * 100 : null;
+    // También podemos calcularlo desde return on assets si está disponible
+    const returnOnAssets = val(fin.returnOnAssets);
+    const returnOnEquity = val(fin.returnOnEquity);
+    const roeFromFin     = returnOnEquity !== null ? returnOnEquity * 100 : roe;
 
     const peg     = pegRatio || null;
-    const crecBPA = peg && per && peg > 0 ? per / peg : null;
+    const crecBPA = val(stats.earningsQuarterlyGrowth) !== null
+                    ? val(stats.earningsQuarterlyGrowth) * 100
+                    : (peg && per && peg > 0 ? per / peg : null);
 
     // ── INDICADOR FUNDAMENTAL ───────────────────────
     const sc_crecIng    = scoreCrecingresos(crecIngresos);
@@ -289,7 +268,7 @@ export default async function handler(req, res) {
     const sc_margenes   = scoreMargenes(opMargin, netMargin);
     const sc_fcf        = scoreFCFIngresos(fcfPct);
     const sc_pfcf       = scorePFCF(pfcf);
-    const sc_roe        = scoreROE(roe);
+    const sc_roe        = scoreROE(roeFromFin);
     const sc_deuda      = scoreDeuda(deudaEquity);
 
     const solidezInputs = [
@@ -314,7 +293,7 @@ export default async function handler(req, res) {
 
     // ── INDICADOR GREENBLATT ────────────────────────
     const sc_roic     = scoreROIC(roic);
-    const sc_evEbitda = scoreEVEBITDA(evEbitda);
+    const sc_evEbitda = scoreEVEBITDA(evEbitdaFinal);
     const scoreGreenblatt = sc_roic !== null && sc_evEbitda !== null
       ? +(sc_roic * 0.50 + sc_evEbitda * 0.50).toFixed(2)
       : sc_roic !== null ? +sc_roic.toFixed(2)
@@ -339,24 +318,27 @@ export default async function handler(req, res) {
     return res.status(200).json({
       ticker,
       company:  val(price.longName) || val(price.shortName) || ticker,
-      sector:   val(price.sector) || null,
-      industry: val(price.industry) || null,
+      sector:   prof.sector || val(price.sector) || null,
+      industry: prof.industry || val(price.industry) || null,
       currency: val(price.currency) || 'USD',
       exchange: val(price.exchangeName) || null,
       price:    priceVal,
       marketCap,
       datos: {
-        revenue:   revenue   ? Math.round(revenue / 1e6)   : null,
-        ebitda:    ebitda    ? Math.round(ebitda  / 1e6)   : null,
-        ebit:      ebit      ? Math.round(ebit    / 1e6)   : null,
-        netIncome: netIncome ? Math.round(netIncome / 1e6) : null,
-        fcf:       fcf       ? Math.round(fcf     / 1e6)   : null,
-        equity:    equityFin    ? Math.round(equityFin  / 1e6)   : null,
-        totalDebt: totalDebt ? Math.round(totalDebt / 1e6) : null,
-        cash:      cash      ? Math.round(cash    / 1e6)   : null,
-        eps, per, peg, pfcf, evEbitda, roe, roic,
+        revenue:   revenue    ? Math.round(revenue    / 1e6) : null,
+        ebitda:    ebitda     ? Math.round(ebitda     / 1e6) : null,
+        ebit:      ebitCalc   ? Math.round(ebitCalc   / 1e6) : null,
+        netIncome: netIncome  ? Math.round(netIncome  / 1e6) : null,
+        fcf:       fcf        ? Math.round(fcf        / 1e6) : null,
+        equity:    equityCalc ? Math.round(equityCalc / 1e6) : null,
+        totalDebt: totalDebt  ? Math.round(totalDebt  / 1e6) : null,
+        cash:      cash       ? Math.round(cash       / 1e6) : null,
+        eps, per, peg, pfcf,
+        evEbitda: evEbitdaFinal,
+        roe: roeFromFin, roic,
         opMargin, netMargin, fcfPct,
-        crecIngresos, crecEBITDA, crecBPA, deudaEquity
+        crecIngresos, crecEBITDA, crecBPA, deudaEquity,
+        beta, divYield: divYield !== null ? +(divYield * 100).toFixed(2) : null
       },
       scoresFundamental: {
         crecIngresos: sc_crecIng,
