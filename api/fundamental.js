@@ -193,24 +193,25 @@ export default async function handler(req, res) {
     // ── P&L — todo de financialData (TTM, estable post-Nov2024) ──
     const revenue   = val(fin.totalRevenue);
     const ebitda    = val(fin.ebitda);
-    const ebit      = val(fin.operatingCashflow) !== null
-                      ? null  // operatingCashflow no es EBIT
-                      : null;
-    // EBIT: Yahoo financialData no lo tiene directamente como campo.
-    // Lo calculamos desde los márgenes si tenemos revenue.
+
+    // EBIT: calculado desde margen operativo × ingresos
     const opMarginPct  = val(fin.operatingMargins);   // decimal, ej. 0.285
     const netMarginPct = val(fin.profitMargins);
-    const ebitCalc     = revenue && opMarginPct !== null ? revenue * opMarginPct : null;
-    const netIncome    = val(fin.netIncomeToCommon);
+
+    const ebitCalc  = revenue && opMarginPct !== null ? revenue * opMarginPct : null;
+
+    // Beneficio Neto: primero netIncomeToCommon, si no calculamos desde margen neto
+    const netIncome = val(fin.netIncomeToCommon) ||
+                      (revenue && netMarginPct !== null ? revenue * netMarginPct : null);
 
     const opMargin  = opMarginPct !== null ? opMarginPct * 100 : null;
     const netMargin = netMarginPct !== null ? netMarginPct * 100 : null;
 
-    const fcf     = val(fin.freeCashflow);
+    const fcf      = val(fin.freeCashflow);
     const totalDebt = val(fin.totalDebt);
-    const cash    = val(fin.totalCash);
+    const cash     = val(fin.totalCash);
 
-    // Equity: no está en financialData, usamos book value per share × shares
+    // Equity: book value per share × shares outstanding
     const bvps   = val(stats.bookValue);
     const shares = val(stats.sharesOutstanding) || val(price.sharesOutstanding);
     const equityCalc = bvps && shares ? bvps * shares : null;
@@ -225,13 +226,22 @@ export default async function handler(req, res) {
     const beta      = val(summ.beta) || val(stats.beta);
     const divYield  = val(summ.dividendYield);
 
-    // ── Crecimientos YoY — de financialData ──
-    const revenueGrowth  = val(fin.revenueGrowth);   // decimal YoY
-    const earningsGrowth = val(fin.earningsGrowth);  // decimal YoY
+    // ── Crecimientos YoY ──
+    const revenueGrowth  = val(fin.revenueGrowth);
+    const earningsGrowth = val(fin.earningsGrowth);
     const crecIngresos   = revenueGrowth !== null ? revenueGrowth * 100 : null;
-    // Para EBITDA growth Yahoo no tiene un campo directo en financialData,
-    // usamos earningsGrowth como proxy del momentum de beneficios
-    const crecEBITDA     = earningsGrowth !== null ? earningsGrowth * 100 : null;
+
+    // Crec. EBITDA: Yahoo tiene ebitdaMargins (margen EBITDA actual).
+    // Si tenemos el margen actual y el crecimiento de ingresos, podemos
+    // aproximar: si el margen EBITDA se mantiene estable y los ingresos
+    // crecen X%, el EBITDA crece ~X%. Usamos earningsGrowth solo como
+    // último recurso ya que mide crecimiento de beneficio neto, no EBITDA.
+    // La aproximación más honesta: si el margen EBITDA no cambia drásticamente,
+    // el crecimiento del EBITDA ≈ crecimiento de ingresos.
+    // Pero si Yahoo tiene grossProfitsGrowth o similar, mejor usarlo.
+    const ebitdaGrowth = val(fin.ebitdaGrowth);  // disponible en algunos tickers
+    const crecEBITDA   = ebitdaGrowth !== null ? ebitdaGrowth * 100
+                         : (earningsGrowth !== null ? earningsGrowth * 100 : null);
 
     // ── Cálculos derivados ──
     const fcfPct      = revenue && fcf ? (fcf / revenue) * 100 : null;
