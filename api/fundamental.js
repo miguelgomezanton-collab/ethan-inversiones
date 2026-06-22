@@ -11,6 +11,8 @@
 // Sin variables de entorno requeridas. Cubre cualquier ticker
 // cotizado en Yahoo Finance (NYSE, NASDAQ, BME, XETRA, etc.)
 
+const YF_CRUMB_URL = 'https://query1.finance.yahoo.com/v1/test/getcrumb';
+const YF_CONSENT_URL = 'https://finance.yahoo.com';
 const YF_BASE = 'https://query1.finance.yahoo.com/v10/finance/quoteSummary';
 const YF_BASE2 = 'https://query2.finance.yahoo.com/v10/finance/quoteSummary';
 const YF_MODULES = [
@@ -23,18 +25,43 @@ const YF_MODULES = [
   'price'
 ].join(',');
 
-async function fetchYahoo(ticker) {
-  const headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'application/json',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Referer': 'https://finance.yahoo.com/'
-  };
+const BASE_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Accept': '*/*',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Accept-Encoding': 'gzip, deflate, br',
+  'Origin': 'https://finance.yahoo.com',
+  'Referer': 'https://finance.yahoo.com/'
+};
 
-  // Intentamos primero sin crumb (funciona en muchos entornos server-side)
+// Obtiene el crumb + cookie necesarios para llamadas server-side a Yahoo
+async function getYahooCrumb() {
+  // 1. Visitar la home de Yahoo Finance para obtener cookies de sesión
+  const homeRes = await fetch(YF_CONSENT_URL, {
+    headers: { ...BASE_HEADERS, 'Accept': 'text/html' },
+    redirect: 'follow'
+  });
+  const cookie = homeRes.headers.get('set-cookie') || '';
+
+  // 2. Obtener el crumb usando las cookies de sesión
+  const crumbRes = await fetch(YF_CRUMB_URL, {
+    headers: { ...BASE_HEADERS, 'Cookie': cookie }
+  });
+  if (!crumbRes.ok) throw new Error(`Crumb: HTTP ${crumbRes.status}`);
+  const crumb = await crumbRes.text();
+  if (!crumb || crumb.length < 5) throw new Error('Crumb inválido');
+
+  return { crumb: crumb.trim(), cookie };
+}
+
+async function fetchYahoo(ticker) {
+  const { crumb, cookie } = await getYahooCrumb();
+
   const tryFetch = async (base) => {
-    const url = `${base}/${encodeURIComponent(ticker)}?modules=${YF_MODULES}`;
-    const res = await fetch(url, { headers });
+    const url = `${base}/${encodeURIComponent(ticker)}?modules=${YF_MODULES}&crumb=${encodeURIComponent(crumb)}`;
+    const res = await fetch(url, {
+      headers: { ...BASE_HEADERS, 'Cookie': cookie }
+    });
     if (!res.ok) throw new Error(`Yahoo Finance: HTTP ${res.status}`);
     const json = await res.json();
     if (json.quoteSummary?.error) throw new Error(`Yahoo Finance: ${json.quoteSummary.error.description}`);
@@ -43,15 +70,10 @@ async function fetchYahoo(ticker) {
     return result;
   };
 
-  // Intentar query1 primero, luego query2 como fallback
   try {
     return await tryFetch(YF_BASE);
   } catch (e1) {
-    try {
-      return await tryFetch(YF_BASE2);
-    } catch (e2) {
-      throw new Error(`Yahoo Finance no disponible: ${e1.message}`);
-    }
+    return await tryFetch(YF_BASE2);
   }
 }
 
