@@ -21,7 +21,69 @@ const INDICES_CONFIG = [
 const TICKERS = {
   SP500: ["MMM","AOS","ABT","ABBV","ACN","ADBE","AMD","AES","AFL","A","APD","ABNB","AKAM","ALB","ARE","ALGN","ALLE","LNT","ALL","GOOGL","GOOG","MO","AMZN","AMCR","AEE","AAL","AEP","AXP","AIG","AMT","AWK","AMP","AME","AMGN","APH","ADI","ANSS","AON","APA","AAPL","AMAT","APTV","ACGL","ADM","ANET","AJG","AIZ","T","ATO","ADSK","ADP","AZO","AVB","AVY","AXON","BKR","BALL","BAC","BBWI","BAX","BDX","BRK-B","BBY","TECH","BIIB","BIO","BLK","BX","BK","BA","BKNG","BWA","BSX","BMY","AVGO","BR","BRO","BG","CHRW","CDNS","CZR","CPT","CPB","COF","CAH","KMX","CCL","CARR","CAT","CBOE","CBRE","CDW","CE","COR","CNC","CNP","CF","CHTR","CVX","CMG","CB","CHD","CI","CINF","CTAS","CSCO","C","CFG","CLX","CME","CMS","KO","CTSH","CL","CMCSA","CMA","CAG","COP","ED","STZ","CEG","COO","CPRT","GLW","CPAY","CTVA","CSGP","COST","CTRA","CRWD","CCI","CSX","CMI","CVS","DHR","DRI","DVA","DAY","DECK","DE","DELL","DAL","DVN","DXCM","FANG","DLR","DFS","DG","DLTR","D","DPZ","DOV","DOW","DHI","DTE","DUK","DD","EMN","ETN","EBAY","ECL","EIX","EW","EA","ELV","EMR","ENPH","ETR","EOG","EQT","EFX","EQIX","EQR","ESS","EL","ETSY","EG","EVRG","ES","EXC","EXPE","EXPD","EXR","XOM","FFIV","FDS","FICO","FAST","FRT","FDX","FITB","FSLR","FE","FIS","FI","FLT","FMC","F","FTNT","FTV","FOXA","FOX","BEN","FCX","GRMN","IT","GE","GEHC","GEN","GD","GIS","GM","GPC","GILD","GPN","GL","GDDY","GS","HAL","HIG","HAS","HCA","DOC","HSIC","HSY","HES","HPE","HLT","HOLX","HD","HON","HRL","HST","HWM","HPQ","HUBB","HUM","HBAN","HII","IBM","IEX","IDXX","ITW","INCY","IR","PODD","INTC","ICE","IFF","IP","IPG","INTU","ISRG","IVZ","INVH","IQV","IRM","JBHT","JBL","JKHY","J","JNJ","JCI","JPM","JNPR","K","KVUE","KDP","KEY","KEYS","KMB","KIM","KMI","KKR","KLAC","KHC","KR","LHX","LH","LRCX","LW","LVS","LDOS","LEN","LIN","LYV","LKQ","LMT","L","LOW","LULU","LYB","MTB","MRO","MPC","MKTX","MAR","MMC","MLM","MAS","MA","MTCH","MKC","MCD","MCK","MDT","MRK","META","MET","MTD","MGM","MCHP","MU","MSFT","MAA","MRNA","MHK","MOH","TAP","MDLZ","MPWR","MNST","MCO","MS","MOS","MSI","MSCI","NDAQ","NTAP","NFLX","NEM","NWSA","NWS","NEE","NKE","NI","NDSN","NSC","NTRS","NOC","NCLH","NRG","NUE","NVDA","NVR","NXPI","ORLY","OXY","ODFL","OMC","ON","OKE","ORCL","OTIS","PCAR","PKG","PANW","PARA","PH","PAYX","PAYC","PYPL","PNR","PEP","PFE","PCG","PM","PSX","PNW","PNC","POOL","PPG","PPL","PFG","PG","PGR","PLD","PRU","PEG","PTC","PSA","PHM","QRVO","PWR","QCOM","DGX","RL","RJF","RTX","O","REG","REGN","RF","RSG","RMD","RVTY","ROK","ROL","ROP","ROST","RCL","SPGI","CRM","SBAC","SLB","STX","SRE","NOW","SHW","SPG","SWKS","SJM","SW","SNA","SOLV","SO","LUV","SWK","SBUX","STT","STLD","STE","SYK","SMCI","SYF","SNPS","SYY","TMUS","TROW","TTWO","TPR","TRGP","TGT","TEL","TDY","TFX","TER","TSLA","TXN","TXT","TMO","TJX","TSCO","TT","TDG","TRV","TRMB","TFC","TYL","TSN","USB","UBER","UDR","ULTA","UNP","UAL","UPS","URI","UNH","UHS","VLO","VTR","VRSN","VRSK","VZ","VRTX","VLTO","VFC","VTRS","VICI","V","VST","VMC","WRB","GWW","WAB","WBA","WMT","DIS","WBD","WM","WAT","WEC","WFC","WELL","WST","WDC","WY","WMB","WTW","WYNN","XEL","XYL","YUM","ZBRA","ZBH","ZTS"],
   NDX100: ["AAPL","MSFT","NVDA","AMZN","META","GOOGL","GOOG","TSLA","AVGO","COST","NFLX","TMUS","CSCO","AMD","ADBE","PEP","INTU","TXN","QCOM","ISRG","CMCSA","BKNG","AMAT","REGN","MU","PANW","LRCX","VRTX","KLAC","ADI","MRVL","ABNB","CDNS","SNPS","CRWD","CEG","MELI","ORLY","CTAS","MAR","FTNT","PCAR","PAYX","DASH","WDAY","ROST","AZO","ODFL","CPRT","FANG","FAST","KHC","BIIB","ON","DDOG","IDXX","TEAM","SIRI","EXC","MNST","DLTR","GEHC","MRNA","NXPI","WBD","SPLK","SBUX","VRSK","SMCI","ROP","TTWO","ALGN","WBA","DXCM","ANSS","GFS","ILMN","MDB","LCID","ZS","ENPH","OKTA","RIVN","SNOW","TTD","VRSN","CHTR","MTCH","ASML","SGEN","PYPL","BMRN","CTSH","GILD","LULU","ADSK","EA","EBAY","AEP","TSCO"],
-  NYSE: ["JPM","BAC","WFC","C","GS","MS","AXP","BX","KKR","BLK","USB","PNC","TFC","COF","SCHW","ICE","CME","SPGI","MCO","BK","STT","MTB","CFG","HBAN","RF","KEY","NTRS","FITB","FIS","FI","PYPL","V","MA","ACN","IBM","ORCL","HPQ","HPE","CDW","DELL","WDC","STX","UNH","CVS","ELV","CI","HUM","MOH","CNC","HCA","DGX","LH","SYK","MDT","BSX","ABT","BDX","DHR","TMO","A","WAT","IQV","ZBH","BAX","JNJ","PFE","MRK","LLY","BMY","ABBV","AMGN","GILD","REGN","BIIB","VRTX","MRNA","XOM","CVX","COP","OXY","DVN","HAL","SLB","BKR","MPC","VLO","PSX","EOG","FANG","APA","MRO","KMI","WMB","OKE","TRGP","LIN","APD","ECL","DOW","DD","LYB","PPG","SHW","NEM","FCX","NUE","STLD","CF","MLM","VMC","IP","PKG","AVY","BALL","AMCR","UPS","FDX","GE","HON","RTX","LMT","NOC","GD","BA","CAT","DE","EMR","ETN","PH","ITW","ROK","AME","IR","PCAR","OTIS","CARR","AXON","TT","XYL","JCI","ROP","CTAS","FAST","EXPD","ODFL","CSX","UNP","NSC","WAB","JBHT","RCL","CCL","MAR","HLT","MGM","LVS","WYNN","CZR","DRI","YUM","MCD","SBUX","CMG","DPZ","EL","NKE","RL","TPR","KMX","AZO","ORLY","APTV","BWA","LKQ","HD","LOW","POOL","DHI","LEN","PHM","NVR","TOL","WY","PLD","AMT","CCI","SBAC","EQIX","DLR","EXR","PSA","AVB","EQR","ESS","MAA","CPT","UDR","WELL","VTR","HST","REG","O","NNN","VICI","SPG","IRM","AFL","MET","PRU","AIG","TRV","CB","ALL","PGR","HIG","AJG","MMC","AON","WTW","BRO","CINF","RE","ACGL","GWW","SNA","SFM","USFD","SYY","PFGC","WMT","KR","ADM","MOS","NTR","CF","CTVA","AWK"],
+  NYSE: [
+    // Financials — Bancos grandes y regionales
+    "JPM","BAC","WFC","C","GS","MS","USB","PNC","TFC","COF","BK","STT","MTB","CFG","HBAN",
+    "RF","KEY","NTRS","FITB","CMA","ZION","FHN","SNV","BOH","WTFC","UMBF","EWBC","FFIN",
+    "IBOC","BPOP","ALLY","SYF","DFS","NYCB","RJF","SIVB","CVBF","WAFD","HOMB","BANR",
+    // Financials — Seguros
+    "AIG","TRV","CB","ALL","PGR","HIG","AJG","MMC","AON","WTW","BRO","CINF","RE","ACGL",
+    "GL","FNF","FAF","RGA","CNO","AFL","MET","PRU","LNC","UNM","PFG","MKL","RLI","HCI",
+    // Financials — Bolsas y otros
+    "ICE","CME","SPGI","MCO","BX","KKR","BLK","SCHW",
+    // Healthcare — Farma y biotech
+    "JNJ","PFE","MRK","LLY","BMY","ABBV","AMGN","GILD","REGN","BIIB","VRTX","MRNA",
+    // Healthcare — Servicios e instrumental
+    "UNH","CVS","ELV","CI","HUM","MOH","CNC","HCA","DGX","LH","SYK","MDT","BSX","ABT",
+    "BDX","DHR","TMO","A","WAT","IQV","ZBH","BAX","STE","HSIC","HOLX","TECH","BIO","RVTY",
+    "PODD","INCY","DXCM","ALGN","DVA","UHS","THC","ENSG","CHE","ADUS","MEDP",
+    // Energy — Majors y E&P
+    "XOM","CVX","COP","OXY","DVN","HAL","SLB","BKR","MPC","VLO","PSX","EOG","APA","MRO",
+    "LNG","CQP","SM","CIVI","NOG","MTDR","PR","CHRD","MGY","PBF","DINO","HFC","VVV",
+    // Energy — Midstream
+    "KMI","WMB","OKE","TRGP","ET","WES","MPLX","EPD","PAA","PAGP","ENLC","DKL",
+    // Materials
+    "LIN","APD","ECL","DOW","DD","LYB","PPG","SHW","NEM","FCX","NUE","STLD","CF","MLM",
+    "VMC","IP","PKG","SEE","AVY","BALL","AMCR","ATI","AA","X","CLF","RS","EMN","OLN",
+    "HUN","TROX","FUL","RPM","AXTA","ALB","MP","LTHM","CBT","ASIX","BCPC","HWKN",
+    // Industrials — Defensa y aeroespacial
+    "GE","HON","RTX","LMT","NOC","GD","BA","HII","TDG","HEI","HWM","SPR","TXT","LDOS",
+    "BAH","CACI","MANT","KBR","SAIC","L3H","DRS",
+    // Industrials — Maquinaria y equipos
+    "CAT","DE","EMR","ETN","PH","ITW","ROK","AME","IR","PCAR","OTIS","CARR","AXON","TT",
+    "XYL","GNRC","JCI","ROP","GWW","SNA","MSM","NDSN","RBC","KMT","BMI","CFX","GTLS","MWA",
+    "ESCO","DCI","TDY","AMETEK","IDEX","FLOW","MIDD","SPXC",
+    // Industrials — Transporte y logística
+    "UPS","FDX","CSX","UNP","NSC","WAB","JBHT","ODFL","EXPD","CTAS","FAST","CHRW",
+    "SAIA","WERN","ARCB","XPO","GXO","RXO","LSTR","HTLD","MRTN",
+    // Consumer Discretionary
+    "NKE","HD","LOW","TJX","MCD","SBUX","CMG","DPZ","YUM","DRI","EL","PVH","RL","TPR",
+    "KMX","AZO","ORLY","APTV","BWA","LKQ","WHR","POOL","DHI","LEN","PHM","NVR","TOL",
+    "MHO","KBH","MDC","BLDR","TREX","IBP","MCS","SSD","NWL","LEG","MHK","MLI","WDFC",
+    "RCL","CCL","NCLH","MAR","HLT","MGM","LVS","WYNN","CZR","HGV","VAC","TNL",
+    // Consumer Staples
+    "PG","KO","PEP","PM","MO","MDLZ","KMB","CL","GIS","K","SJM","CAG","HRL","TSN","MKC",
+    "CPB","CHD","CLX","WMT","KR","SFM","USFD","SYY","PFGC","BJ","INGR","BG","ADM","MOS",
+    "NTR","CF","CTVA","FMC","CALM","LANC","JJSF","WEIS","SPTN","MGPI","UTZ","SMPL","IPAR",
+    // Utilities
+    "NEE","DUK","SO","D","AEP","EXC","SRE","PEG","XEL","ED","EIX","AEE","LNT","WEC","ES",
+    "CMS","DTE","NI","CNP","EVRG","PNW","ATO","AWK","WTR","SJW","OGE","IDA","HE","AVA",
+    "MGEE","BKH","ARTNA","CWCO",
+    // Real Estate
+    "PLD","AMT","CCI","SBAC","EQIX","DLR","EXR","PSA","AVB","EQR","ESS","MAA","CPT","UDR",
+    "WELL","VTR","HST","REG","O","NNN","VICI","SPG","IRM","BXP","SLG","KIM","FRT","ARE",
+    "INVH","TRNO","EGP","FR","REXR","STAG","COLD","IIPR","ADC","NTST","EPRT","NHI","HR",
+    "DOC","MPW","PEB","RHP","XHR","APLE","CLDT","BHR","MAC","SKT","CBL",
+    // Technology (cotizadas en NYSE)
+    "IBM","ORCL","HPQ","HPE","CDW","DELL","WDC","STX","JNPR","NTAP","PSTG","CIEN","VIAV",
+    "COMM","CALX","ACN","CTSH","IT","EPAM","GLOB","EFX","TYL","GPN","WEX","EVTC","FOUR",
+    "QTWO","PCTY","HCKT","INVA","APPF",
+    // Telecom y Media
+    "T","VZ","LUMN","DISH","FYBR","CABO","ATUS","DIS","FOX","FOXA","PARA","WBD","LYV",
+    "MSG","MSGS","CNK","IMAX",
+    // Conglomerados
+    "BRK-B","MMM","GE","HON","EMR","FTV"
+  ],
   EUROSTOXX50: ["ASML.AS","LVMH.PA","TTE.PA","SAP.DE","SIE.DE","ALV.DE","ADYEN.AS","MC.PA","SAN.MC","INGA.AS","BNP.PA","AIR.PA","DTE.DE","ENEL.MI","OR.PA","MBG.DE","ABI.BR","BAYN.DE","IBE.MC","VOW3.DE","MUV2.DE","BMW.DE","PHIA.AS","DBK.DE","RMS.PA","CS.PA","SU.PA","AXA.PA","KER.PA","DSY.PA","HO.PA","AF.PA","DG.PA","RI.PA","BN.PA","SGO.PA","VIE.PA","ORA.PA","CAP.PA","ENI.MI","ISP.MI","UCG.MI","STLAM.MI","RACE.MI","G.MI","PRY.MI","AZM.MI","SRG.MI","MONC.MI"],
   DAX40: ["SAP.DE","SIE.DE","ALV.DE","MBG.DE","DTE.DE","BAYN.DE","VOW3.DE","MUV2.DE","BMW.DE","DBK.DE","RWE.DE","BAS.DE","EOAN.DE","HEN3.DE","MTX.DE","ZAL.DE","SHL.DE","DHL.DE","MRK.DE","IFX.DE","CON.DE","QIA.DE","PAH3.DE","BEI.DE","VNA.DE","ENR.DE","DHER.DE","AIR.DE","ADS.DE","FME.DE","FRE.DE","HEI.DE","LEG.DE","MAN.DE","PUM.DE","SDF.DE","SMHN.DE","SY1.DE","FME.DE","RHM.DE"],
   FTSE100: ["SHEL.L","AZN.L","HSBA.L","ULVR.L","BP.L","RIO.L","GSK.L","DGE.L","REL.L","NG.L","LLOY.L","BATS.L","BA.L","VOD.L","BHP.L","AAL.L","EXPN.L","LSEG.L","PRU.L","AHT.L","ABF.L","ANTO.L","AUTO.L","AV.L","BARC.L","BLND.L","BKG.L","BNZL.L","BRBY.L","CCH.L","CNA.L","CPG.L","CRDA.L","DCC.L","ENT.L","FERG.L","FLTR.L","GLEN.L","HIK.L","HLMA.L","IAG.L","IHG.L","IMB.L","INF.L","ITRK.L","JD.L","KGF.L","LAND.L","LGEN.L","MKS.L","MNDI.L","MRO.L","NWG.L","NXT.L","OCDO.L","PSON.L","RKT.L","RTO.L","SBRY.L","SDR.L","SGE.L","SMDS.L","SMIN.L","SMT.L","SN.L","SSE.L","STAN.L","SVT.L","TSCO.L","TW.L","UU.L","WEIR.L","WPP.L","WTB.L","III.L","ADM.L","AG.L","BDEV.L","BME.L","BOO.L","BTG.L","CLG.L","CNE.L","COB.L","DEMG.L","DPLM.L","ECM.L","EMG.L","FRES.L","GFS.L","HWDN.L","ICP.L","JMAT.L","MNG.L","MONY.L","MTRO.L"],
