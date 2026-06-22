@@ -415,9 +415,15 @@ function assetCard(a, selected) {
 // ═══════════════════════════════════════════════
 export async function render(container, { actionsSlot }) {
   let allData = null;
-  let currentTab = 'dashboard';
+  let currentTab = 'core';
+  let coreSizing = null;
+  let corePct = parseInt(localStorage.getItem('ethan_core_pct') ?? '70', 10);
   let basketAssets = [];
+  try {
+    basketAssets = JSON.parse(localStorage.getItem('ethan_satelite_assets') || '[]');
+  } catch (e) { basketAssets = []; }
   let basketResults = null;
+  let basketRawResults = null; // datos completos de Yahoo para métricas
   let chartInstances = {};
 
   actionsSlot.innerHTML = `
@@ -427,9 +433,9 @@ export async function render(container, { actionsSlot }) {
 
   container.innerHTML = `
     <div class="aa-tabs">
-      <button class="aa-tab active" data-tab="dashboard">Dashboard</button>
+      <button class="aa-tab active" data-tab="core">Cartera CORE</button>
       <button class="aa-tab" data-tab="params">Parámetros</button>
-      <button class="aa-tab" data-tab="basket">Cesta Libre</button>
+      <button class="aa-tab" data-tab="satelite">Cartera Satélite</button>
     </div>
     <div id="aa-content">
       <div class="empty">
@@ -504,6 +510,7 @@ export async function render(container, { actionsSlot }) {
     const hy = indicators.find(i => i.ticker === 'HYG');
     const fx = indicators.find(i => i.ticker === 'EURUSD=X');
     const sizing = calculatePositionSizing(allData);
+    coreSizing = sizing;
 
     renderDashboard({ allocationAssets, top2, recommendation, reitAssets, gold, silver, oil, hy, fx, sizing });
 
@@ -511,14 +518,212 @@ export async function render(container, { actionsSlot }) {
     if (lastUpdateEl) lastUpdateEl.textContent = 'Última actualización: ' + new Date().toLocaleString('es-ES');
   }
 
+  // ───────────────────────────────────────────────
+  // MÉTRICAS DE RIESGO DE CARTERA
+  // Todas calculadas sobre datos diarios del último año (≈252 días).
+  // Se calculan sobre la serie de retornos diarios de la cartera
+  // ponderada, no sobre activos individuales.
+  // ───────────────────────────────────────────────
+
+  /**
+   * Construye la serie de retornos diarios de la cartera ponderada.
+   * Usa los datos brutos (raw.closes completo, no solo los últimos 60)
+   * para tener máximo histórico disponible (~252 días).
+   */
+  function portfolioReturns(positions, dataSource) {
+    const posData = positions.map(p => {
+      const asset = (dataSource || allData).find(a => a.ticker === p.ticker);
+      // Preferir raw.closes (datos completos) sobre closes (recortado a 60 días)
+      const closes = asset?.raw?.closes || asset?.closes || [];
+      return { weight: p.weightPct / 100, closes };
+    }).filter(p => p.closes.length > 20);
+
+    if (posData.length === 0) return [];
+
+    const minLen = Math.min(...posData.map(p => p.closes.length));
+    const n = Math.min(minLen, 252);
+
+    const returns = [];
+    for (let i = 1; i < n; i++) {
+      let dayReturn = 0;
+      posData.forEach(p => {
+        const idx = p.closes.length - n + i;
+        if (idx > 0 && p.closes[idx] && p.closes[idx-1]) {
+          dayReturn += p.weight * ((p.closes[idx] / p.closes[idx-1]) - 1);
+        }
+      });
+      returns.push(dayReturn);
+    }
+    return returns;
+  }
+
+  function calcVolAnualizada(returns) {
+    if (returns.length < 5) return null;
+    const mean = returns.reduce((a,b) => a+b, 0) / returns.length;
+    const variance = returns.reduce((a,b) => a + Math.pow(b-mean, 2), 0) / returns.length;
+    return Math.sqrt(variance * 252) * 100; // anualizada en %
+  }
+
+  function calcMaxDrawdown(returns) {
+    if (returns.length < 2) return null;
+    let peak = 1, value = 1, maxDD = 0;
+    returns.forEach(r => {
+      value *= (1 + r);
+      if (value > peak) peak = value;
+      const dd = (value - peak) / peak;
+      if (dd < maxDD) maxDD = dd;
+    });
+    return maxDD * 100; // en %, negativo
+  }
+
+  function calcBestWorstMonth(returns) {
+    if (returns.length < 20) return { best: null, worst: null };
+    // Agrupar retornos en bloques de ~21 días (mes de trading)
+    const months = [];
+    for (let i = 0; i < returns.length; i += 21) {
+      const slice = returns.slice(i, i + 21);
+      if (slice.length < 5) continue;
+      const monthReturn = slice.reduce((acc, r) => acc * (1 + r), 1) - 1;
+      months.push(monthReturn * 100);
+    }
+    if (months.length === 0) return { best: null, worst: null };
+    return { best: Math.max(...months), worst: Math.min(...months) };
+  }
+
+  function calcSharpe(returns, riskFreeAnnual = 0.045) {
+    if (returns.length < 20) return null;
+    const riskFreeDaily = riskFreeAnnual / 252;
+    const excess = returns.map(r => r - riskFreeDaily);
+    const meanExcess = excess.reduce((a,b) => a+b, 0) / excess.length;
+    const std = Math.sqrt(excess.reduce((a,b) => a + Math.pow(b - meanExcess, 2), 0) / excess.length);
+    if (std === 0) return null;
+    return (meanExcess / std) * Math.sqrt(252);
+  }
+
+  function calcSortino(returns, riskFreeAnnual = 0.045) {
+    if (returns.length < 20) return null;
+    const riskFreeDaily = riskFreeAnnual / 252;
+    const excess = returns.map(r => r - riskFreeDaily);
+    const meanExcess = excess.reduce((a,b) => a+b, 0) / excess.length;
+    const downside = excess.filter(r => r < 0);
+    if (downside.length === 0) return null;
+    const downsideStd = Math.sqrt(downside.reduce((a,b) => a + b*b, 0) / excess.length);
+    if (downsideStd === 0) return null;
+    return (meanExcess / downsideStd) * Math.sqrt(252);
+  }
+
+  function renderMetricsBlock(sizing, label, donutId, dataSource = null) {
+    if (!sizing || sizing.positions.length === 0) return '';
+
+    const returns = portfolioReturns(sizing.positions, dataSource);
+    if (returns.length < 20) return '';
+
+    const vol = calcVolAnualizada(returns);
+    const mdd = calcMaxDrawdown(returns);
+    const { best, worst } = calcBestWorstMonth(returns);
+    const sharpe = calcSharpe(returns);
+    const sortino = calcSortino(returns);
+
+    const fmt = (v, decimals = 2, suffix = '%') =>
+      v === null ? '—' : `${v >= 0 ? '+' : ''}${v.toFixed(decimals)}${suffix}`;
+
+    const metricColor = (v, goodHigh) => {
+      if (v === null) return 'var(--text3)';
+      return goodHigh ? (v >= 0 ? 'var(--green)' : 'var(--red)') : (v <= -15 ? 'var(--red)' : v <= -8 ? 'var(--amber)' : 'var(--green)');
+    };
+
+    const sharpeColor = sharpe === null ? 'var(--text3)' : sharpe >= 1 ? 'var(--green)' : sharpe >= 0.5 ? 'var(--amber)' : 'var(--red)';
+    const volColor = vol === null ? 'var(--text3)' : vol <= 10 ? 'var(--green)' : vol <= 18 ? 'var(--amber)' : 'var(--red)';
+
+    return `
+      <div class="section-title" style="margin-top:26px;">Métricas de Riesgo · ${label} <span class="count">últimos 12 meses · pesos actuales fijos</span></div>
+      <div class="aa-metrics-grid">
+        <div class="aa-metric-card">
+          <div class="aa-metric-label">Volatilidad Anualizada</div>
+          <div class="aa-metric-value" style="color:${volColor}">${vol !== null ? vol.toFixed(1) + '%' : '—'}</div>
+          <div class="aa-metric-sub">desv. estándar × √252</div>
+        </div>
+        <div class="aa-metric-card">
+          <div class="aa-metric-label">Maximum Drawdown</div>
+          <div class="aa-metric-value" style="color:${metricColor(mdd, false)}">${mdd !== null ? mdd.toFixed(2) + '%' : '—'}</div>
+          <div class="aa-metric-sub">peor caída desde pico</div>
+        </div>
+        <div class="aa-metric-card">
+          <div class="aa-metric-label">Mejor Mes</div>
+          <div class="aa-metric-value" style="color:var(--green)">${best !== null ? '+' + best.toFixed(2) + '%' : '—'}</div>
+          <div class="aa-metric-sub">retorno mensual máximo</div>
+        </div>
+        <div class="aa-metric-card">
+          <div class="aa-metric-label">Peor Mes</div>
+          <div class="aa-metric-value" style="color:var(--red)">${worst !== null ? worst.toFixed(2) + '%' : '—'}</div>
+          <div class="aa-metric-sub">retorno mensual mínimo</div>
+        </div>
+        <div class="aa-metric-card">
+          <div class="aa-metric-label">Sharpe Ratio</div>
+          <div class="aa-metric-value" style="color:${sharpeColor}">${sharpe !== null ? sharpe.toFixed(2) : '—'}</div>
+          <div class="aa-metric-sub">rf = 4.5% · >1 = bueno</div>
+        </div>
+        <div class="aa-metric-card">
+          <div class="aa-metric-label">Sortino Ratio</div>
+          <div class="aa-metric-value" style="color:${sharpe !== null ? (sortino >= 1 ? 'var(--green)' : sortino >= 0.5 ? 'var(--amber)' : 'var(--red)') : 'var(--text3)'}">${sortino !== null ? sortino.toFixed(2) : '—'}</div>
+          <div class="aa-metric-sub">solo penaliza vol bajista</div>
+        </div>
+      </div>
+      <div style="font-size:9px;color:var(--text3);margin-top:6px;font-family:var(--mono);">
+        ⚠ Métricas calculadas con pesos actuales fijos sobre datos históricos de 12 meses. No representan rentabilidad pasada real con rebalanceos.
+      </div>
+    `;
+  }
+
+  function renderSplitBanner() {
+    const satPct = 100 - corePct;
+    return `
+      <div class="aa-split-banner">
+        <div class="aa-split-title">Distribución Capital Total</div>
+        <div class="aa-split-bar">
+          <div class="aa-split-seg core" style="width:${corePct}%">
+            <span class="aa-split-label">CORE ${corePct}%</span>
+          </div>
+          <div class="aa-split-seg satelite" style="width:${satPct}%">
+            <span class="aa-split-label">Satélite ${satPct}%</span>
+          </div>
+        </div>
+        <div class="aa-split-controls">
+          <span class="aa-split-hint">Arrastra para ajustar</span>
+          <input type="range" id="aa-split-slider" min="50" max="90" step="5" value="${corePct}" class="aa-split-slider">
+          <span class="aa-split-value" id="aa-split-value">${corePct} / ${satPct}</span>
+        </div>
+      </div>
+    `;
+  }
+
+  function attachSplitListener() {
+    const slider = document.getElementById('aa-split-slider');
+    if (!slider) return;
+    slider.addEventListener('input', () => {
+      corePct = parseInt(slider.value, 10);
+      localStorage.setItem('ethan_core_pct', corePct);
+      const satPct = 100 - corePct;
+      const valueEl = document.getElementById('aa-split-value');
+      if (valueEl) valueEl.textContent = `${corePct} / ${satPct}`;
+      const coreSeg = document.querySelector('.aa-split-seg.core');
+      const satSeg = document.querySelector('.aa-split-seg.satelite');
+      if (coreSeg) { coreSeg.style.width = corePct + '%'; coreSeg.querySelector('.aa-split-label').textContent = `CORE ${corePct}%`; }
+      if (satSeg) { satSeg.style.width = satPct + '%'; satSeg.querySelector('.aa-split-label').textContent = `Satélite ${satPct}%`; }
+    });
+  }
+
   function renderSizingBlock(sizing) {
     if (!sizing || sizing.positions.length === 0) {
       return `
         <div class="aa-sizing-block">
-          <div class="section-title">Asset Allocation Sugerido <span class="count">inversa de volatilidad</span></div>
-          <div class="empty" style="padding:30px 20px;">
-            <div class="empty-title">Sin posiciones</div>
-            <div class="empty-desc">Ningún activo del universo alcanza el score mínimo (≥6/8) ahora mismo.</div>
+          <div class="section-title">Cartera CORE <span class="count">inversa de volatilidad</span></div>
+          <div class="aa-cash-banner">
+            <div class="aa-cash-icon">💵</div>
+            <div>
+              <div class="aa-cash-title">100% Cash · En espera de señal</div>
+              <div class="aa-cash-desc">Ningún activo del universo CORE alcanza el score mínimo (≥6/8). El sistema indica mantenerse en liquidez hasta que las condiciones mejoren.</div>
+            </div>
           </div>
         </div>
       `;
@@ -553,7 +758,7 @@ export async function render(container, { actionsSlot }) {
 
     return `
       <div class="aa-sizing-block">
-        <div class="section-title">Asset Allocation Sugerido <span class="count">inversa de volatilidad · score≥6</span></div>
+        <div class="section-title">Cartera CORE <span class="count">inversa de volatilidad · score≥6</span></div>
         <div class="aa-sizing-layout">
           <div class="aa-sizing-main">
             <div class="aa-sizing-bar">${barHTML}</div>
@@ -586,10 +791,14 @@ export async function render(container, { actionsSlot }) {
     if (reitTop && reitTop.score >= 7 && recommendation.type !== 'RV') warnings.push({ type:'caution', icon:'🏢', text:`<strong>REITs fuertes (${reitTop.ticker}) pese a allocation no-RV:</strong> posible rotación sectorial temprana hacia inmobiliario. Vigilar si se confirma en próximas semanas.` });
 
     const sizingHTML = renderSizingBlock(sizing);
+    const splitHTML = renderSplitBanner();
+    const metricsHTML = renderMetricsBlock(sizing, 'Cartera CORE', 'aa-donut-dashboard');
 
     contentEl.innerHTML = `
       <div class="aa-tab-panel">
+        ${splitHTML}
         ${sizingHTML}
+        ${metricsHTML}
 
         ${warnings.length > 0 ? `
           <div class="aa-warnings">
@@ -641,6 +850,7 @@ export async function render(container, { actionsSlot }) {
       const canvas = document.getElementById('aa-donut-dashboard');
       if (canvas) chartInstances['aa-donut-dashboard'] = drawDonutChart(canvas, donutSegments);
     }
+    attachSplitListener();
   }
 
   function renderParameters() {
@@ -765,6 +975,10 @@ export async function render(container, { actionsSlot }) {
     if (matrixEl) matrixEl.innerHTML = corrHTML;
   }
 
+  function saveBasketToStorage() {
+    localStorage.setItem('ethan_satelite_assets', JSON.stringify(basketAssets));
+  }
+
   function renderBasketTab() {
     const chipsHTML = basketAssets.map((a, i) => `
       <div class="aa-basket-chip">
@@ -777,7 +991,7 @@ export async function render(container, { actionsSlot }) {
 
     contentEl.innerHTML = `
       <div class="aa-tab-panel">
-        <div class="section-title">Cesta Libre <span class="count">añade los activos que quieras analizar</span></div>
+        <div class="section-title">Cartera Satélite <span class="count">libre elección · 100% invertido, sin cash</span></div>
 
         <div class="aa-basket-form">
           <div class="aa-basket-field">
@@ -796,13 +1010,13 @@ export async function render(container, { actionsSlot }) {
           </div>
           <button class="btn btn-primary" id="aa-basket-add-btn">+ Añadir</button>
           <button class="btn" id="aa-basket-calc-btn" ${basketAssets.length < 2 ? 'disabled' : ''}>↻ Calcular Pesos</button>
-          ${basketAssets.length > 0 ? `<button class="btn" id="aa-basket-clear-btn">Vaciar cesta</button>` : ''}
+          ${basketAssets.length > 0 ? `<button class="btn" id="aa-basket-clear-btn">Vaciar</button>` : ''}
         </div>
 
         ${basketAssets.length > 0 ? `<div class="aa-basket-list">${chipsHTML}</div>` : `
           <div class="empty" style="padding:30px 20px;">
-            <div class="empty-title">Cesta vacía</div>
-            <div class="empty-desc">Añade al menos 2 tickers para calcular el reparto por inversa de volatilidad.</div>
+            <div class="empty-title">Cartera Satélite vacía</div>
+            <div class="empty-desc">Añade al menos 2 tickers. Los pesos se calculan por inversa de volatilidad sobre el capital Satélite.</div>
           </div>
         `}
 
@@ -864,6 +1078,17 @@ export async function render(container, { actionsSlot }) {
     destroyChart('aa-donut-basket');
     const canvas = document.getElementById('aa-donut-basket');
     if (canvas) chartInstances['aa-donut-basket'] = drawDonutChart(canvas, donutSegments);
+
+    // Métricas: usar basketRawResults como fuente de datos completos
+    if (basketRawResults) {
+      const satMetrics = renderMetricsBlock(
+        { positions: positions.map(p => ({ ...p, ticker: p.ticker })) },
+        'Cartera Satélite',
+        null,
+        basketRawResults
+      );
+      if (satMetrics) el.insertAdjacentHTML('beforeend', satMetrics);
+    }
   }
 
   async function calculateBasket() {
@@ -892,6 +1117,7 @@ export async function render(container, { actionsSlot }) {
     }));
 
     basketResults = calculateBasketSizing(results);
+    basketRawResults = results; // guardamos para métricas de riesgo
     renderBasketResults();
   }
 
@@ -908,6 +1134,7 @@ export async function render(container, { actionsSlot }) {
       if (basketAssets.some(a => a.ticker === raw)) { tickerInput.value = ''; return; }
       basketAssets.push({ ticker: raw, category: categoryInput.value });
       basketResults = null;
+      saveBasketToStorage();
       renderBasketTab();
     }
 
@@ -919,6 +1146,7 @@ export async function render(container, { actionsSlot }) {
         const idx = parseInt(btn.dataset.removeIndex, 10);
         basketAssets.splice(idx, 1);
         basketResults = null;
+        saveBasketToStorage();
         renderBasketTab();
       });
     });
@@ -927,6 +1155,8 @@ export async function render(container, { actionsSlot }) {
     if (clearBtn) clearBtn.addEventListener('click', () => {
       basketAssets = [];
       basketResults = null;
+      basketRawResults = null;
+      saveBasketToStorage();
       renderBasketTab();
     });
   }
@@ -937,9 +1167,10 @@ export async function render(container, { actionsSlot }) {
 
     if (tab === 'params') {
       renderParameters();
-    } else if (tab === 'basket') {
+    } else if (tab === 'satelite') {
       renderBasketTab();
     } else {
+      // tab === 'core'
       if (allData) {
         const allocationAssets = allData.filter(a => a.category === 'allocation').slice().sort((a,b)=>b.score-a.score);
         const top2 = allocationAssets.slice(0,2);
@@ -959,7 +1190,7 @@ export async function render(container, { actionsSlot }) {
           oil: commodityAssets.find(i=>i.ticker==='USO'),
           hy: indicators.find(i=>i.ticker==='HYG'),
           fx: indicators.find(i=>i.ticker==='EURUSD=X'),
-          sizing: calculatePositionSizing(allData)
+          sizing: coreSizing || calculatePositionSizing(allData)
         });
       } else {
         contentEl.innerHTML = `
