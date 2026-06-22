@@ -12,48 +12,7 @@ const INDICES = {
 
   NDX100: ["AAPL","MSFT","NVDA","AMZN","META","GOOGL","GOOG","TSLA","AVGO","COST","NFLX","TMUS","CSCO","AMD","ADBE","PEP","INTU","TXN","QCOM","ISRG","CMCSA","BKNG","AMAT","REGN","MU","PANW","LRCX","VRTX","KLAC","ADI","MRVL","ABNB","CDNS","SNPS","CRWD","CEG","MELI","ORLY","CTAS","MAR","FTNT","PCAR","PAYX","DASH","WDAY","ROST","AZO","ODFL","CPRT","FANG","FAST","KHC","BIIB","ON","DDOG","IDXX","TEAM","SIRI","EXC","MNST","DLTR","GEHC","MRNA","NXPI","WBD","SPLK","SBUX","VRSK","SMCI","ROP","TTWO","ALGN","WBA","DXCM","ANSS","GFS","ILMN","MDB","LCID","ZS","ENPH","OKTA","RIVN","SNOW","TTD","VRSN","CHTR","MTCH","ASML","SGEN","PYPL","BMRN","CTSH","GILD","LULU","ADSK","EA","EBAY","AEP","TSCO"],
 
-  NYSE: ["JPM","BAC","WFC","C","GS","MS","AXP","BX","KKR","BLK","USB","PNC","TFC","COF","SCHW","ICE","CME","SPGI","MCO","BK","STT","MTB","CFG","HBAN","RF","KEY","NTRS","FITB","FIS","FI","PYPL","V","MA","ACN","IBM","ORCL","SAP","HPQ","HPE","CDW","DELL","WDC","STX","NCR","DXC","UNH","CVS","ELV","CI","HUM","MOH","CNC","HCA","DGX","LH","SYK","MDT","BSX","ABT","BDX","DHR","TMO","A","WAT","IQV","ZBH","BAX","HRC","JNJ","PFE","MRK","LLY","BMY","ABBV","AMGN","GILD","REGN","BIIB","VRTX","MRNA","XOM","CVX","COP","OXY","DVN","HAL","SLB","BKR","MPC","VLO","PSX","EOG","FANG","PXD","APA","MRO","KMI","WMB","OKE","TRGP","LIN","APD","ECL","DOW","DD","LYB","PPG","SHW","NEM","FCX","NUE","STLD","AA","CF","MLM","VMC","IP","PKG","SEE","AVY","BALL","AMCR","UPS","FDX","GE","HON","RTX","LMT","NOC","GD","BA","CAT","DE","EMR","ETN","PH","ITW","ROK","AME","IR","PCAR","OTIS","CARR","AXON","TT","XYL","GNRC","JCI","ROP","CTAS","FAST","EXPD","ODFL","CSX","UNP","NSC","WAB","JBHT","RCL","CCL","MAR","HLT","WH","H","CHH","MGM","LVS","WYNN","CZR","DRI","YUM","MCD","SBUX","CMG","DPZ","EL","NKE","PVH","RL","TPR","VFC","KMX","AZO","ORLY","APTV","BWA","LKQ","WHR","HD","LOW","POOL","DHI","LEN","PHM","NVR","TOL","WY","PLD","AMT","CCI","SBAC","EQIX","DLR","EXR","PSA","AVB","EQR","ESS","MAA","CPT","UDR","WELL","VTR","HST","REG","O","NNN","VICI","SPG","IRM","AFL","MET","PRU","AIG","TRV","CB","ALL","PGR","HIG","AJG","MMC","AON","WTW","BRO","CINF","RE","ACGL","GWW","SNA","SFM","USFD","SYY","PFGC","BJ","WMT","KR","ADM","MOS","NTR","CF","CTVA","AWK"],
-
-  // ── ÍNDICES EUROPEOS (umbral de volumen: 500k) ──
-  EUROSTOXX50: [
-    "ASML.AS","LVMH.PA","TTE.PA","SAP.DE","SIE.DE","ALV.DE","ADYEN.AS","MC.PA","SAN.MC","INGA.AS",
-    "BNP.PA","AIR.PA","DTE.DE","ENEL.MI","OR.PA","MBG.DE","ABI.BR","BAYN.DE","IBE.MC","VOW3.DE",
-    "MUV2.DE","BMW.DE","PHIA.AS","DBK.DE","RMS.PA","CS.PA","EDF.PA","SU.PA","AXA.PA","KER.PA",
-    "DSY.PA","HO.PA","AF.PA","DG.PA","RI.PA","BN.PA","SGO.PA","VIE.PA","ORA.PA","CAP.PA",
-    "ENI.MI","ISP.MI","UCG.MI","STLAM.MI","RACE.MI","G.MI","PRY.MI","AZM.MI","SRG.MI","MONC.MI"
-  ],
-
-  FTSE100: [
-    "SHEL.L","AZN.L","HSBA.L","ULVR.L","BP.L","RIO.L","GSK.L","DGE.L","REL.L","NG.L",
-    "LLOY.L","BATS.L","BA.L","VOD.L","BHP.L","AAL.L","EXPN.L","RB.L","LSEG.L","PRU.L",
-    "AHT.L","ABF.L","ANTO.L","AUTO.L","AV.L","BARC.L","BLND.L","BKG.L","BNZL.L","BRBY.L",
-    "CCH.L","CNA.L","CPG.L","CRDA.L","DCC.L","ENT.L","FERG.L","FLTR.L","GLEN.L","HIK.L",
-    "HLMA.L","HSBA.L","IAG.L","ICP.L","IHG.L","IMB.L","INF.L","ITRK.L","JD.L","KGF.L",
-    "LAND.L","LGEN.L","MKS.L","MNDI.L","MRO.L","NWG.L","NXT.L","OCDO.L","PSH.L","PSON.L",
-    "RKT.L","RTO.L","SBRY.L","SDR.L","SGE.L","SMDS.L","SMIN.L","SMT.L","SN.L","SPX.L",
-    "SSE.L","STAN.L","SVT.L","TSCO.L","TW.L","ULVR.L","UU.L","WEIR.L","WPP.L","WTB.L"
-  ],
-
-  DAX40: [
-    "SAP.DE","SIE.DE","ALV.DE","MBG.DE","DTE.DE","BAYN.DE","VOW3.DE","MUV2.DE","BMW.DE",
-    "DBK.DE","RWE.DE","BAS.DE","EOAN.DE","HEN3.DE","MTX.DE","HNR1.DE","ZAL.DE","SHL.DE",
-    "DHL.DE","MRK.DE","IFX.DE","CON.DE","QIA.DE","PAH3.DE","BEI.DE","VNA.DE","ENR.DE",
-    "DHER.DE","AIR.DE","ADS.DE","FME.DE","FRE.DE","GN.DE","HEI.DE","LEG.DE","MAN.DE",
-    "PUM.DE","SDF.DE","SMHN.DE","SY1.DE"
-  ],
-
-  IBEX35: [
-    "SAN.MC","BBVA.MC","ITX.MC","IBE.MC","REP.MC","AMS.MC","CABK.MC","FER.MC","ACS.MC","MAP.MC",
-    "ENG.MC","GRF.MC","IAG.MC","LOG.MC","MEL.MC","NTGY.MC","PHM.MC","RED.MC","ROVI.MC","SAB.MC",
-    "SGRE.MC","SLR.MC","SOL.MC","TEF.MC","VIS.MC","CLNX.MC","COL.MC","ACX.MC","AENA.MC","ALM.MC",
-    "BKT.MC","CAF.MC","MDF.MC","MRL.MC","UNI.MC"
-  ]
-};
-
-// Umbral de volumen por índice: europeos usan 500k, americanos 990k
-const VOL_THRESHOLDS = {
-  SP500: 990000, NDX100: 990000, NYSE: 990000,
-  EUROSTOXX50: 500000, FTSE100: 500000, DAX40: 500000, IBEX35: 500000
+  NYSE: ["JPM","BAC","WFC","C","GS","MS","AXP","BX","KKR","BLK","USB","PNC","TFC","COF","SCHW","ICE","CME","SPGI","MCO","BK","STT","MTB","CFG","HBAN","RF","KEY","NTRS","FITB","FIS","FI","PYPL","V","MA","ACN","IBM","ORCL","SAP","HPQ","HPE","CDW","DELL","WDC","STX","NCR","DXC","UNH","CVS","ELV","CI","HUM","MOH","CNC","HCA","DGX","LH","SYK","MDT","BSX","ABT","BDX","DHR","TMO","A","WAT","IQV","ZBH","BAX","HRC","JNJ","PFE","MRK","LLY","BMY","ABBV","AMGN","GILD","REGN","BIIB","VRTX","MRNA","XOM","CVX","COP","OXY","DVN","HAL","SLB","BKR","MPC","VLO","PSX","EOG","FANG","PXD","APA","MRO","KMI","WMB","OKE","TRGP","LIN","APD","ECL","DOW","DD","LYB","PPG","SHW","NEM","FCX","NUE","STLD","AA","CF","MLM","VMC","IP","PKG","SEE","AVY","BALL","AMCR","UPS","FDX","GE","HON","RTX","LMT","NOC","GD","BA","CAT","DE","EMR","ETN","PH","ITW","ROK","AME","IR","PCAR","OTIS","CARR","AXON","TT","XYL","GNRC","JCI","ROP","CTAS","FAST","EXPD","ODFL","CSX","UNP","NSC","WAB","JBHT","RCL","CCL","MAR","HLT","WH","H","CHH","MGM","LVS","WYNN","CZR","DRI","YUM","MCD","SBUX","CMG","DPZ","EL","NKE","PVH","RL","HBI","TPR","VFC","LEVI","KMX","AZO","ORLY","AUTO","APTV","BWA","LKQ","WHR","HD","LOW","WSM","RH","POOL","DHI","LEN","PHM","NVR","TOL","MHO","KBH","MDC","CCS","WY","PLD","AMT","CCI","SBAC","EQIX","DLR","EXR","PSA","AVB","EQR","ESS","MAA","CPT","UDR","WELL","VTR","HST","REG","O","NNN","WPC","SRC","VICI","GLPI","MPW","BXP","SLG","KIM","FRT","SPG","MAC","CBL","PEI","SKT","PINE","ADC","NTST","EPRT","STAG","EGP","TRNO","FR","RexFord","REXR","IIPR","COLD","PEB","SHO","CHSP","RHP","IRM","COR","UHS","THC","HCA","ENSG","AMED","HCSG","CHE","ADUS","EHTH","PFG","AFL","MET","PRU","GL","CNO","FNF","FAF","BHF","AIG","TRV","CB","ALL","PGR","MKL","RLI","HIG","AJG","MMC","AON","WTW","BRO","ERIE","CINF","THG","RNR","AWH","RE","EG","ACGL","AIZ","RGA","FG","FNB","GBCI","PPBI","CVBF","WAFD","HOMB","BANR","NBT","CATY","CVLY","ONB","NBTB","HFWA","STBA","FBIZ","SFNC","BSVN","GWW","MSM","FAST","NDSN","RBC","SNA","KMT","WMS","RXN","BMI","CFX","GTLS","MWA","ESCO","DCI","TRMK","HI","ESE","FELE","LYTS","ASGN","KFRC","TBI","HSII","MPS","KELYA","NARA","SFM","USFD","SYY","US","PFGC","CHEF","BJ","COST","WMT","KR","ACI","WEIS","INGR","BG","ADM","MOS","NTR","CF","CTVA","FMC","TVA","AWK","WTR","MSEX","CWCO","ARTNA","YORW","GWRS","SJW","MGEE","UTRS"]
 };
 
 const SECTOR_MAP = {
@@ -66,6 +25,7 @@ const SECTOR_NAMES = {
   'XLB':'Materials','XLU':'Utilities','XLRE':'Real Estate','XLC':'Comm'
 };
 
+const VOL_THRESHOLD = 990000;
 const VOL_AVG_PERIODS = 11;
 
 // ── Proxies CORS ───────────────────────────────
@@ -195,14 +155,14 @@ async function fetchOHLC(ticker) {
   };
 }
 
-function analyzeAsset(raw, volThreshold = 990000) {
+function analyzeAsset(raw) {
   const { timestamps, opens, highs, lows, closes, vols } = raw;
   const n = closes.length;
 
-  // Filtro de volumen configurable por índice
+  // Filtro de volumen: último día > 990k Y media 11 sesiones > 990k
   const lastVol = vols[n-1];
   const avgVol11 = vols.slice(-VOL_AVG_PERIODS).reduce((a,b) => a+(b||0), 0) / VOL_AVG_PERIODS;
-  if (lastVol < volThreshold || avgVol11 < volThreshold) return null;
+  if (lastVol < VOL_THRESHOLD || avgVol11 < VOL_THRESHOLD) return null; // no pasa el filtro
 
   const W = resample(timestamps, opens, highs, lows, closes, vols, 'W');
   const M = resample(timestamps, opens, highs, lows, closes, vols, 'M');
@@ -263,17 +223,9 @@ export async function render(container, { actionsSlot }) {
   actionsSlot.innerHTML = `
     <div style="display:flex;gap:8px;align-items:center;">
       <select id="sc-index-select" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text1);font-family:var(--mono);font-size:11px;">
-        <optgroup label="🇺🇸 Estados Unidos">
-          <option value="SP500">S&P 500</option>
-          <option value="NDX100">NASDAQ 100</option>
-          <option value="NYSE">NYSE Principales</option>
-        </optgroup>
-        <optgroup label="🇪🇺 Europa (umbral vol: 500k)">
-          <option value="EUROSTOXX50">EuroStoxx 50</option>
-          <option value="DAX40">DAX 40 · Alemania</option>
-          <option value="FTSE100">FTSE 100 · Londres</option>
-          <option value="IBEX35">IBEX 35 · España</option>
-        </optgroup>
+        <option value="SP500">S&P 500</option>
+        <option value="NDX100">NASDAQ 100</option>
+        <option value="NYSE">NYSE Principales</option>
       </select>
       <button class="btn btn-primary" id="sc-scan-btn">▶ Escanear</button>
     </div>
@@ -393,14 +345,12 @@ export async function render(container, { actionsSlot }) {
 
     const indexKey = document.getElementById('sc-index-select')?.value || 'SP500';
     const tickers = INDICES[indexKey] || INDICES.SP500;
-    const volThreshold = VOL_THRESHOLDS[indexKey] || 990000;
-    const isEuropean = ['EUROSTOXX50','FTSE100','DAX40','IBEX35'].includes(indexKey);
 
     document.getElementById('sc-filters').style.display = 'none';
     document.getElementById('sc-progress-wrap').style.display = 'block';
     document.getElementById('sc-scan-btn').disabled = true;
     document.getElementById('sc-results').innerHTML = `
-      <div class="empty"><div class="loader-ring"></div><div class="empty-title">Analizando ${tickers.length} valores...</div><div class="empty-desc">Filtro de volumen: >${isEuropean ? '500k' : '990k'} acciones y media 11 sesiones</div></div>
+      <div class="empty"><div class="loader-ring"></div><div class="empty-title">Analizando ${tickers.length} valores...</div><div class="empty-desc">Fase 1: filtro de volumen</div></div>
     `;
 
     const fill = document.getElementById('sc-progress-fill');
@@ -415,7 +365,7 @@ export async function render(container, { actionsSlot }) {
 
       try {
         const raw = await fetchOHLC(ticker);
-        const result = analyzeAsset(raw, volThreshold);
+        const result = analyzeAsset(raw);
         if (result) {
           result.ticker = ticker;
           result.sector = SECTOR_MAP[ticker] || null;
