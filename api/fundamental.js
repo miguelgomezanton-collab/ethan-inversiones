@@ -12,11 +12,11 @@
 
 const FMP_BASE = 'https://financialmodelingprep.com/stable';
 
-async function fmpFetch(path, apiKey) {
-  const sep = path.includes('?') ? '&' : '?';
-  const url = `${FMP_BASE}${path}${sep}apikey=${apiKey}`;
+async function fmpFetch(endpoint, symbol, params, apiKey) {
+  const qs = new URLSearchParams({ symbol, ...params, apikey: apiKey });
+  const url = `${FMP_BASE}/${endpoint}?${qs.toString()}`;
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`FMP ${path}: HTTP ${res.status}`);
+  if (!res.ok) throw new Error(`FMP ${endpoint}: HTTP ${res.status}`);
   const data = await res.json();
   if (data && data['Error Message']) throw new Error(`FMP: ${data['Error Message']}`);
   return data;
@@ -134,12 +134,12 @@ export default async function handler(req, res) {
     // ── Llamadas en paralelo a FMP ──────────────────
     const [incomeRes, balanceRes, cashRes, metricsRes, growthRes, profileRes] =
       await Promise.allSettled([
-        fmpFetch(`/income-statement/${ticker}?limit=2`, apiKey),
-        fmpFetch(`/balance-sheet-statement/${ticker}?limit=1`, apiKey),
-        fmpFetch(`/cash-flow-statement/${ticker}?limit=1`, apiKey),
-        fmpFetch(`/key-metrics-ttm/${ticker}`, apiKey),
-        fmpFetch(`/financial-growth/${ticker}?limit=1`, apiKey),
-        fmpFetch(`/profile/${ticker}`, apiKey)
+        fmpFetch('income-statement',        ticker, { limit: 2 },  apiKey),
+        fmpFetch('balance-sheet-statement', ticker, { limit: 1 },  apiKey),
+        fmpFetch('cash-flow-statement',     ticker, { limit: 1 },  apiKey),
+        fmpFetch('key-metrics-ttm',         ticker, {},            apiKey),
+        fmpFetch('financial-growth',        ticker, { limit: 1 },  apiKey),
+        fmpFetch('profile',                 ticker, {},            apiKey)
       ]);
 
     // ── Extracción de datos ─────────────────────────
