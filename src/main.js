@@ -41,6 +41,11 @@ registerPage('alc-rv-watchlist', {
   title: 'Watchlist · Renta Variable',
   loader: () => import('./modules/alcista/rv-watchlist.js')
 });
+registerPage('alc-rf-screener', {
+  crumb: '2. Alcista <span>›</span> 2.2 Renta Fija <span>›</span> Screener',
+  title: 'Screener · Renta Fija',
+  loader: () => import('./modules/alcista/rf-screener.js')
+});
 registerPage('alc-rf-watchlist', {
   crumb: '2. Alcista <span>›</span> 2.2 Renta Fija <span>›</span> Watchlist',
   title: 'Watchlist · Renta Fija',
