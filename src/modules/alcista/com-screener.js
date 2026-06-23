@@ -195,6 +195,18 @@ export async function render(container, { actionsSlot }) {
     </div>
   `;
 
+  function addToWatchlistLocal(ticker) {
+    try {
+      const list = JSON.parse(localStorage.getItem('ethan_watchlist_com_v1') || '[]');
+      if (!list.includes(ticker)) {
+        list.push(ticker);
+        localStorage.setItem('ethan_watchlist_com_v1', JSON.stringify(list));
+      }
+      const btn = document.querySelector(`[data-wl="${ticker}"]`);
+      if (btn) { btn.textContent = '✓'; btn.style.color = 'var(--green)'; btn.disabled = true; }
+    } catch (e) {}
+  }
+
   function renderResults() {
     const minScore   = parseInt(document.getElementById('cm-filter-score')?.value || '7');
     const filterTipo = document.getElementById('cm-filter-tipo')?.value || 'all';
@@ -242,7 +254,7 @@ export async function render(container, { actionsSlot }) {
       </div>
       <table class="sc2-table">
         <thead>
-          <tr><th>ACTIVO</th><th>CATEGORÍA</th><th>SCORE</th><th>ESTADO</th><th>PRECIO</th><th>VOLUMEN MEDIA 11s</th></tr>
+          <tr><th>ACTIVO</th><th>CATEGORÍA</th><th>SCORE</th><th>ESTADO</th><th>PRECIO</th><th>VOLUMEN MEDIA 11s</th><th></th></tr>
         </thead>
         <tbody>
           ${filtered.map(r => `
@@ -264,11 +276,19 @@ export async function render(container, { actionsSlot }) {
               <td style="color:${estColor(r.estado)};font-size:10px;font-weight:600">${estLabel[r.estado]||'—'}</td>
               <td class="sc2-price">${r.price?r.price.toFixed(2):'—'}</td>
               <td class="sc2-vol">${r.type==='futures'?(r.avgVol11>=1000?Math.round(r.avgVol11/1000)+'k contratos':'—'):(r.avgVol11>=1e6?(r.avgVol11/1e6).toFixed(1)+'M':Math.round(r.avgVol11/1e3)+'k')}</td>
+              <td><button class="sc2-wl-btn" data-wl="${r.ticker}">+ WL</button></td>
             </tr>
           `).join('')}
         </tbody>
       </table>
     `;
+
+    el.querySelectorAll('.sc2-wl-btn').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        addToWatchlistLocal(btn.dataset.wl);
+      });
+    });
   }
 
   async function startScan() {
