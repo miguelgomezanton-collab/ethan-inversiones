@@ -579,3 +579,44 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 .sc2-score { font-family: var(--serif); font-weight: 700; font-size: 16px; font-style: italic; }
 .sc2-price { font-family: var(--mono); }
 .sc2-vol { font-family: var(--mono); font-size: 10px; color: var(--text3); }
+
+/* ── SECTORES: selector de vista Rotación / Componentes ── */
+.sct-view-tabs {
+  display: flex; gap: 4px; margin-bottom: 16px;
+  border-bottom: 1px solid var(--border); padding-bottom: 0;
+}
+.sct-view-tab {
+  padding: 9px 18px; background: transparent; border: none; color: var(--text3);
+  cursor: pointer; font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
+  border-bottom: 2px solid transparent; transition: all 0.15s; font-family: var(--sans);
+}
+.sct-view-tab:hover { color: var(--text2); }
+.sct-view-tab.active { color: var(--teal); border-bottom-color: var(--teal); }
+.sct-view-panel { animation: aa-fade-in 0.15s ease; }
+
+/* ── ROTACIÓN: grid de tarjetas ── */
+.sct-rotation-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px; margin-top: 8px;
+}
+.sct-rot-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 14px 16px; display: flex; align-items: flex-start; gap: 12px;
+  transition: border-color 0.2s, transform 0.15s;
+}
+.sct-rot-card:hover { border-color: var(--border2); transform: translateY(-2px); }
+.sct-rot-card.rot-ready { border-color: rgba(74,222,128,0.3); box-shadow: 0 0 0 1px rgba(74,222,128,0.15); }
+.sct-rot-rank {
+  font-family: var(--serif); font-size: 22px; font-weight: 700; font-style: italic;
+  line-height: 1; flex-shrink: 0; min-width: 32px;
+}
+.sct-rot-main { flex: 1; min-width: 0; }
+.sct-rot-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.sct-rot-emoji { font-size: 20px; flex-shrink: 0; }
+.sct-rot-ticker { font-family: var(--mono); font-size: 14px; font-weight: 700; color: var(--text1); }
+.sct-rot-name { font-size: 9.5px; color: var(--text3); margin-top: 2px; }
+.sct-rot-score { font-family: var(--serif); font-size: 26px; font-weight: 700; font-style: italic; line-height: 1; margin-left: auto; flex-shrink: 0; }
+.sct-rot-bar-wrap { height: 4px; background: var(--surface2); border-radius: 2px; overflow: hidden; margin-bottom: 8px; }
+.sct-rot-bar-fill { height: 100%; border-radius: 2px; transition: width 0.6s ease; }
+.sct-rot-footer { display: flex; justify-content: space-between; align-items: center; }
+.sct-rot-price { font-family: var(--mono); font-size: 11px; color: var(--text2); }

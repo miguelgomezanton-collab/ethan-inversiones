@@ -173,67 +173,113 @@ export async function render(container, { actionsSlot }) {
     sectorState[cfg.key] = { results: [], scanning: false, done: 0, total: 0 };
   });
   let activeTab = 'XLK';
+  let activeView = 'rotacion'; // 'rotacion' | 'componentes'
+  let rotacionResults = [];
+  let rotacionScanning = false;
 
   actionsSlot.innerHTML = '';
 
+  // Los 11 ETFs sectoriales para la Rotación
+  const ETFS_SECTORIALES = [
+    { ticker: 'XLK',  name: 'Technology',       emoji: '💻' },
+    { ticker: 'XLF',  name: 'Financials',        emoji: '🏦' },
+    { ticker: 'XLV',  name: 'Health Care',       emoji: '🏥' },
+    { ticker: 'XLE',  name: 'Energy',            emoji: '⚡' },
+    { ticker: 'XLY',  name: 'Consumer Discret.', emoji: '🛍️' },
+    { ticker: 'XLP',  name: 'Consumer Staples',  emoji: '🛒' },
+    { ticker: 'XLI',  name: 'Industrials',       emoji: '🏭' },
+    { ticker: 'XLB',  name: 'Materials',         emoji: '⚗️' },
+    { ticker: 'XLU',  name: 'Utilities',         emoji: '💡' },
+    { ticker: 'XLRE', name: 'Real Estate',       emoji: '🏢' },
+    { ticker: 'XLC',  name: 'Communication',     emoji: '📡' },
+  ];
+
   container.innerHTML = `
     <div class="sc2-wrap">
-      <div class="sc2-tabs" id="sc2s-tabs">
+
+      <!-- Selector de vista principal -->
+      <div class="sct-view-tabs">
+        <button class="sct-view-tab active" data-view="rotacion">📊 Rotación Sectorial</button>
+        <button class="sct-view-tab" data-view="componentes">🔍 Componentes por Sector</button>
+      </div>
+
+      <!-- VISTA 1: ROTACIÓN -->
+      <div id="sct-panel-rotacion" class="sct-view-panel active">
+        <div class="sc2-toolbar">
+          <div style="font-size:11px;color:var(--text3);">
+            Analiza los 11 ETFs sectoriales SPDR y los rankea por fuerza técnica (score /10)
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;">
+            <span class="sc2-status" id="rot-status"></span>
+            <button class="sc2-btn-scan" id="rot-scan-btn">▶ Escanear Sectores</button>
+          </div>
+        </div>
+        <div class="sc2-progress" id="rot-progress" style="display:none">
+          <div class="sc2-progress-fill" id="rot-progress-fill"></div>
+        </div>
+        <div id="rot-results">
+          <div class="sc2-empty">Pulsa Escanear para analizar los 11 ETFs sectoriales</div>
+        </div>
+      </div>
+
+      <!-- VISTA 2: COMPONENTES -->
+      <div id="sct-panel-componentes" class="sct-view-panel" style="display:none">
+        <div class="sc2-tabs" id="sc2s-tabs">
+          ${SECTORS_CONFIG.map((cfg,i) => `
+            <button class="sc2-tab ${i===0?'active':''}" data-sector="${cfg.key}">
+              ${cfg.emoji} ${cfg.label}
+              <span class="sc2-tab-badge" id="sbadge-${cfg.key}" style="display:none"></span>
+            </button>
+          `).join('')}
+        </div>
+
         ${SECTORS_CONFIG.map((cfg,i) => `
-          <button class="sc2-tab ${i===0?'active':''}" data-sector="${cfg.key}">
-            ${cfg.emoji} ${cfg.label}
-            <span class="sc2-tab-badge" id="sbadge-${cfg.key}" style="display:none"></span>
-          </button>
+          <div class="sc2-panel ${i===0?'active':''}" id="spanel-${cfg.key}">
+            <div class="sc2-toolbar">
+              <div class="sc2-filters">
+                <div class="sc2-filter"><label>SCORE MÍN.</label>
+                  <select id="sfs-${cfg.key}" class="sc2-sel">
+                    <option value="9">≥ 9</option>
+                    <option value="8">≥ 8</option>
+                    <option value="7" selected>≥ 7</option>
+                    <option value="6">≥ 6</option>
+                    <option value="5">≥ 5</option>
+                    <option value="0">Todos</option>
+                  </select>
+                </div>
+                <div class="sc2-filter"><label>VOLUMEN</label>
+                  <select id="sfv-${cfg.key}" class="sc2-sel">
+                    <option value="0">Cualquiera</option>
+                    <option value="500000">› 500k</option>
+                    <option value="990000" selected>› 990k</option>
+                    <option value="2000000">› 2M</option>
+                    <option value="5000000">› 5M</option>
+                  </select>
+                </div>
+                <div class="sc2-filter"><label>ESTADO</label>
+                  <select id="sfe-${cfg.key}" class="sc2-sel">
+                    <option value="all">Todos</option>
+                    <option value="ready">🟢 Ready</option>
+                    <option value="diario">🟡 Espera diario</option>
+                    <option value="close">🔵 Cerca</option>
+                  </select>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:12px;">
+                <span class="sc2-status" id="sst-${cfg.key}"></span>
+                <button class="sc2-btn-scan" id="sbtn-${cfg.key}" data-sector="${cfg.key}">▶ Escanear</button>
+              </div>
+            </div>
+            <div class="sc2-progress" id="sprog-${cfg.key}" style="display:none">
+              <div class="sc2-progress-fill" id="sprogfill-${cfg.key}"></div>
+            </div>
+            <div id="sres-${cfg.key}">
+              <div class="sc2-empty">Pulsa Escanear para analizar ${(SECTOR_TICKERS[cfg.key]||[]).length} valores del sector ${cfg.label}</div>
+            </div>
+          </div>
         `).join('')}
       </div>
 
-      ${SECTORS_CONFIG.map((cfg,i) => `
-        <div class="sc2-panel ${i===0?'active':''}" id="spanel-${cfg.key}">
-          <div class="sc2-toolbar">
-            <div class="sc2-filters">
-              <div class="sc2-filter"><label>SCORE MÍN.</label>
-                <select id="sfs-${cfg.key}" class="sc2-sel">
-                  <option value="9">≥ 9</option>
-                  <option value="8">≥ 8</option>
-                  <option value="7" selected>≥ 7</option>
-                  <option value="6">≥ 6</option>
-                  <option value="5">≥ 5</option>
-                  <option value="0">Todos</option>
-                </select>
-              </div>
-              <div class="sc2-filter"><label>VOLUMEN</label>
-                <select id="sfv-${cfg.key}" class="sc2-sel">
-                  <option value="0">Cualquiera</option>
-                  <option value="500000">› 500k</option>
-                  <option value="990000" selected>› 990k</option>
-                  <option value="2000000">› 2M</option>
-                  <option value="5000000">› 5M</option>
-                </select>
-              </div>
-              <div class="sc2-filter"><label>ESTADO</label>
-                <select id="sfe-${cfg.key}" class="sc2-sel">
-                  <option value="all">Todos</option>
-                  <option value="ready">🟢 Ready</option>
-                  <option value="diario">🟡 Espera diario</option>
-                  <option value="close">🔵 Cerca</option>
-                </select>
-              </div>
-            </div>
-            <div style="display:flex;align-items:center;gap:12px;">
-              <span class="sc2-status" id="sst-${cfg.key}"></span>
-              <button class="sc2-btn-scan" id="sbtn-${cfg.key}" data-sector="${cfg.key}">▶ Escanear</button>
-            </div>
-          </div>
-
-          <div class="sc2-progress" id="sprog-${cfg.key}" style="display:none">
-            <div class="sc2-progress-fill" id="sprogfill-${cfg.key}"></div>
-          </div>
-
-          <div id="sres-${cfg.key}">
-            <div class="sc2-empty">Pulsa Escanear para analizar ${(SECTOR_TICKERS[cfg.key]||[]).length} valores del sector ${cfg.label}</div>
-          </div>
-        </div>
-      `).join('')}
     </div>
   `;
 
@@ -340,6 +386,99 @@ export async function render(container, { actionsSlot }) {
     if (st)   st.textContent = `${state.results.length} valores · ${state.results.filter(r=>r.estado==='ready').length} listos`;
     renderTable(sectorKey);
   }
+
+  // ── Rotación Sectorial ──────────────────────
+  function renderRotacion() {
+    const el = document.getElementById('rot-results');
+    if (!el) return;
+    if (rotacionResults.length === 0) {
+      el.innerHTML = `<div class="sc2-empty">Pulsa Escanear para analizar los 11 ETFs sectoriales</div>`;
+      return;
+    }
+    const sorted = [...rotacionResults].sort((a,b) => b.score - a.score);
+    const scoreColor = s => s >= 9 ? 'var(--green)' : s >= 7 ? 'var(--amber)' : s >= 5 ? 'var(--blue)' : 'var(--text3)';
+    const estadoLabel = { ready:'🟢 LISTO', diario:'⏳ ESPERA DIARIO', close:'🔶 CERCA', watching:'👁 VIGILANDO' };
+    const estadoColor = e => e==='ready'?'var(--green)':e==='diario'?'var(--amber)':'var(--text3)';
+
+    el.innerHTML = `
+      <div class="sct-rotation-grid">
+        ${sorted.map((r, i) => {
+          const etf = ETFS_SECTORIALES.find(e => e.ticker === r.ticker) || {};
+          const barPct = (r.score / 10 * 100).toFixed(0);
+          const rankColor = i === 0 ? 'var(--green)' : i <= 2 ? 'var(--amber)' : 'var(--text3)';
+          return `
+            <div class="sct-rot-card ${r.estado === 'ready' ? 'rot-ready' : ''}">
+              <div class="sct-rot-rank" style="color:${rankColor}">#${i+1}</div>
+              <div class="sct-rot-main">
+                <div class="sct-rot-header">
+                  <span class="sct-rot-emoji">${etf.emoji || ''}</span>
+                  <div>
+                    <div class="sct-rot-ticker">${r.ticker}</div>
+                    <div class="sct-rot-name">${etf.name || ''}</div>
+                  </div>
+                  <div class="sct-rot-score" style="color:${scoreColor(r.score)}">${r.score}<span style="font-size:11px;font-style:normal;color:var(--text3);font-family:var(--mono)">/10</span></div>
+                </div>
+                <div class="sct-rot-bar-wrap">
+                  <div class="sct-rot-bar-fill" style="width:${barPct}%;background:${scoreColor(r.score)}"></div>
+                </div>
+                <div class="sct-rot-footer">
+                  <span style="color:${estadoColor(r.estado)};font-size:10px;font-weight:600">${estadoLabel[r.estado]||'—'}</span>
+                  <span class="sct-rot-price">${r.price ? '$'+r.price.toFixed(2) : '—'}</span>
+                </div>
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+  }
+
+  async function startRotacionScan() {
+    if (rotacionScanning) return;
+    rotacionScanning = true;
+    rotacionResults = [];
+
+    const btn  = document.getElementById('rot-scan-btn');
+    const st   = document.getElementById('rot-status');
+    const prog = document.getElementById('rot-progress');
+    const fill = document.getElementById('rot-progress-fill');
+
+    if (btn)  { btn.disabled = true; btn.textContent = '⏳ Escaneando...'; }
+    if (prog) prog.style.display = 'block';
+    if (fill) fill.style.width = '0%';
+
+    // 11 ETFs en paralelo — son pocos, no hay riesgo de saturar proxies
+    const results = await Promise.all(ETFS_SECTORIALES.map(async (etf, i) => {
+      try {
+        const raw = await fetchOHLC(etf.ticker);
+        const result = analyzeAsset(raw);
+        result.ticker = etf.ticker;
+        if (fill) fill.style.width = `${((i+1)/ETFS_SECTORIALES.length*100).toFixed(0)}%`;
+        if (st)   st.textContent = `${etf.ticker} (${i+1}/${ETFS_SECTORIALES.length})`;
+        return result;
+      } catch { return null; }
+    }));
+
+    rotacionResults = results.filter(Boolean);
+    rotacionScanning = false;
+    if (btn)  { btn.disabled = false; btn.textContent = '↻ Re-escanear'; }
+    if (prog) prog.style.display = 'none';
+    if (st)   st.textContent = `${rotacionResults.length} sectores analizados`;
+    renderRotacion();
+  }
+
+  // ── Listeners vista principal ───────────────
+  container.querySelectorAll('.sct-view-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      const view = tab.dataset.view;
+      container.querySelectorAll('.sct-view-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      document.getElementById('sct-panel-rotacion').style.display   = view === 'rotacion'    ? 'block' : 'none';
+      document.getElementById('sct-panel-componentes').style.display = view === 'componentes' ? 'block' : 'none';
+    });
+  });
+
+  document.getElementById('rot-scan-btn')?.addEventListener('click', startRotacionScan);
 
   container.querySelectorAll('.sc2-tab[data-sector]').forEach(tab => {
     tab.addEventListener('click', () => {
