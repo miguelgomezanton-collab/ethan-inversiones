@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ETHAN Mercados</title>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=Montserrat:wght@200;300;400;500;600&family=IBM+Plex+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+  <script type="module" crossorigin src="/assets/index-MKV1szZm.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-DWCJFBhO.css">
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════
+     LOGIN SCREEN
+     ══════════════════════════════════════════ -->
+<div id="login-screen">
+  <div class="login-box">
+    <div class="login-logo">ethan <em>mercados</em></div>
+    <div class="login-sub">inversión <em>consciente</em> · crece · disfruta</div>
+
+    <form id="login-form">
+      <div class="login-field">
+        <input type="email" id="login-email" placeholder="Email" autocomplete="username" autofocus required>
+      </div>
+      <div class="login-field">
+        <input type="password" id="login-pass" placeholder="Contraseña" autocomplete="current-password" required>
+      </div>
+      <button class="login-btn" type="submit" id="login-submit">Acceder a la plataforma</button>
+    </form>
+    <div class="login-error" id="login-error"></div>
+    <div class="login-footer">Plataforma privada · Acceso restringido</div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     APP SHELL
+     ══════════════════════════════════════════ -->
+<div id="app">
+
+  <header id="header">
+    <div class="h-brand">
+      <div class="h-logo-icon" id="toggle-sidebar-btn">E</div>
+      <div class="h-logo-text">
+        <div class="h-logo-name">ethan mercados</div>
+        <div class="h-logo-sub">Plataforma · v3.0</div>
+      </div>
+    </div>
+    <div class="h-tickers" id="ticker-tape">
+      <div class="ticker-item"><span class="t-sym">SPY</span><span class="t-val" id="t-spy-v">—</span><span class="t-chg" id="t-spy-c">—</span></div>
+      <div class="ticker-item"><span class="t-sym">QQQ</span><span class="t-val" id="t-qqq-v">—</span><span class="t-chg" id="t-qqq-c">—</span></div>
+      <div class="ticker-item"><span class="t-sym">VIX</span><span class="t-val" id="t-vix-v">—</span><span class="t-chg" id="t-vix-c">—</span></div>
+      <div class="ticker-item"><span class="t-sym">GC=F</span><span class="t-val" id="t-gc-v">—</span><span class="t-chg" id="t-gc-c">—</span></div>
+      <div class="ticker-item"><span class="t-sym">10Y</span><span class="t-val" id="t-tnx-v">—</span><span class="t-chg" id="t-tnx-c">—</span></div>
+    </div>
+    <div class="h-right">
+      <div class="macro-pill" id="macro-pill-btn" title="Ir a Coyuntura Macro">
+        <span class="macro-pill-lbl">Macro</span>
+        <span class="macro-pill-val" id="macro-score-hdr">—</span>
+      </div>
+      <span class="h-user" id="h-user-email"></span>
+      <span class="h-clock" id="clock">—</span>
+      <button class="logout-btn" id="logout-btn">Salir</button>
+    </div>
+  </header>
+
+  <nav id="sidebar">
+    <button class="sb-toggle" id="sb-toggle-btn" title="Colapsar">◁</button>
+    <div id="sidebar-scroll">
+
+      <!-- 1. MACRO -->
+      <div class="grp open" data-accent="macro" data-tip="Macro">
+        <div class="grp-head" data-toggle-grp>
+          <span class="grp-num">1</span>
+          <div class="grp-icon">◉</div>
+          <span class="grp-title">Macro</span>
+          <span class="grp-chevron">▸</span>
+        </div>
+        <div class="grp-body">
+          <div class="mod mod-direct active" data-page="macro-coyuntura">
+            <span class="mod-icon">1.1</span><span class="mod-lbl">Coyuntura</span>
+          </div>
+          <div class="mod mod-direct" data-page="macro-indicadores">
+            <span class="mod-icon">1.2</span><span class="mod-lbl">Indicadores Seguimiento</span>
+          </div>
+          <div class="mod mod-direct" data-page="macro-liquidez">
+            <span class="mod-icon">1.3</span><span class="mod-lbl">Liquidez</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. ALCISTA -->
+      <div class="grp" data-accent="alcista" data-tip="Alcista">
+        <div class="grp-head" data-toggle-grp>
+          <span class="grp-num">2</span>
+          <div class="grp-icon">▲</div>
+          <span class="grp-title">Alcista</span>
+          <span class="grp-chevron">▸</span>
+        </div>
+        <div class="grp-body">
+          <div class="sub open">
+            <div class="sub-head" data-toggle-sub>
+              <span class="sub-dot"></span><span class="sub-title">2.1 · Renta Variable</span><span class="sub-chevron">▸</span>
+            </div>
+            <div class="sub-body">
+              <div class="mod" data-page="alc-rv-sectores"><span class="mod-icon">·</span><span class="mod-lbl">Screener Sectores</span></div>
+              <div class="mod" data-page="alc-rv-sp500"><span class="mod-icon">·</span><span class="mod-lbl">Screener SP500 – NYSE</span></div>
+              <div class="mod" data-page="alc-rv-watchlist"><span class="mod-icon">·</span><span class="mod-lbl">Watchlist</span></div>
+            </div>
+          </div>
+          <div class="sub">
+            <div class="sub-head" data-toggle-sub>
+              <span class="sub-dot"></span><span class="sub-title">2.2 · Renta Fija</span><span class="sub-chevron">▸</span>
+            </div>
+            <div class="sub-body">
+              <div class="mod" data-page="alc-rf-watchlist"><span class="mod-icon">·</span><span class="mod-lbl">Watchlist</span></div>
+            </div>
+          </div>
+          <div class="sub">
+            <div class="sub-head" data-toggle-sub>
+              <span class="sub-dot"></span><span class="sub-title">2.3 · Commodities</span><span class="sub-chevron">▸</span>
+            </div>
+            <div class="sub-body">
+              <div class="mod" data-page="alc-com-screener"><span class="mod-icon">·</span><span class="mod-lbl">Screener</span></div>
+              <div class="mod" data-page="alc-com-watchlist"><span class="mod-icon">·</span><span class="mod-lbl">Watchlist</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3. BAJISTA -->
+      <div class="grp" data-accent="bajista" data-tip="Bajista">
+        <div class="grp-head" data-toggle-grp>
+          <span class="grp-num">3</span>
+          <div class="grp-icon">▼</div>
+          <span class="grp-title">Bajista</span>
+          <span class="grp-chevron">▸</span>
+        </div>
+        <div class="grp-body">
+          <div class="mod mod-direct" data-page="baj-sectores"><span class="mod-icon">3.1</span><span class="mod-lbl">Screener Sectores</span></div>
+          <div class="mod mod-direct" data-page="baj-sp500"><span class="mod-icon">3.2</span><span class="mod-lbl">Screener SP500 – NYSE</span></div>
+          <div class="mod mod-direct" data-page="baj-watchlist"><span class="mod-icon">3.3</span><span class="mod-lbl">Watchlist</span></div>
+        </div>
+      </div>
+
+      <!-- 4. CARTERA -->
+      <div class="grp" data-accent="cartera" data-tip="Cartera">
+        <div class="grp-head" data-toggle-grp>
+          <span class="grp-num">4</span>
+          <div class="grp-icon">◫</div>
+          <span class="grp-title">Cartera</span>
+          <span class="grp-chevron">▸</span>
+        </div>
+        <div class="grp-body">
+          <div class="mod mod-direct" data-page="car-allocation"><span class="mod-icon">4.1</span><span class="mod-lbl">Asset Allocation</span></div>
+          <div class="mod mod-direct" data-page="car-cartera"><span class="mod-icon">4.2</span><span class="mod-lbl">Cartera</span></div>
+          <div class="mod mod-direct" data-page="car-money"><span class="mod-icon">4.3</span><span class="mod-lbl">Money Management</span></div>
+          <div class="mod mod-direct" data-page="car-risk"><span class="mod-icon">4.4</span><span class="mod-lbl">Risk Management</span></div>
+          <div class="mod mod-direct" data-page="car-backtest"><span class="mod-icon">4.5</span><span class="mod-lbl">Backtesting</span></div>
+          <div class="mod mod-direct" data-page="car-vitacora"><span class="mod-icon">4.6</span><span class="mod-lbl">Vitácora</span></div>
+        </div>
+      </div>
+
+      <!-- 5. FUNDAMENTALES -->
+      <div class="grp" data-accent="fund" data-tip="Fundamentales">
+        <div class="grp-head" data-toggle-grp>
+          <span class="grp-num">5</span>
+          <div class="grp-icon">▤</div>
+          <span class="grp-title">Fundamentales</span>
+          <span class="grp-chevron">▸</span>
+        </div>
+        <div class="grp-body">
+          <div class="mod mod-direct" data-page="fund-analisis"><span class="mod-icon">5</span><span class="mod-lbl">Análisis Fundamental</span></div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="sb-footer">
+      <div class="sb-footer-av" id="sb-avatar">·</div>
+      <div class="sb-footer-info">
+        <div class="sb-footer-name" id="sb-username">—</div>
+        <div class="sb-footer-status">Sistema activo</div>
+      </div>
+    </div>
+  </nav>
+
+  <main id="main"></main>
+
+  <div id="status-bar">
+    <span><span class="status-dot"></span>&nbsp; ONLINE</span>
+    <span id="status-module">—</span>
+    <span style="margin-left:auto;">ethan mercados · plataforma v3.0</span>
+  </div>
+
+</div>
+
+</body>
+</html>

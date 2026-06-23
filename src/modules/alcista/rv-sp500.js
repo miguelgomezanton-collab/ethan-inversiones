@@ -104,9 +104,9 @@ const VOL_AVG_PERIODS = 11;
 
 // ── Proxies CORS ───────────────────────────────
 const PROXIES = [
-  u => `https://soft-field-156f.miguel-gomez-anton.workers.dev/?url=${encodeURIComponent(u)}`,
   u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
   u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+  u => `https://soft-field-156f.miguel-gomez-anton.workers.dev/?url=${encodeURIComponent(u)}`,
   u => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`
 ];
 
@@ -328,6 +328,20 @@ export async function render(container, { actionsSlot }) {
   `;
 
   // ── Render tabla de resultados ──────────────
+  // Escribe en localStorage sin importar el módulo (evita dependencias circulares)
+  function addToWatchlistLocal(ticker) {
+    try {
+      const list = JSON.parse(localStorage.getItem('ethan_watchlist_v1') || '[]');
+      if (!list.includes(ticker)) {
+        list.push(ticker);
+        localStorage.setItem('ethan_watchlist_v1', JSON.stringify(list));
+      }
+      // Feedback visual breve en el botón
+      const btn = document.querySelector(`[data-wl="${ticker}"]`);
+      if (btn) { btn.textContent = '✓'; btn.style.color = 'var(--green)'; btn.disabled = true; }
+    } catch (e) {}
+  }
+
   function renderTable(indexKey) {
     const state = indexState[indexKey];
     const minScore = parseInt(document.getElementById(`fs-${indexKey}`)?.value || '7');
@@ -372,7 +386,7 @@ export async function render(container, { actionsSlot }) {
         <thead>
           <tr>
             <th>TICKER</th><th>SECTOR</th><th>SCORE</th><th>ESTADO</th>
-            <th>PRECIO</th><th>VOL MEDIA 11s</th>
+            <th>PRECIO</th><th>VOL MEDIA 11s</th><th></th>
           </tr>
         </thead>
         <tbody>
@@ -384,11 +398,20 @@ export async function render(container, { actionsSlot }) {
               <td style="color:${r.estado==='ready'?'var(--green)':r.estado==='diario'?'var(--amber)':'var(--text3)'}">${estadoLabel[r.estado]||'—'}</td>
               <td class="sc2-price">${r.price ? r.price.toFixed(2) : '—'}</td>
               <td class="sc2-vol">${r.avgVol11 >= 1e6 ? (r.avgVol11/1e6).toFixed(1)+'M' : Math.round(r.avgVol11/1e3)+'k'}</td>
+              <td><button class="sc2-wl-btn" data-wl="${r.ticker}">+ WL</button></td>
             </tr>
           `).join('')}
         </tbody>
       </table>
     `;
+
+    // Listener de botones watchlist
+    el.querySelectorAll('.sc2-wl-btn').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        addToWatchlistLocal(btn.dataset.wl);
+      });
+    });
   }
 
   // ── Escaneo ────────────────────────────────
