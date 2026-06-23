@@ -1,3 +1,4 @@
+import { UserData } from '../../userdata.js';
 // ═══════════════════════════════════════════════
 // MÓDULO: Screener · Renta Fija
 // Universo de ETFs de renta fija organizados por
@@ -137,32 +138,91 @@ function analyzeAsset(raw) {
   return{score,estado,price:closes[di],lastVol,avgVol11};
 }
 
-function addToWatchlistLocal(ticker) {
+async function addToWatchlistLocal(ticker) {
   try {
-    const list = JSON.parse(localStorage.getItem('ethan_watchlist_rf_v1') || '[]');
+    const list = (await UserData.get('ethan_watchlist_rf_v1')) || [];
     if (!list.includes(ticker)) {
       list.push(ticker);
-      localStorage.setItem('ethan_watchlist_rf_v1', JSON.stringify(list));
+      await UserData.set('ethan_watchlist_rf_v1', list);
     }
     const btn = document.querySelector(`[data-wl="${ticker}"]`);
     if (btn) { btn.textContent = '✓'; btn.style.color = 'var(--green)'; btn.disabled = true; }
   } catch (e) {}
 }
 
+const CUSTOM_KEY = 'ethan_rf_custom_etfs';
+
+async function loadCustomEtfs() {
+  try { return (await UserData.get(CUSTOM_KEY)) || []; } catch { return []; }
+}
+async function saveCustomEtfs(list) {
+  await UserData.set(CUSTOM_KEY, list);
+}
+async function buildUniverse() {
+  const custom = await loadCustomEtfs();
+  const baseTickers = new Set(RF_ETFS.map(e => e.ticker));
+  const customEtfs = custom
+    .filter(t => !baseTickers.has(t))
+    .map(t => ({ ticker: t, name: t, cat: 'custom', emoji: '➕' }));
+  return [...RF_ETFS, ...customEtfs];
+}
+
 export async function render(container, { actionsSlot }) {
   let scanResults = [];
   let scanning = false;
   let activeCategory = 'all';
+  let customEtfs = await loadCustomEtfs();
 
   actionsSlot.innerHTML = `
-    <div style="display:flex;align-items:center;gap:10px;">
+    <div style="display:flex;align-items:center;gap:8px;">
+      <input type="text" id="rf-custom-input" placeholder="Añadir ETF al universo..." class="wl-input" style="width:200px;">
+      <button class="btn" id="rf-custom-add-btn" style="font-size:10px;">+ Universo</button>
+      <span style="width:1px;height:16px;background:var(--border);display:inline-block;"></span>
       <span class="cm-status" id="rf-status"></span>
       <button class="cm-scan-btn" id="rf-scan-btn">▶ Escanear</button>
     </div>
   `;
 
+  async function renderCustomChips() {
+    const el = document.getElementById('rf-custom-chips');
+    if (!el) return;
+    const custom = await loadCustomEtfs();
+    if (custom.length === 0) {
+      el.innerHTML = '';
+      return;
+    }
+    el.innerHTML = `
+      <div style="display:flex;flex-wrap:wrap;gap:5px;padding:8px 0 4px;">
+        <span style="font-size:9px;color:var(--text3);font-family:var(--mono);align-self:center;margin-right:4px;">AÑADIDOS AL UNIVERSO:</span>
+        ${custom.map(t => `
+          <span class="rf-custom-chip">
+            ➕ ${t}
+            <button class="rf-custom-remove" data-ticker="${t}">✕</button>
+          </span>
+        `).join('')}
+      </div>
+    `;
+    el.querySelectorAll('.rf-custom-remove').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const t = btn.dataset.ticker;
+        const updated = (await loadCustomEtfs()).filter(x => x !== t);
+        await saveCustomEtfs(updated);
+        customEtfs = updated;
+        await renderCustomChips();
+        await updateUniverseCount();
+      });
+    });
+  }
+
+  async function updateUniverseCount() {
+    const total = (await buildUniverse()).length;
+    const el = document.getElementById('rf-universe-count');
+    if (el) el.textContent = `${total} ETFs en universo`;
+  }
+
   container.innerHTML = `
     <div class="cm-wrap">
+      <div id="rf-custom-chips"></div>
       <div class="cm-tabs">
         ${CATS_CONFIG.map((c,i) => `
           <button class="cm-tab ${i===0?'active':''}" data-cat="${c.key}">
@@ -170,6 +230,7 @@ export async function render(container, { actionsSlot }) {
             <span class="cm-tab-badge" id="rf-badge-${c.key}"></span>
           </button>
         `).join('')}
+        <span id="rf-universe-count" style="margin-left:auto;font-size:9px;color:var(--text3);font-family:var(--mono);align-self:center;padding-right:4px;"></span>
       </div>
 
       <div class="sc2-toolbar" style="margin-top:14px;">
@@ -200,10 +261,13 @@ export async function render(container, { actionsSlot }) {
       </div>
 
       <div id="rf-results">
-        <div class="sc2-empty">Pulsa Escanear para analizar ${RF_ETFS.length} ETFs de Renta Fija</div>
+        <div class="sc2-empty" id="rf-empty-msg">Pulsa Escanear para analizar los ETFs de Renta Fija</div>
       </div>
     </div>
   `;
+
+  await renderCustomChips();
+  await updateUniverseCount();
 
   function renderResults() {
     const minScore   = parseInt(document.getElementById('rf-filter-score')?.value || '7');
@@ -285,6 +349,7 @@ export async function render(container, { actionsSlot }) {
     scanning = true;
     scanResults = [];
 
+    const universe = await buildUniverse();
     const btn  = document.getElementById('rf-scan-btn');
     const st   = document.getElementById('rf-status');
     const prog = document.getElementById('rf-progress');
@@ -296,8 +361,8 @@ export async function render(container, { actionsSlot }) {
 
     const BATCH = 6;
     let done = 0;
-    for (let i=0; i<RF_ETFS.length; i+=BATCH) {
-      const batch = RF_ETFS.slice(i, i+BATCH);
+    for (let i=0; i<universe.length; i+=BATCH) {
+      const batch = universe.slice(i, i+BATCH);
       const res = await Promise.all(batch.map(async etf => {
         try {
           const raw = await fetchOHLC(etf.ticker);
@@ -306,8 +371,8 @@ export async function render(container, { actionsSlot }) {
       }));
       res.forEach(r => { if(r) scanResults.push(r); });
       done += batch.length;
-      if (fill) fill.style.width=(done/RF_ETFS.length*100).toFixed(0)+'%';
-      if (st)   st.textContent=`${RF_ETFS[Math.min(i+BATCH-1,RF_ETFS.length-1)].ticker} (${done}/${RF_ETFS.length})`;
+      if (fill) fill.style.width=(done/universe.length*100).toFixed(0)+'%';
+      if (st)   st.textContent=`${universe[Math.min(i+BATCH-1,universe.length-1)].ticker} (${done}/${universe.length})`;
       renderResults();
       await new Promise(r=>setTimeout(r,300));
     }
@@ -318,6 +383,30 @@ export async function render(container, { actionsSlot }) {
     if (st)   st.textContent=`${scanResults.length} ETFs · ${scanResults.filter(r=>r.estado==='ready').length} listos`;
     renderResults();
   }
+
+  // ── Listener: añadir ETF al universo ──────────
+  document.getElementById('rf-custom-add-btn')?.addEventListener('click', async () => {
+    const inp = document.getElementById('rf-custom-input');
+    const t = inp?.value.trim().toUpperCase();
+    if (!t) return;
+    const baseTickers = new Set(RF_ETFS.map(e => e.ticker));
+    const current = await loadCustomEtfs();
+    if (!baseTickers.has(t) && !current.includes(t)) {
+      current.push(t);
+      await saveCustomEtfs(current);
+      customEtfs = current;
+      await renderCustomChips();
+      await updateUniverseCount();
+    }
+    if (inp) inp.value = '';
+  });
+
+  document.getElementById('rf-custom-input')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      document.getElementById('rf-custom-add-btn')?.click();
+    }
+  });
 
   container.querySelectorAll('.cm-tab').forEach(tab => {
     tab.addEventListener('click', () => {

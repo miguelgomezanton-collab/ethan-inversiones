@@ -1,3 +1,4 @@
+import { UserData } from '../../userdata.js';
 // ═══════════════════════════════════════════════
 // MÓDULO: Screener por Sectores
 // Misma interfaz y motor que el Screener de Índices.
@@ -283,12 +284,12 @@ export async function render(container, { actionsSlot }) {
     </div>
   `;
 
-  function addToWatchlistLocal(ticker) {
+  async function addToWatchlistLocal(ticker) {
     try {
-      const list = JSON.parse(localStorage.getItem('ethan_watchlist_v1') || '[]');
+      const list = (await UserData.get('ethan_watchlist_v1')) || [];
       if (!list.includes(ticker)) {
         list.push(ticker);
-        localStorage.setItem('ethan_watchlist_v1', JSON.stringify(list));
+        await UserData.set('ethan_watchlist_v1', list);
       }
       const btn = document.querySelector(`[data-wl="${ticker}"]`);
       if (btn) { btn.textContent = '✓'; btn.style.color = 'var(--green)'; btn.disabled = true; }

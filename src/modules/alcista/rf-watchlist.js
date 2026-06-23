@@ -1,3 +1,4 @@
+import { UserData } from '../../userdata.js';
 // ═══════════════════════════════════════════════
 // MÓDULO: Watchlist · Renta Fija v1.0
 // Mismo motor que rv-watchlist y com-watchlist.
@@ -154,7 +155,7 @@ function detailRow(c){return`<div class="wl-detail-row"><span class="wl-cond-dot
 
 export async function render(container, { actionsSlot }) {
   let watchTickers = [];
-  try { watchTickers = JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; } catch { watchTickers = []; }
+  try { watchTickers = (await UserData.get(STORAGE_KEY)) || []; } catch { watchTickers = []; }
   const tickerData = {};
   const expanded = {};
 
@@ -287,7 +288,7 @@ export async function render(container, { actionsSlot }) {
         e.stopPropagation();
         const t=btn.dataset.ticker;
         watchTickers=watchTickers.filter(x=>x!==t);
-        localStorage.setItem(STORAGE_KEY,JSON.stringify(watchTickers));
+        UserData.set(STORAGE_KEY, watchTickers);
         delete tickerData[t];
         renderAll();
       });
@@ -306,12 +307,12 @@ export async function render(container, { actionsSlot }) {
     renderAll();
   }
 
-  function addTicker(ticker) {
+  async function addTicker(ticker) {
     const t=ticker.trim().toUpperCase();
     if(!t)return;
     if(watchTickers.includes(t))return;
     watchTickers.push(t);
-    localStorage.setItem(STORAGE_KEY,JSON.stringify(watchTickers));
+    await UserData.set(STORAGE_KEY, watchTickers);
     loadTicker(t);
   }
 
@@ -330,9 +331,9 @@ export async function render(container, { actionsSlot }) {
   return{destroy(){}};
 }
 
-export function addToWatchlist(ticker){
+export async function addToWatchlist(ticker){
   try{
-    const list=JSON.parse(localStorage.getItem(STORAGE_KEY))||[];
-    if(!list.includes(ticker)){list.push(ticker);localStorage.setItem(STORAGE_KEY,JSON.stringify(list));}
+    const list=(await UserData.get(STORAGE_KEY))||[];
+    if(!list.includes(ticker)){list.push(ticker);await UserData.set(STORAGE_KEY,list);}
   }catch(e){}
 }

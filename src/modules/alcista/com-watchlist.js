@@ -1,3 +1,4 @@
+import { UserData } from '../../userdata.js';
 // ═══════════════════════════════════════════════
 // MÓDULO: Watchlist · Commodities v1.0
 // Mismo motor que la watchlist de RV.
@@ -214,7 +215,7 @@ function detailRow(c){
 // ══════════════════════════════════════════════
 export async function render(container, { actionsSlot }) {
   let watchTickers = [];
-  try { watchTickers = JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; } catch { watchTickers = []; }
+  try { watchTickers = (await UserData.get(STORAGE_KEY)) || []; } catch { watchTickers = []; }
   const tickerData = {};
   const expanded = {};
 
@@ -365,11 +366,11 @@ export async function render(container, { actionsSlot }) {
       });
     });
     document.querySelectorAll('.wl-del-btn').forEach(btn=>{
-      btn.addEventListener('click',e=>{
+      btn.addEventListener('click', async e=>{
         e.stopPropagation();
         const ticker=btn.dataset.ticker;
         watchTickers=watchTickers.filter(t=>t!==ticker);
-        localStorage.setItem(STORAGE_KEY,JSON.stringify(watchTickers));
+        await UserData.set(STORAGE_KEY, watchTickers);
         delete tickerData[ticker];
         renderAll();
       });
@@ -388,12 +389,12 @@ export async function render(container, { actionsSlot }) {
     renderAll();
   }
 
-  function addTicker(ticker){
+  async function addTicker(ticker){
     const t=ticker.trim().toUpperCase().replace(/\s+/g,'');
     if(!t)return;
     if(watchTickers.includes(t)){renderAll();return;}
     watchTickers.push(t);
-    localStorage.setItem(STORAGE_KEY,JSON.stringify(watchTickers));
+    await UserData.set(STORAGE_KEY, watchTickers);
     loadTicker(t);
   }
 
@@ -420,12 +421,12 @@ export async function render(container, { actionsSlot }) {
 }
 
 // ── API pública para el screener de commodities ─
-export function addToWatchlist(ticker){
+export async function addToWatchlist(ticker){
   try{
-    const list=JSON.parse(localStorage.getItem(STORAGE_KEY))||[];
+    const list=(await UserData.get(STORAGE_KEY))||[];
     if(!list.includes(ticker)){
       list.push(ticker);
-      localStorage.setItem(STORAGE_KEY,JSON.stringify(list));
+      await UserData.set(STORAGE_KEY,list);
     }
   }catch(e){}
 }

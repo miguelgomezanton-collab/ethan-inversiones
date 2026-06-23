@@ -765,3 +765,17 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 }
 .sc2-wl-btn:hover { border-color: var(--teal); color: var(--teal); background: var(--teal-dim); }
 .sc2-wl-btn:disabled { color: var(--green); border-color: rgba(74,222,128,0.3); cursor: default; }
+
+/* ── RF Screener: chips ETFs personalizados ── */
+.rf-custom-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: rgba(64,217,192,0.08); border: 1px solid rgba(64,217,192,0.2);
+  border-radius: 20px; padding: 3px 8px 3px 10px;
+  font-family: var(--mono); font-size: 10px; color: var(--teal);
+}
+.rf-custom-remove {
+  background: transparent; border: none; color: var(--text3);
+  cursor: pointer; font-size: 10px; padding: 0; line-height: 1;
+  transition: color 0.15s;
+}
+.rf-custom-remove:hover { color: var(--red); }

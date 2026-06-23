@@ -1,3 +1,4 @@
+import { UserData } from '../../userdata.js';
 // ═══════════════════════════════════════════════
 // MÓDULO: Screener Alcista
 // Interfaz tabla (Ticker/Sector/Score/Estado/Precio/Acción)
@@ -329,12 +330,12 @@ export async function render(container, { actionsSlot }) {
 
   // ── Render tabla de resultados ──────────────
   // Escribe en localStorage sin importar el módulo (evita dependencias circulares)
-  function addToWatchlistLocal(ticker) {
+  async function addToWatchlistLocal(ticker) {
     try {
-      const list = JSON.parse(localStorage.getItem('ethan_watchlist_v1') || '[]');
+      const list = (await UserData.get('ethan_watchlist_v1')) || [];
       if (!list.includes(ticker)) {
         list.push(ticker);
-        localStorage.setItem('ethan_watchlist_v1', JSON.stringify(list));
+        await UserData.set('ethan_watchlist_v1', list);
       }
       // Feedback visual breve en el botón
       const btn = document.querySelector(`[data-wl="${ticker}"]`);

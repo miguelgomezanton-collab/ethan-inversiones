@@ -1,3 +1,4 @@
+import { UserData } from '../../userdata.js';
 // ═══════════════════════════════════════════════
 // MÓDULO: Asset Allocation (4.1)
 // Universo ampliado: RV, RF, REIT y Commodities (oro, plata,
@@ -420,7 +421,7 @@ export async function render(container, { actionsSlot }) {
   let corePct = parseInt(localStorage.getItem('ethan_core_pct') ?? '70', 10);
   let basketAssets = [];
   try {
-    basketAssets = JSON.parse(localStorage.getItem('ethan_satelite_assets') || '[]');
+    basketAssets = (await UserData.get('ethan_satelite_assets')) || [];
   } catch (e) { basketAssets = []; }
   let basketResults = null;
   let basketRawResults = null; // datos completos de Yahoo para métricas
@@ -702,7 +703,7 @@ export async function render(container, { actionsSlot }) {
     if (!slider) return;
     slider.addEventListener('input', () => {
       corePct = parseInt(slider.value, 10);
-      localStorage.setItem('ethan_core_pct', corePct);
+      localStorage.setItem('ethan_core_pct', corePct); UserData.set('ethan_core_pct', corePct);
       const satPct = 100 - corePct;
       const valueEl = document.getElementById('aa-split-value');
       if (valueEl) valueEl.textContent = `${corePct} / ${satPct}`;
@@ -976,7 +977,7 @@ export async function render(container, { actionsSlot }) {
   }
 
   function saveBasketToStorage() {
-    localStorage.setItem('ethan_satelite_assets', JSON.stringify(basketAssets));
+    UserData.set('ethan_satelite_assets', basketAssets);
   }
 
   function renderBasketTab() {
