@@ -211,47 +211,20 @@ function evaluate(raw) {
 }
 
 // ── Opciones: Max Pain ─────────────────────────
-const YF_BASE_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  'Accept': '*/*',
-  'Accept-Language': 'en-US,en;q=0.9',
-  'Referer': 'https://finance.yahoo.com/'
-};
-
-async function getYahooCrumb() {
-  const homeRes = await fetch('https://finance.yahoo.com', { headers: { ...YF_BASE_HEADERS, 'Accept': 'text/html' }, redirect: 'follow' });
-  const cookie = homeRes.headers.get('set-cookie') || '';
-  const crumbRes = await fetch('https://query1.finance.yahoo.com/v1/test/getcrumb', { headers: { ...YF_BASE_HEADERS, 'Cookie': cookie } });
-  if (!crumbRes.ok) throw new Error(`Crumb HTTP ${crumbRes.status}`);
-  const crumb = (await crumbRes.text()).trim();
-  if (!crumb || crumb.length < 3) throw new Error('Crumb inválido');
-  return { crumb, cookie };
-}
-
 async function fetchOptions(ticker) {
-  const { crumb, cookie } = await getYahooCrumb();
-  const url = `https://query2.finance.yahoo.com/v7/finance/options/${ticker}?crumb=${encodeURIComponent(crumb)}`;
-  const r = await fetch(url, { headers: { ...YF_BASE_HEADERS, 'Cookie': cookie } });
-  if (!r.ok) throw new Error(`Yahoo options HTTP ${r.status}`);
+  const r = await fetch(`/api/options?ticker=${encodeURIComponent(ticker)}`);
+  if (!r.ok) throw new Error(`API options HTTP ${r.status}`);
   const j = await r.json();
-  const chain = j?.optionChain?.result?.[0];
-  if (!chain) throw new Error('Sin cadena de opciones');
-  const expirations = chain.expirationDates || [];
-  const calls = chain.options?.[0]?.calls || [];
-  const puts  = chain.options?.[0]?.puts  || [];
-  return { expirations, calls, puts, quote: chain.quote, crumb, cookie };
+  if (j.error) throw new Error(j.error);
+  return j; // { expirationDates, calls, puts, price, symbol }
 }
 
-async function fetchOptionsExpiry(ticker, expiry, crumb, cookie) {
-  const url = `https://query2.finance.yahoo.com/v7/finance/options/${ticker}?date=${expiry}&crumb=${encodeURIComponent(crumb)}`;
-  const r = await fetch(url, { headers: { ...YF_BASE_HEADERS, 'Cookie': cookie } });
-  if (!r.ok) throw new Error(`Yahoo options HTTP ${r.status}`);
+async function fetchOptionsExpiry(ticker, expiry) {
+  const r = await fetch(`/api/options?ticker=${encodeURIComponent(ticker)}&date=${expiry}`);
+  if (!r.ok) throw new Error(`API options HTTP ${r.status}`);
   const j = await r.json();
-  const chain = j?.optionChain?.result?.[0];
-  if (!chain) throw new Error('Sin datos');
-  const calls = chain.options?.[0]?.calls || [];
-  const puts  = chain.options?.[0]?.puts  || [];
-  return { calls, puts };
+  if (j.error) throw new Error(j.error);
+  return j; // { calls, puts }
 }
 
 function calcMaxPain(calls, puts) {
@@ -282,7 +255,7 @@ const fmtP = v => v!=null&&!isNaN(v) ? '$'+v.toFixed(2) : '—';
 const fmtK = v => v>=1e6 ? (v/1e6).toFixed(1)+'M' : v>=1e3 ? (v/1e3).toFixed(0)+'k' : v?.toString() || '—';
 
 function condRow(ok, label, value, threshold, opt=false) {
-  const cls = ok ? (opt?'cond-opt':'cond-ok') : 'cond-fail';
+  const cls = ok ? (opt?'an-cond-opt':'an-cond-ok') : 'an-cond-fail';
   const icon = ok ? (opt?'⭐':'✓') : '✗';
   return `
     <div class="an-cond-row ${cls}">
@@ -462,11 +435,9 @@ export async function render(container, { actionsSlot }) {
 
     try {
       const opt = await fetchOptions(ticker);
-      expirations = opt.expirations;
+      expirations = opt.expirationDates || [];
       currentExpiry = expirations[0];
-      const { crumb, cookie } = opt;
-
-      paintOptions(ticker, opt.calls, opt.puts, opt.quote?.regularMarketPrice, crumb, cookie);
+      paintOptions(ticker, opt.calls, opt.puts, opt.price);
 
     } catch(err) {
       if (secEl) secEl.innerHTML = `
@@ -476,7 +447,7 @@ export async function render(container, { actionsSlot }) {
     }
   }
 
-  function paintOptions(ticker, calls, puts, price, crumb, cookie) {
+  function paintOptions(ticker, calls, puts, price) {
     const secEl = document.getElementById('an-options-section');
     if (!secEl) return;
 
@@ -586,8 +557,8 @@ export async function render(container, { actionsSlot }) {
           sel.disabled = true;
           try {
             const price2 = document.querySelector('.an-hero-value')?.textContent?.replace('$','') || null;
-            const { calls: nc, puts: np } = await fetchOptionsExpiry(currentTicker, currentExpiry, crumb, cookie);
-            paintOptions(currentTicker, nc, np, parseFloat(price2), crumb, cookie);
+            const { calls: nc, puts: np } = await fetchOptionsExpiry(currentTicker, currentExpiry);
+            paintOptions(currentTicker, nc, np, parseFloat(price2));
           } catch(e) {
             document.getElementById('an-options-body').innerHTML = `<div class="sc2-empty">Error: ${e.message}</div>`;
           }
