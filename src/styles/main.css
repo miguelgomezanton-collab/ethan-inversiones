@@ -869,3 +869,67 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
   .an-hero { grid-template-columns:1fr 1fr; }
   .an-tf-grid { grid-template-columns:1fr; }
 }
+
+/* ── OPEX info panel ── */
+.an-opex-info {
+  display:flex; flex-direction:column; gap:8px;
+  background:var(--surface); border:1px solid var(--border); border-radius:10px;
+  padding:12px 16px; margin-bottom:12px;
+}
+.an-opex-left { display:flex; align-items:center; gap:10px; }
+.an-opex-badge {
+  font-family:var(--mono); font-size:10px; font-weight:700;
+  padding:3px 10px; border-radius:20px; white-space:nowrap;
+}
+.an-opex-badge.quarterly { background:rgba(251,191,36,0.15); color:var(--amber); border:1px solid rgba(251,191,36,0.35); }
+.an-opex-badge.monthly   { background:rgba(64,217,192,0.10); color:var(--teal);  border:1px solid rgba(64,217,192,0.25); }
+.an-opex-badge.weekly    { background:var(--surface2); color:var(--text3); border:1px solid var(--border); }
+.an-opex-days { font-family:var(--mono); font-size:10px; color:var(--text3); }
+.an-opex-explain { font-size:11px; color:var(--text2); line-height:1.5; }
+.an-opex-explain strong { color:var(--text1); }
+
+/* ── MÓDULO ALERTAS ── */
+.al-header { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:20px; flex-wrap:wrap; }
+.al-title { font-family:var(--serif); font-size:20px; font-style:italic; color:var(--text1); }
+.al-sub   { font-family:var(--mono); font-size:10px; color:var(--text3); margin-top:4px; }
+.al-summary { display:flex; gap:8px; flex-wrap:wrap; }
+.al-chip { font-family:var(--mono); font-size:10px; font-weight:700; padding:4px 12px; border-radius:20px; }
+.al-chip.up      { background:rgba(74,222,128,0.12); color:var(--green); border:1px solid rgba(74,222,128,0.3); }
+.al-chip.down    { background:rgba(244,113,116,0.10); color:var(--red);   border:1px solid rgba(244,113,116,0.25); }
+.al-chip.neutral { background:var(--surface2); color:var(--text3); border:1px solid var(--border); }
+
+.al-section { margin-bottom:20px; }
+.al-section.collapsed .al-collapsed-body { display:none; }
+.al-section-title {
+  font-size:9.5px; font-weight:700; letter-spacing:0.14em; text-transform:uppercase;
+  padding-bottom:8px; border-bottom:1px solid var(--border); margin-bottom:10px;
+}
+.al-section-title.up      { color:var(--green); }
+.al-section-title.down    { color:var(--red); }
+.al-section-title.new     { color:var(--teal); }
+.al-section-title.neutral { color:var(--text3); }
+.al-section-title.error   { color:var(--amber); }
+
+.al-card {
+  display:flex; align-items:center; gap:16px; padding:12px 16px;
+  background:var(--surface); border:1px solid var(--border); border-radius:10px;
+  margin-bottom:6px; transition:border-color 0.2s;
+}
+.al-card.up      { border-left:3px solid var(--green); }
+.al-card.down    { border-left:3px solid var(--red); }
+.al-card.new     { border-left:3px solid var(--teal); }
+.al-card.neutral { opacity:0.7; }
+
+.al-card-left  { min-width:120px; }
+.al-card-center { flex:1; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.al-card-right { text-align:right; }
+
+.al-ticker { font-family:var(--mono); font-size:14px; font-weight:700; color:var(--text1); letter-spacing:0.05em; }
+.al-wl     { font-size:9px; color:var(--text3); margin-top:2px; font-family:var(--mono); }
+
+.al-state      { font-family:var(--mono); font-size:10px; font-weight:600; }
+.al-state.prev { color:var(--text3); }
+.al-arrow      { color:var(--text3); font-size:12px; }
+
+.al-score { font-family:var(--serif); font-size:18px; font-weight:700; font-style:italic; color:var(--text1); }
+.al-price { font-family:var(--mono); font-size:10px; color:var(--text2); margin-top:2px; }

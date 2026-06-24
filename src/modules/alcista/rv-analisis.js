@@ -429,16 +429,47 @@ export async function render(container, { actionsSlot }) {
       </div>`;
   }
 
+  // ── Detectar OPEX (tercer viernes del mes) ────
+  function isMonthlyOpex(ts) {
+    const d = new Date(ts * 1000);
+    if (d.getDay() !== 5) return false;
+    return d.getDate() >= 15 && d.getDate() <= 21;
+  }
+  function isQuarterlyOpex(ts) {
+    if (!isMonthlyOpex(ts)) return false;
+    return [2,5,8,11].includes(new Date(ts*1000).getMonth());
+  }
+  function getExpiryLabel(ts) {
+    const d = new Date(ts*1000);
+    const label = d.toLocaleDateString('es-ES',{day:'2-digit',month:'short',year:'numeric'});
+    const today = new Date(); today.setHours(0,0,0,0);
+    const exp = new Date(ts*1000); exp.setHours(0,0,0,0);
+    const days = Math.round((exp-today)/86400000);
+    const dStr = days===0?'HOY':days===1?'mañana':days+"d";
+    if (isQuarterlyOpex(ts)) return label+" ("+dStr+") ⭐ OPEX TRIM.";
+    if (isMonthlyOpex(ts))   return label+" ("+dStr+") 📅 OPEX MENS.";
+    return label+" ("+dStr+")";
+  }
+  function getBestExpiry(exps) {
+    const now = Date.now()/1000;
+    const future = exps.filter(e=>e>now);
+    if (!future.length) return exps[0];
+    return future.find(e=>isMonthlyOpex(e)) || future[0];
+  }
+
   async function loadOptions(ticker) {
     const secEl = document.getElementById('an-options-section');
     if (!secEl) return;
-
     try {
       const opt = await fetchOptions(ticker);
       expirations = opt.expirationDates || [];
-      currentExpiry = expirations[0];
-      paintOptions(ticker, opt.calls, opt.puts, opt.price);
-
+      currentExpiry = getBestExpiry(expirations);
+      if (currentExpiry !== expirations[0]) {
+        const data = await fetchOptionsExpiry(ticker, currentExpiry);
+        paintOptions(ticker, data.calls, data.puts, opt.price);
+      } else {
+        paintOptions(ticker, opt.calls, opt.puts, opt.price);
+      }
     } catch(err) {
       if (secEl) secEl.innerHTML = `
         <div class="section-title" style="margin-top:28px;">Cadena de Opciones · Max Pain</div>
@@ -475,21 +506,42 @@ export async function render(container, { actionsSlot }) {
     const near = price ? rows.filter(r => r.strike>=price*0.80 && r.strike<=price*1.20) : rows;
     const display = near.length > 0 ? near : rows.slice(0, 40);
 
-    // Expiry selector
+    // Expiry selector con etiquetas OPEX
     const expiryOpts = expirations.map(e => {
-      const d = new Date(e*1000);
-      const label = d.toLocaleDateString('es-ES',{day:'2-digit',month:'short',year:'numeric'});
-      return `<option value="${e}" ${e===currentExpiry?'selected':''}>${label}</option>`;
+      return `<option value="${e}" ${e===currentExpiry?'selected':''}>${getExpiryLabel(e)}</option>`;
     }).join('');
 
+    // Info del vencimiento seleccionado
+    const isOpexM = isMonthlyOpex(currentExpiry);
+    const isOpexQ = isQuarterlyOpex(currentExpiry);
+    const today = new Date(); today.setHours(0,0,0,0);
+    const expDate = new Date(currentExpiry*1000); expDate.setHours(0,0,0,0);
+    const daysLeft = Math.round((expDate - today) / 86400000);
+
     secEl.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:28px;margin-bottom:14px;flex-wrap:wrap;gap:12px;">
-        <div class="section-title" style="margin:0;">Cadena de Opciones · Max Pain
-          <span class="count">${ticker} · vencimiento próximo</span>
-        </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:28px;margin-bottom:10px;flex-wrap:wrap;gap:12px;">
+        <div class="section-title" style="margin:0;">Cadena de Opciones · Max Pain</div>
         <div style="display:flex;align-items:center;gap:10px;">
           ${expirations.length>1?`<select id="an-expiry-select" class="sc2-sel">${expiryOpts}</select>`:''}
           <div class="an-maxpain-badge">🎯 Max Pain: <strong>${fmtP(maxPain)}</strong></div>
+        </div>
+      </div>
+
+      <!-- Panel explicativo OPEX -->
+      <div class="an-opex-info">
+        <div class="an-opex-left">
+          <span class="an-opex-badge ${isOpexQ?'quarterly':isOpexM?'monthly':'weekly'}">
+            ${isOpexQ?'⭐ OPEX TRIMESTRAL':isOpexM?'📅 OPEX MENSUAL':'📆 VENCIMIENTO SEMANAL'}
+          </span>
+          <span class="an-opex-days">${daysLeft===0?'Vence HOY':daysLeft===1?'Vence mañana':`Vence en ${daysLeft} días`}</span>
+        </div>
+        <div class="an-opex-explain">
+          ${isOpexQ
+            ? '⭐ <strong>OPEX Trimestral</strong> — el más importante del año (mar/jun/sep/dic). Concentra el mayor volumen de contratos. El Max Pain tiene aquí su máxima influencia sobre el precio.'
+            : isOpexM
+            ? '📅 <strong>OPEX Mensual</strong> — tercer viernes de cada mes. Vencimiento de referencia para opciones estándar. El precio suele gravitar hacia el Max Pain en los días previos.'
+            : '📆 <strong>Vencimiento semanal</strong> — menor concentración de OI. El Max Pain es orientativo pero tiene menos peso que en el OPEX mensual. Se ha seleccionado el OPEX mensual más próximo automáticamente.'
+          }
         </div>
       </div>
 

@@ -26,6 +26,11 @@ registerPage('macro-liquidez', {
   loader: () => import('./modules/macro/liquidez.js')
 });
 
+registerPage('alc-alertas', {
+  crumb: '2. Alcista <span>›</span> Alertas',
+  title: 'Alertas · Cambios en Watchlist',
+  loader: () => import('./modules/alcista/alertas.js')
+});
 registerPage('alc-rv-analisis', {
   crumb: '2. Alcista <span>›</span> 2.1 Renta Variable <span>›</span> Análisis',
   title: 'Análisis Técnico',
