@@ -26,6 +26,11 @@ registerPage('macro-liquidez', {
   loader: () => import('./modules/macro/liquidez.js')
 });
 
+registerPage('alc-rv-analisis', {
+  crumb: '2. Alcista <span>›</span> 2.1 Renta Variable <span>›</span> Análisis',
+  title: 'Análisis Técnico',
+  loader: () => import('./modules/alcista/rv-analisis.js')
+});
 registerPage('alc-rv-sectores', {
   crumb: '2. Alcista <span>›</span> 2.1 Renta Variable <span>›</span> Screener Sectores',
   title: 'Screener de Sectores',
