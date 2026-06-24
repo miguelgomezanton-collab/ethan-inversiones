@@ -820,12 +820,17 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 /* Condition rows */
 .an-cond-row { display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid var(--border); font-size:11px; }
 .an-cond-row:last-of-type { border-bottom:none; }
-.an-cond-icon { width:16px; text-align:center; font-size:12px; flex-shrink:0; }
+.an-cond-icon { width:18px; text-align:center; font-size:13px; font-weight:700; flex-shrink:0; }
+.an-cond-ok   { background:rgba(64,217,192,0.05); border-radius:4px; padding:5px 6px !important; }
+.an-cond-opt  { background:rgba(74,222,128,0.08); border-radius:4px; padding:5px 6px !important; }
+.an-cond-fail { background:rgba(244,113,116,0.05); border-radius:4px; padding:5px 6px !important; }
 .an-cond-ok   .an-cond-icon { color:var(--teal); }
 .an-cond-opt  .an-cond-icon { color:var(--green); }
 .an-cond-fail .an-cond-icon { color:var(--red); }
-.an-cond-label { flex:1; color:var(--text2); }
-.an-cond-val   { font-family:var(--mono); font-size:10px; color:var(--text1); }
+.an-cond-ok   .an-cond-label { color:var(--teal); }
+.an-cond-opt  .an-cond-label { color:var(--green); }
+.an-cond-fail .an-cond-label { color:var(--red); opacity:0.8; }
+.an-cond-val   { font-family:var(--mono); font-size:10px; color:var(--text1); margin-left:auto; }
 .an-cond-thr   { font-family:var(--mono); font-size:9px; color:var(--text3); }
 .an-ema-row { font-family:var(--mono); font-size:9px; color:var(--text3); padding:8px 0 2px; }
 
