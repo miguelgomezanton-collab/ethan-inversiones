@@ -92,7 +92,9 @@ function analyzePosition(pos, data) {
   const ema10w = calcEMA(W.closes, 10);
   const stopSemanal = ema10w[W.closes.length-1];
 
-  const activeStop = pos.stopType === 'semanal' ? stopSemanal : stopDiario;
+  const activeStop = pos.stopType === 'manual'
+    ? pos.stopManual
+    : pos.stopType === 'semanal' ? stopSemanal : stopDiario;
   const escapeFalso = detectEscapeFalso(highs, closes);
   const pnlPct = ((currentPrice - pos.entry) / pos.entry) * 100;
   const distStop = ((currentPrice - activeStop) / currentPrice) * 100;
@@ -107,19 +109,169 @@ export async function render(container, { actionsSlot }) {
   let history   = (await UserData.get(HISTORY_KEY))  || [];
 
   actionsSlot.innerHTML = `
-    <div class="pos-add-bar">
-      <input type="text" id="pos-ticker" placeholder="Ticker" class="wl-input" style="width:110px;text-transform:uppercase;" autocomplete="off">
-      <input type="number" id="pos-entry" placeholder="Precio entrada" class="wl-input" style="width:150px;" step="0.01">
-      <select id="pos-stop-type" class="sc2-sel">
-        <option value="semanal">Stop EMA10 Semanal</option>
-        <option value="diario">Stop EMA10 Diario</option>
-      </select>
-      <input type="text" id="pos-notas" placeholder="Notas (opcional)" class="wl-input" style="width:160px;">
-      <button class="btn btn-primary" id="pos-add-btn">+ Añadir posición</button>
-    </div>
+    <button class="btn btn-primary" id="pos-open-form-btn">+ Nueva posición</button>
   `;
 
-  container.innerHTML = `<div id="pos-list"></div>`;
+  // Formulario como panel expandible en el container
+  container.innerHTML = `
+    <div id="pos-form-panel" style="display:none;"></div>
+    <div id="pos-list"></div>
+  `;
+
+  function showForm() {
+    const panel = document.getElementById('pos-form-panel');
+    panel.style.display = 'block';
+    panel.innerHTML = `
+      <div class="pos-form-card">
+        <div class="pos-form-title">Nueva posición</div>
+
+        <!-- Fila 1: Ticker + buscar -->
+        <div class="pos-form-search">
+          <div class="pos-form-field">
+            <label>Ticker</label>
+            <input type="text" id="pf-ticker" placeholder="AAPL, 3GOL..." class="wl-input" style="width:140px;text-transform:uppercase;" autocomplete="off">
+          </div>
+          <button class="btn btn-primary" id="pf-search-btn" style="margin-top:18px;">🔍 Buscar</button>
+          <div id="pf-search-status" style="font-family:var(--mono);font-size:10px;color:var(--text3);margin-top:22px;"></div>
+        </div>
+
+        <!-- Fila 2: Datos principales -->
+        <div class="pos-form-grid">
+          <div class="pos-form-field">
+            <label>Precio entrada</label>
+            <input type="number" id="pf-entry" placeholder="150.00" step="0.01" class="wl-input">
+          </div>
+          <div class="pos-form-field">
+            <label>Nº acciones / participaciones</label>
+            <input type="number" id="pf-shares" placeholder="100" step="1" class="wl-input">
+          </div>
+          <div class="pos-form-field">
+            <label>Coste total inversión</label>
+            <input type="number" id="pf-cost" placeholder="15000.00" step="0.01" class="wl-input" readonly style="opacity:0.7;">
+            <div style="font-size:9px;color:var(--text3);margin-top:3px;font-family:var(--mono);">Se calcula automáticamente</div>
+          </div>
+          <div class="pos-form-field">
+            <label>Fecha de entrada</label>
+            <input type="date" id="pf-date" value="${new Date().toISOString().slice(0,10)}" class="wl-input">
+          </div>
+          <div class="pos-form-field">
+            <label>Stop loss</label>
+            <select id="pf-stop-type" class="sc2-sel" style="width:100%;">
+              <option value="semanal">EMA10 Semanal (dinámico)</option>
+              <option value="diario">EMA10 Diario (dinámico)</option>
+              <option value="manual">Manual (precio fijo)</option>
+            </select>
+          </div>
+          <div class="pos-form-field" id="pf-stop-manual-wrap" style="display:none;">
+            <label>Stop loss manual</label>
+            <input type="number" id="pf-stop-manual" placeholder="140.00" step="0.01" class="wl-input">
+          </div>
+        </div>
+
+        <!-- Fila 3: Nombre manual (si no encuentra el ticker) -->
+        <div class="pos-form-grid">
+          <div class="pos-form-field" style="grid-column:1/3">
+            <label>Nombre del activo <span style="color:var(--text3)">(opcional — se rellena automáticamente)</span></label>
+            <input type="text" id="pf-name" placeholder="ej. WisdomTree Gold 3x Daily Leveraged" class="wl-input" style="width:100%;">
+          </div>
+          <div class="pos-form-field" style="grid-column:3/4">
+            <label>Notas</label>
+            <input type="text" id="pf-notas" placeholder="Motivo de entrada, contexto..." class="wl-input" style="width:100%;">
+          </div>
+        </div>
+
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px;">
+          <button class="btn" id="pf-cancel-btn">Cancelar</button>
+          <button class="btn btn-primary" id="pf-add-btn">+ Añadir a cartera</button>
+        </div>
+      </div>
+    `;
+
+    // Calcular coste total automáticamente
+    ['pf-entry','pf-shares'].forEach(id => {
+      document.getElementById(id)?.addEventListener('input', () => {
+        const entry  = parseFloat(document.getElementById('pf-entry')?.value || 0);
+        const shares = parseFloat(document.getElementById('pf-shares')?.value || 0);
+        if (entry > 0 && shares > 0) {
+          document.getElementById('pf-cost').value = (entry * shares).toFixed(2);
+        }
+      });
+    });
+
+    // Mostrar/ocultar stop manual
+    document.getElementById('pf-stop-type')?.addEventListener('change', e => {
+      document.getElementById('pf-stop-manual-wrap').style.display = e.target.value === 'manual' ? 'block' : 'none';
+    });
+
+    // Buscar ticker en Yahoo
+    document.getElementById('pf-search-btn')?.addEventListener('click', async () => {
+      const ticker = document.getElementById('pf-ticker')?.value.trim().toUpperCase();
+      if (!ticker) return;
+      const st = document.getElementById('pf-search-status');
+      st.textContent = 'Buscando...'; st.style.color = 'var(--text3)';
+      try {
+        const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=5d`;
+        let found = false;
+        for (const fn of PROXIES) {
+          try {
+            const r = await fetch(fn(url), { signal: AbortSignal.timeout(6000) });
+            if (!r.ok) continue;
+            const j = JSON.parse(await r.text());
+            const meta = j?.chart?.result?.[0]?.meta;
+            if (!meta) continue;
+            const name = meta.shortName || meta.longName || ticker;
+            const price = meta.regularMarketPrice;
+            document.getElementById('pf-name').value = name;
+            if (price && !document.getElementById('pf-entry').value) {
+              document.getElementById('pf-entry').value = price.toFixed(2);
+            }
+            st.textContent = `✓ Encontrado: ${name}${price?' · $'+price.toFixed(2):''}`;
+            st.style.color = 'var(--green)';
+            found = true; break;
+          } catch {}
+        }
+        if (!found) {
+          st.textContent = '⚠ No encontrado en Yahoo · puedes añadirlo manualmente';
+          st.style.color = 'var(--amber)';
+        }
+      } catch {
+        st.textContent = '⚠ Error de conexión · puedes añadirlo manualmente';
+        st.style.color = 'var(--amber)';
+      }
+    });
+
+    document.getElementById('pf-ticker')?.addEventListener('keydown', e => {
+      if (e.key === 'Enter') document.getElementById('pf-search-btn')?.click();
+      e.target.value = e.target.value.toUpperCase();
+    });
+
+    document.getElementById('pf-cancel-btn')?.addEventListener('click', () => {
+      panel.style.display = 'none';
+    });
+
+    document.getElementById('pf-add-btn')?.addEventListener('click', async () => {
+      const ticker   = document.getElementById('pf-ticker')?.value.trim().toUpperCase();
+      const entry    = parseFloat(document.getElementById('pf-entry')?.value);
+      const shares   = parseFloat(document.getElementById('pf-shares')?.value) || null;
+      const cost     = parseFloat(document.getElementById('pf-cost')?.value) || (entry && shares ? entry*shares : null);
+      const entryDate= document.getElementById('pf-date')?.value || new Date().toISOString().slice(0,10);
+      const stopType = document.getElementById('pf-stop-type')?.value || 'semanal';
+      const stopManual=stopType==='manual'?parseFloat(document.getElementById('pf-stop-manual')?.value)||null:null;
+      const name     = document.getElementById('pf-name')?.value.trim() || '';
+      const notas    = document.getElementById('pf-notas')?.value.trim() || '';
+
+      if (!ticker || !entry || entry <= 0) { alert('Ticker y precio de entrada son obligatorios.'); return; }
+      if (positions.find(p => p.ticker === ticker)) { alert(`${ticker} ya está en cartera.`); return; }
+
+      positions.push({ ticker, name, entry, shares, cost, entryDate, stopType, stopManual, notas, addedAt: new Date(entryDate).getTime() || Date.now() });
+      await savePositions();
+
+      panel.style.display = 'none';
+      renderAll();
+    });
+  }
+
+  document.getElementById('pos-open-form-btn')?.addEventListener('click', showForm);
 
   async function savePositions() {
     await UserData.set(STORAGE_KEY, positions);
@@ -143,11 +295,25 @@ export async function render(container, { actionsSlot }) {
       </div>`;
 
     if (!analysis) return `
-      <div class="pos-card error" id="poscard-${pos.ticker}">
+      <div class="pos-card" id="poscard-${pos.ticker}">
         <div class="pos-card-header">
-          <div><div class="pos-ticker">${pos.ticker}</div><div class="pos-name" style="color:var(--red)">Error al cargar</div></div>
-          <button class="pos-del-btn" data-ticker="${pos.ticker}">✕</button>
+          <div>
+            <div class="pos-ticker">${pos.ticker}</div>
+            <div class="pos-name" style="color:var(--amber)">${pos.name||'Sin datos de mercado — posición manual'}</div>
+            ${pos.notas?`<div class="pos-notas">${pos.notas}</div>`:''}
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <button class="pos-close-btn" data-ticker="${pos.ticker}" data-price="" title="Cerrar posición">✓ Cerrar</button>
+            <button class="pos-del-btn" data-ticker="${pos.ticker}" title="Eliminar sin guardar">✕</button>
+          </div>
         </div>
+        <div class="pos-metrics">
+          <div class="pos-metric"><div class="pos-metric-label">Precio Entrada</div><div class="pos-metric-val" style="color:var(--text2)">${fmtP(pos.entry)}</div></div>
+          ${pos.shares?`<div class="pos-metric"><div class="pos-metric-label">Acciones</div><div class="pos-metric-val" style="font-size:16px;">${pos.shares}</div></div>`:''}
+          ${pos.cost?`<div class="pos-metric"><div class="pos-metric-label">Inversión total</div><div class="pos-metric-val" style="font-size:16px;">$${parseFloat(pos.cost).toFixed(0)}</div></div>`:''}
+          ${pos.entryDate?`<div class="pos-metric"><div class="pos-metric-label">Fecha entrada</div><div class="pos-metric-val" style="font-size:13px;font-family:var(--mono);">${new Date(pos.entryDate).toLocaleDateString('es-ES')}</div></div>`:''}
+        </div>
+        <div style="font-size:10px;color:var(--amber);font-family:var(--mono);padding:8px 0;">⚠ No se pudieron cargar datos de mercado para este ticker</div>
       </div>`;
 
     const distD = ((analysis.currentPrice - analysis.stopDiario)  / analysis.currentPrice * 100).toFixed(1);
@@ -181,9 +347,29 @@ export async function render(container, { actionsSlot }) {
             <div class="pos-metric-val" style="color:${pnlColor}">${pnlSign}${fmtPct(analysis.pnlPct)}</div>
           </div>
           <div class="pos-metric">
-            <div class="pos-metric-label">Stop Activo (${pos.stopType==='semanal'?'Semanal':'Diario'})</div>
+            <div class="pos-metric-label">Stop Activo ${pos.stopType==='manual'?'(Manual)':pos.stopType==='semanal'?'(Semanal)':'(Diario)'}</div>
             <div class="pos-metric-val" style="color:var(--red)">${fmtP(analysis.activeStop)}</div>
           </div>
+          ${pos.shares ? `
+          <div class="pos-metric">
+            <div class="pos-metric-label">Acciones</div>
+            <div class="pos-metric-val" style="font-size:16px;">${pos.shares}</div>
+          </div>` : ''}
+          ${pos.cost ? `
+          <div class="pos-metric">
+            <div class="pos-metric-label">Inversión total</div>
+            <div class="pos-metric-val" style="font-size:16px;">$${parseFloat(pos.cost).toFixed(0)}</div>
+          </div>` : ''}
+          ${pos.shares && analysis.currentPrice ? `
+          <div class="pos-metric">
+            <div class="pos-metric-label">Valor actual</div>
+            <div class="pos-metric-val" style="color:${pnlColor};font-size:16px;">$${(pos.shares*analysis.currentPrice).toFixed(0)}</div>
+          </div>` : ''}
+          ${pos.entryDate ? `
+          <div class="pos-metric">
+            <div class="pos-metric-label">Fecha entrada</div>
+            <div class="pos-metric-val" style="font-size:13px;font-family:var(--mono);">${new Date(pos.entryDate).toLocaleDateString('es-ES')}</div>
+          </div>` : ''}
         </div>
 
         <div class="pos-stops">
@@ -470,39 +656,6 @@ export async function render(container, { actionsSlot }) {
     });
   }
 
-  // Añadir posición
-  document.getElementById('pos-add-btn')?.addEventListener('click', async () => {
-    const ticker   = document.getElementById('pos-ticker')?.value.trim().toUpperCase();
-    const entry    = parseFloat(document.getElementById('pos-entry')?.value);
-    const stopType = document.getElementById('pos-stop-type')?.value || 'semanal';
-    const notas    = document.getElementById('pos-notas')?.value.trim() || '';
-
-    if (!ticker || !entry || entry <= 0) {
-      alert('Completa el ticker y el precio de entrada.'); return;
-    }
-    if (positions.find(p => p.ticker === ticker)) {
-      alert(`${ticker} ya está en cartera.`); return;
-    }
-
-    positions.push({ ticker, entry, stopType, notas, addedAt: Date.now() });
-    await savePositions();
-
-    document.getElementById('pos-ticker').value  = '';
-    document.getElementById('pos-entry').value   = '';
-    document.getElementById('pos-notas').value   = '';
-
-    renderAll();
-  });
-
-  // Enter en los inputs
-  ['pos-ticker','pos-entry','pos-notas'].forEach(id => {
-    document.getElementById(id)?.addEventListener('keydown', e => {
-      if (e.key === 'Enter') document.getElementById('pos-add-btn')?.click();
-    });
-  });
-  document.getElementById('pos-ticker')?.addEventListener('input', e => {
-    e.target.value = e.target.value.toUpperCase();
-  });
 
   renderAll();
   return { destroy() {} };
