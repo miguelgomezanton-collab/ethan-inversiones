@@ -954,3 +954,82 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 
 .etf-universe-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:10px 0 14px; border-bottom:1px solid var(--border); margin-bottom:14px; }
 .etf-universe-label { font-size:9px; color:var(--text3); font-family:var(--mono); text-transform:uppercase; letter-spacing:0.12em; white-space:nowrap; font-weight:600; }
+
+/* ── CARTERA: Gestión de Posiciones ── */
+.pos-add-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+
+.pos-card {
+  background:var(--surface); border:1px solid var(--border); border-radius:12px;
+  padding:16px 18px; margin-bottom:10px; transition:border-color 0.2s;
+}
+.pos-card.stop-hit       { border-color:rgba(244,113,116,0.5); }
+.pos-card.escape-alert-card { border-color:rgba(251,191,36,0.4); }
+.pos-card.loading        { opacity:0.6; }
+
+.pos-card-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:14px; }
+.pos-ticker  { font-family:var(--mono); font-size:18px; font-weight:700; color:var(--text1); letter-spacing:0.05em; }
+.pos-name    { font-size:10px; color:var(--text3); margin-top:3px; font-family:var(--mono); }
+.pos-notas   { font-size:10px; color:var(--text2); margin-top:4px; font-style:italic; }
+.pos-del-btn {
+  background:transparent; border:1px solid var(--border); border-radius:6px;
+  color:var(--text3); cursor:pointer; font-size:12px; padding:4px 9px; transition:all 0.15s;
+}
+.pos-del-btn:hover { border-color:var(--red); color:var(--red); }
+
+.pos-metrics { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:12px; }
+.pos-metric  { background:var(--surface2); border-radius:8px; padding:10px 12px; }
+.pos-metric-label { font-size:9px; color:var(--text3); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:6px; font-weight:600; }
+.pos-metric-val   { font-family:var(--serif); font-size:20px; font-weight:600; font-style:italic; color:var(--text1); }
+
+.pos-stops { background:var(--surface2); border-radius:8px; padding:10px 14px; margin-bottom:10px; }
+.pos-stop-row { display:flex; align-items:center; gap:10px; padding:5px 0; font-size:11px; border-bottom:1px solid var(--border); }
+.pos-stop-row:last-child { border-bottom:none; }
+.pos-stop-row.active .pos-stop-label { color:var(--teal); font-weight:600; }
+.pos-stop-row.active .pos-stop-val   { color:var(--red); font-weight:600; }
+.pos-stop-label { flex:1; color:var(--text2); }
+.pos-stop-val   { font-family:var(--mono); color:var(--text1); }
+.pos-stop-dist  { font-family:var(--mono); font-size:9px; color:var(--text3); min-width:40px; text-align:right; }
+
+.pos-alert { display:flex; align-items:flex-start; gap:12px; padding:12px 14px; border-radius:8px; margin-top:8px; }
+.pos-alert.stop   { background:rgba(244,113,116,0.08); border:1px solid rgba(244,113,116,0.25); }
+.pos-alert.escape { background:rgba(251,191,36,0.08);  border:1px solid rgba(251,191,36,0.25); }
+.pos-alert-icon { font-size:20px; flex-shrink:0; }
+.pos-alert-title { font-size:11px; font-weight:700; color:var(--text1); margin-bottom:3px; letter-spacing:0.05em; }
+.pos-alert.stop   .pos-alert-title { color:var(--red); }
+.pos-alert.escape .pos-alert-title { color:var(--amber); }
+.pos-alert-desc { font-size:10px; color:var(--text2); line-height:1.5; }
+
+/* ── Cartera: secciones y historial ── */
+.pos-open-section  { margin-bottom:28px; }
+.pos-section-title { font-size:11px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);padding-bottom:10px;border-bottom:1px solid var(--border);margin-bottom:14px; }
+.pos-hist-section  { margin-top:8px; }
+.pos-hist-title    { font-size:11px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);padding-bottom:10px;border-bottom:1px solid var(--border);margin-bottom:14px; }
+
+.pos-hist-stats { display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:4px; }
+.pos-hist-stat  { background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;text-align:center; }
+.pos-hist-stat-val { font-family:var(--serif);font-size:20px;font-weight:700;font-style:italic;color:var(--text1); }
+.pos-hist-stat-lbl { font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.08em;margin-top:3px; }
+
+/* Botón cerrar */
+.pos-close-btn {
+  padding:4px 10px;background:rgba(74,222,128,0.08);border:1px solid rgba(74,222,128,0.25);
+  border-radius:5px;color:var(--green);font-family:var(--mono);font-size:9px;font-weight:600;
+  cursor:pointer;transition:all 0.15s;white-space:nowrap;
+}
+.pos-close-btn:hover { background:rgba(74,222,128,0.15); }
+
+/* Modal de cierre */
+.pos-modal-overlay {
+  position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1000;
+  display:flex;align-items:center;justify-content:center;
+}
+.pos-modal {
+  background:var(--surface);border:1px solid var(--border);border-radius:16px;
+  padding:24px 28px;width:480px;max-width:95vw;
+}
+.pos-modal-title { font-family:var(--serif);font-size:20px;font-style:italic;color:var(--text1);margin-bottom:20px; }
+.pos-modal-body  { display:flex;flex-direction:column;gap:12px; }
+.pos-modal-row   { display:flex;align-items:center;gap:12px; }
+.pos-modal-row label { font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.1em;font-weight:600;width:140px;flex-shrink:0; }
+.pos-modal-pnl { font-family:var(--mono);font-size:12px;color:var(--text2);padding:10px 12px;background:var(--surface2);border-radius:8px;text-align:center; }
+.pos-modal-footer { display:flex;justify-content:flex-end;gap:8px;margin-top:20px;padding-top:16px;border-top:1px solid var(--border); }
