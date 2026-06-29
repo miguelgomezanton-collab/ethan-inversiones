@@ -162,9 +162,35 @@ async function buildUniverse() {
   const custom = await loadCustomEtfs();
   const baseTickers = new Set(RF_ETFS.map(e => e.ticker));
   const customEtfs = custom
-    .filter(t => !baseTickers.has(t))
-    .map(t => ({ ticker: t, name: t, cat: 'custom', emoji: '➕' }));
+    .filter(c => !baseTickers.has(typeof c === 'string' ? c : c.ticker))
+    .map(c => typeof c === 'string'
+      ? { ticker: c, name: c, cat: 'custom', emoji: '➕' }
+      : { ticker: c.ticker, name: c.name||c.ticker, cat: c.category||'custom', emoji: '➕' }
+    );
   return [...RF_ETFS, ...customEtfs];
+}
+
+async function searchETF(ticker) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=5d`;
+  for (const fn of PROXIES) {
+    try {
+      const r = await fetch(fn(url), { signal: AbortSignal.timeout(8000) });
+      if (!r.ok) continue;
+      const text = await r.text();
+      let j; try { j = JSON.parse(text); } catch { continue; }
+      const meta = j?.chart?.result?.[0]?.meta;
+      if (!meta) continue;
+      return {
+        ticker:   ticker.toUpperCase(),
+        name:     meta.shortName || meta.longName || ticker,
+        price:    meta.regularMarketPrice || null,
+        currency: meta.currency || 'USD',
+        exchange: meta.exchangeName || '',
+        category: '', description: '', expenseRatio: '', etfYield: '',
+      };
+    } catch {}
+  }
+  throw new Error('ETF no encontrado');
 }
 
 export async function render(container, { actionsSlot }) {
@@ -175,8 +201,8 @@ export async function render(container, { actionsSlot }) {
 
   actionsSlot.innerHTML = `
     <div style="display:flex;align-items:center;gap:8px;">
-      <input type="text" id="rf-custom-input" placeholder="Añadir ETF al universo..." class="wl-input" style="width:200px;">
-      <button class="btn" id="rf-custom-add-btn" style="font-size:10px;">+ Universo</button>
+      <input type="text" id="rf-custom-input" placeholder="Ticker: TLT, HYG, EMLC..." class="wl-input" style="width:200px;text-transform:uppercase;" autocomplete="off">
+      <button class="btn btn-primary" id="rf-custom-add-btn" style="font-size:11px;">🔍 Buscar ETF</button>
       <span style="width:1px;height:16px;background:var(--border);display:inline-block;"></span>
       <span class="cm-status" id="rf-status"></span>
       <button class="cm-scan-btn" id="rf-scan-btn">▶ Escanear</button>
@@ -222,6 +248,7 @@ export async function render(container, { actionsSlot }) {
 
   container.innerHTML = `
     <div class="cm-wrap">
+      <div id="rf-preview"></div>
       <div id="rf-custom-chips"></div>
       <div class="cm-tabs">
         ${CATS_CONFIG.map((c,i) => `
@@ -384,28 +411,101 @@ export async function render(container, { actionsSlot }) {
     renderResults();
   }
 
-  // ── Listener: añadir ETF al universo ──────────
-  document.getElementById('rf-custom-add-btn')?.addEventListener('click', async () => {
+  // ── Preview card: buscar y verificar ETF ──────
+  async function showPreview(ticker) {
+    const el = document.getElementById('rf-preview');
+    if (!el) return;
+    el.innerHTML = `
+      <div class="etf-preview-card" style="margin-bottom:14px;">
+        <div style="display:flex;align-items:center;gap:10px;color:var(--text3);font-family:var(--mono);font-size:11px;">
+          <div class="loader-ring"></div>Buscando ${ticker}...
+        </div>
+      </div>`;
+
+    try {
+      const info = await searchETF(ticker);
+      el.innerHTML = `
+        <div class="etf-preview-card" style="margin-bottom:14px;">
+          <div class="etf-preview-header">
+            <div>
+              <div style="font-family:var(--mono);font-size:18px;font-weight:700;color:var(--teal);">${info.ticker}</div>
+              <div style="font-family:var(--serif);font-size:15px;font-style:italic;color:var(--text1);margin-top:4px;">${info.name}</div>
+              <div style="font-family:var(--mono);font-size:10px;color:var(--text3);margin-top:3px;">${info.exchange} · ${info.currency}</div>
+            </div>
+            <div style="text-align:right;">
+              <div style="font-family:var(--mono);font-size:20px;color:var(--text1);">${info.price?'$'+info.price.toFixed(2):'—'}</div>
+            </div>
+          </div>
+          <div class="etf-preview-fields">
+            <div class="etf-pf">
+              <label>Categoría</label>
+              <input type="text" id="rf-pf-cat" placeholder="ej. High Yield, Emergentes..." value="${info.category}">
+            </div>
+            <div class="etf-pf">
+              <label>TER (ratio de gastos)</label>
+              <input type="text" id="rf-pf-ter" placeholder="ej. 0.15%" value="${info.expenseRatio}">
+            </div>
+            <div class="etf-pf">
+              <label>Yield / Cupón</label>
+              <input type="text" id="rf-pf-yield" placeholder="ej. 4.5%" value="${info.etfYield}">
+            </div>
+            <div class="etf-pf" style="grid-column:1/-1">
+              <label>Descripción / Notas</label>
+              <textarea id="rf-pf-desc" placeholder="ej. ETF de bonos emergentes en divisa local, exposición a LatAm y Asia...">${info.description||''}</textarea>
+            </div>
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+            <button class="btn" id="rf-preview-cancel">Cancelar</button>
+            <button class="btn btn-primary" id="rf-preview-add">+ Añadir al universo</button>
+          </div>
+        </div>`;
+
+      document.getElementById('rf-preview-cancel').addEventListener('click', () => {
+        el.innerHTML = '';
+        document.getElementById('rf-custom-input').value = '';
+      });
+
+      document.getElementById('rf-preview-add').addEventListener('click', async () => {
+        const final = {
+          ...info,
+          category:    document.getElementById('rf-pf-cat').value,
+          expenseRatio:document.getElementById('rf-pf-ter').value,
+          etfYield:    document.getElementById('rf-pf-yield').value,
+          description: document.getElementById('rf-pf-desc').value,
+        };
+        const baseTickers = new Set(RF_ETFS.map(e => e.ticker));
+        const current = await loadCustomEtfs();
+        const alreadyIn = current.some(c => (typeof c === 'string' ? c : c.ticker) === final.ticker);
+        if (!baseTickers.has(final.ticker) && !alreadyIn) {
+          current.push(final);
+          await saveCustomEtfs(current);
+          customEtfs = current;
+        }
+        el.innerHTML = '';
+        document.getElementById('rf-custom-input').value = '';
+        await renderCustomChips();
+        await updateUniverseCount();
+      });
+
+    } catch(err) {
+      el.innerHTML = `<div class="etf-preview-card" style="margin-bottom:14px;color:var(--red);font-family:var(--mono);font-size:11px;">✗ ${err.message} — comprueba el ticker</div>`;
+    }
+  }
+
+  // ── Listeners ──────────────────────────────────
+  document.getElementById('rf-custom-add-btn')?.addEventListener('click', () => {
     const inp = document.getElementById('rf-custom-input');
     const t = inp?.value.trim().toUpperCase();
-    if (!t) return;
-    const baseTickers = new Set(RF_ETFS.map(e => e.ticker));
-    const current = await loadCustomEtfs();
-    if (!baseTickers.has(t) && !current.includes(t)) {
-      current.push(t);
-      await saveCustomEtfs(current);
-      customEtfs = current;
-      await renderCustomChips();
-      await updateUniverseCount();
-    }
-    if (inp) inp.value = '';
+    if (t) showPreview(t);
   });
 
   document.getElementById('rf-custom-input')?.addEventListener('keydown', e => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      document.getElementById('rf-custom-add-btn')?.click();
+      const t = e.target.value.trim().toUpperCase();
+      if (t) showPreview(t);
     }
+    e.target.value = e.target.value.toUpperCase();
   });
 
   container.querySelectorAll('.cm-tab').forEach(tab => {
