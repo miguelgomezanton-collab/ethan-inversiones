@@ -31,6 +31,11 @@ registerPage('alc-alertas', {
   title: 'Alertas · Cambios en Watchlist',
   loader: () => import('./modules/alcista/alertas.js')
 });
+registerPage('alc-etf-screener', {
+  crumb: '2. Alcista <span>›</span> 2.1 Renta Variable <span>›</span> Screener ETFs',
+  title: 'Screener · ETFs RV',
+  loader: () => import('./modules/alcista/etf-screener.js')
+});
 registerPage('alc-rv-analisis', {
   crumb: '2. Alcista <span>›</span> 2.1 Renta Variable <span>›</span> Análisis',
   title: 'Análisis Técnico',

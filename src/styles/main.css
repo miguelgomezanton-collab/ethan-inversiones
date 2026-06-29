@@ -933,3 +933,24 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 
 .al-score { font-family:var(--serif); font-size:18px; font-weight:700; font-style:italic; color:var(--text1); }
 .al-price { font-family:var(--mono); font-size:10px; color:var(--text2); margin-top:2px; }
+
+/* ── ETF Screener: preview card ── */
+.etf-wrap { display:flex; flex-direction:column; gap:0; }
+.etf-preview-card {
+  background:var(--surface); border:1px solid var(--teal);
+  border-radius:12px; padding:18px 20px; margin-bottom:16px;
+  animation:aa-fade-in 0.2s ease;
+}
+.etf-preview-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px; }
+.etf-preview-fields { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+.etf-pf { background:var(--surface2); border-radius:8px; padding:10px 12px; }
+.etf-pf label { font-size:9px; color:var(--text3); text-transform:uppercase; letter-spacing:0.1em; display:block; margin-bottom:5px; font-weight:600; }
+.etf-pf input, .etf-pf textarea {
+  background:transparent; border:none; color:var(--text1);
+  font-family:var(--mono); font-size:11px; width:100%; outline:none; resize:none;
+}
+.etf-pf textarea { height:52px; line-height:1.5; }
+.etf-pf input::placeholder, .etf-pf textarea::placeholder { color:var(--text3); }
+
+.etf-universe-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:10px 0 14px; border-bottom:1px solid var(--border); margin-bottom:14px; }
+.etf-universe-label { font-size:9px; color:var(--text3); font-family:var(--mono); text-transform:uppercase; letter-spacing:0.12em; white-space:nowrap; font-weight:600; }
