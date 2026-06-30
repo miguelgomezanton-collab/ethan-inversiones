@@ -470,23 +470,12 @@ export async function render(container, { actionsSlot }) {
       <div class="gen-section-title">📊 Rentabilidad por Operaciones — Global</div>
       ${kpiBlock(rg)}
 
-      <!-- NAV REAL -->
+      <!-- NAV REAL — EN REVISIÓN -->
       <div class="gen-section-title" style="margin-top:24px;">📈 Rendimiento Real (Time-Weighted) — Marcado a Mercado</div>
-      ${navM ? `
-        ${navMetricsBlock(navM)}
-        ${debugPanelSVG(navM)}
-        ${navM.twrSeries ? `
-        <div class="gen-compare-grid" style="margin-top:14px;">
-          <div class="gen-chart-box">
-            <div class="gen-chart-title">Índice de Rendimiento (base 100, neutraliza aportaciones de capital)</div>
-            ${twrChartSVG(navM.twrSeries, nav)}
-          </div>
-          <div class="gen-chart-box">
-            <div class="gen-chart-title">Drawdown a lo largo del tiempo</div>
-            ${ddChartSVG(navM.twrSeries)}
-          </div>
-        </div>` : ''}
-      ` : `<div class="sc2-empty">Necesitas posiciones con fecha de entrada para reconstruir el rendimiento real</div>`}
+      <div class="gen-wip-notice">
+        🚧 <strong>Esta sección está temporalmente desactivada.</strong> El cálculo del NAV diario marcado a mercado todavía tiene una inconsistencia sin resolver (se está revisando) y los números no son fiables. El resto de métricas de esta página (KPIs por operación, comparativa Alcista/Bajista, exposición actual, composición) no se ven afectadas y siguen siendo correctas.
+      </div>
+      ${navM && navM.debugLog ? debugPanelSVG(navM) : ''}
 
       <!-- DISTRIBUCIÓN DE RETORNOS -->
       ${rg ? `
