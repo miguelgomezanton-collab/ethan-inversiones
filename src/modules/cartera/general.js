@@ -88,11 +88,26 @@ async function buildNavSeries(allTrades) {
 
   // Coste de entrada de cada trade (flujo de caja que "entra" en cartera ese día)
   // y coste recuperado al salir (flujo que "sale"), para poder neutralizarlos del TWR.
+  // IMPORTANTE: shares se calcula UNA VEZ por trade de forma robusta, para que
+  // el valor en cartera y el valor de salida usen siempre la misma cantidad de
+  // acciones — antes había dos fórmulas distintas que podían divergir si t.cost
+  // era 0/null, generando posiciones que "valían" $0 en el NAV pero con un
+  // Cash Out real al cerrarse, rompiendo el cálculo del retorno.
+  const tradesWithShares = allTrades.map(t => {
+    let shares = t.shares;
+    if (!shares || shares <= 0) {
+      if (t.cost && t.entry) shares = t.cost / t.entry;
+      else shares = 0;
+    }
+    return { ...t, shares };
+  });
+
   const lastKnownPrice = {};
   const nav = days.map(day => {
     let total = 0, cashInToday = 0, cashOutToday = 0;
-    allTrades.forEach(t => {
-      const cost = t.cost || (t.shares && t.entry ? t.shares*t.entry : 0);
+    tradesWithShares.forEach(t => {
+      if (t.shares <= 0) return; // sin acciones válidas, no se puede valorar — se omite
+      const cost = t.cost || (t.shares*t.entry);
       if (t.entryDate === day) cashInToday += cost;
 
       const isClosingToday = t.exitDate === day;
@@ -104,10 +119,9 @@ async function buildNavSeries(allTrades) {
       if (isClosingToday) {
         const hist = histMap[t.ticker];
         const exitPrice = hist?.[day] ?? lastKnownPrice[t.ticker] ?? t.entry;
-        const shares = t.shares || (t.cost && t.entry ? t.cost/t.entry : 0);
         const exitValue = t.direction === 'bajista'
-          ? (t.entry*shares) + (shares*(t.entry-exitPrice))
-          : shares*exitPrice;
+          ? (t.entry*t.shares) + (t.shares*(t.entry-exitPrice))
+          : t.shares*exitPrice;
         cashOutToday += exitValue;
         return; // no suma a total: ya salió de la cartera
       }
@@ -118,10 +132,9 @@ async function buildNavSeries(allTrades) {
       if (price == null && hist) price = lastKnownPrice[t.ticker] ?? t.entry;
       if (price != null) lastKnownPrice[t.ticker] = price;
       const usedPrice = price ?? t.entry;
-      const shares = t.shares || (t.cost && t.entry ? t.cost/t.entry : 0);
       const value = t.direction === 'bajista'
-        ? (t.entry*shares) + (shares*(t.entry-usedPrice))
-        : shares*usedPrice;
+        ? (t.entry*t.shares) + (t.shares*(t.entry-usedPrice))
+        : t.shares*usedPrice;
       total += value;
     });
     return { day, value: total, cashIn: cashInToday, cashOut: cashOutToday };
