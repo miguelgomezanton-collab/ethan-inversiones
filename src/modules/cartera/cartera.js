@@ -125,8 +125,15 @@ export async function render(container, { actionsSlot }) {
       <div class="pos-form-card">
         <div class="pos-form-title">Nueva posición</div>
 
-        <!-- Fila 1: Ticker + buscar -->
+        <!-- Fila 1: Ticker + buscar + dirección -->
         <div class="pos-form-search">
+          <div class="pos-form-field">
+            <label>Dirección</label>
+            <select id="pf-direction" class="sc2-sel" style="width:130px;">
+              <option value="alcista">📈 Alcista (Long)</option>
+              <option value="bajista">📉 Bajista (Short)</option>
+            </select>
+          </div>
           <div class="pos-form-field">
             <label>Ticker</label>
             <input type="text" id="pf-ticker" placeholder="AAPL, 3GOL..." class="wl-input" style="width:140px;text-transform:uppercase;" autocomplete="off">
@@ -250,6 +257,7 @@ export async function render(container, { actionsSlot }) {
     });
 
     document.getElementById('pf-add-btn')?.addEventListener('click', async () => {
+      const direction= document.getElementById('pf-direction')?.value || 'alcista';
       const ticker   = document.getElementById('pf-ticker')?.value.trim().toUpperCase();
       const entry    = parseFloat(document.getElementById('pf-entry')?.value);
       const shares   = parseFloat(document.getElementById('pf-shares')?.value) || null;
@@ -263,7 +271,7 @@ export async function render(container, { actionsSlot }) {
       if (!ticker || !entry || entry <= 0) { alert('Ticker y precio de entrada son obligatorios.'); return; }
       if (positions.find(p => p.ticker === ticker)) { alert(`${ticker} ya está en cartera.`); return; }
 
-      positions.push({ ticker, name, entry, shares, cost, entryDate, stopType, stopManual, notas, addedAt: new Date(entryDate).getTime() || Date.now() });
+      positions.push({ direction, ticker, name, entry, shares, cost, entryDate, stopType, stopManual, notas, addedAt: new Date(entryDate).getTime() || Date.now() });
       await savePositions();
 
       panel.style.display = 'none';
@@ -298,7 +306,7 @@ export async function render(container, { actionsSlot }) {
       <div class="pos-card" id="poscard-${pos.ticker}">
         <div class="pos-card-header">
           <div>
-            <div class="pos-ticker">${pos.ticker}</div>
+            <div class="pos-ticker">${pos.ticker} <span class="pos-dir-badge ${pos.direction==='bajista'?'short':'long'}">${pos.direction==='bajista'?'📉 SHORT':'📈 LONG'}</span></div>
             <div class="pos-name" style="color:var(--amber)">${pos.name||'Sin datos de mercado — posición manual'}</div>
             ${pos.notas?`<div class="pos-notas">${pos.notas}</div>`:''}
           </div>
@@ -323,7 +331,7 @@ export async function render(container, { actionsSlot }) {
       <div class="pos-card ${analysis.tocoStop?'stop-hit':''} ${analysis.escapeFalso?'escape-alert-card':''}" id="poscard-${pos.ticker}">
         <div class="pos-card-header">
           <div>
-            <div class="pos-ticker">${pos.ticker}</div>
+            <div class="pos-ticker">${pos.ticker} <span class="pos-dir-badge ${pos.direction==='bajista'?'short':'long'}">${pos.direction==='bajista'?'📉 SHORT':'📈 LONG'}</span></div>
             <div class="pos-name">${analysis.name||''} · ${analysis.currency||'USD'}</div>
             ${pos.notas?`<div class="pos-notas">${pos.notas}</div>`:''}
           </div>
@@ -538,23 +546,35 @@ export async function render(container, { actionsSlot }) {
 
       if (!closePrice || closePrice <= 0) { alert('Introduce el precio de cierre'); return; }
 
-      const pnlPct = ((closePrice - pos.entry) / pos.entry) * 100;
-      const entryDate = new Date(pos.addedAt);
+      const direction = pos.direction || 'alcista';
+      // En bajista (short) el P&L es inverso: ganas si el precio baja
+      const pnlPct = direction === 'bajista'
+        ? ((pos.entry - closePrice) / pos.entry) * 100
+        : ((closePrice - pos.entry) / pos.entry) * 100;
+
+      const entryDateObj = pos.entryDate ? new Date(pos.entryDate) : new Date(pos.addedAt);
       const exitDate  = new Date(closeDate);
-      const duration  = Math.round((exitDate - entryDate) / 86400000);
+      const duration  = Math.max(0, Math.round((exitDate - entryDateObj) / 86400000));
+      const pnlAbs = pos.cost ? (pos.cost * pnlPct / 100) : null;
 
       history.unshift({
+        direction:   direction,
         ticker:      pos.ticker,
         name:        pos.name || pos.ticker,
         entry:       pos.entry,
         exit:        closePrice,
+        shares:      pos.shares || null,
+        cost:        pos.cost || null,
         pnlPct:      pnlPct,
+        pnlAbs:      pnlAbs,
         stopType:    pos.stopType,
         reason:      closeReason,
         notasEntrada:pos.notas || '',
         notasSalida: closeNotas,
-        entryDate:   new Date(pos.addedAt).toLocaleDateString('es-ES'),
+        entryDate:   entryDateObj.toLocaleDateString('es-ES'),
         exitDate:    new Date(closeDate).toLocaleDateString('es-ES'),
+        entryDateISO:entryDateObj.toISOString().slice(0,10),
+        exitDateISO: closeDate,
         duration:    duration,
         closedAt:    Date.now()
       });
@@ -568,84 +588,189 @@ export async function render(container, { actionsSlot }) {
   }
 
   // ── Historial de posiciones cerradas ─────────
-  function renderHistory() {
-    const el = document.getElementById('pos-history');
-    if (!el) return;
+  // ── Cálculo de métricas avanzadas por dirección ──
+  function calcMetrics(ops, capital) {
+    if (ops.length === 0) return null;
 
-    if (history.length === 0) {
-      el.innerHTML = `<div class="sc2-empty">Sin posiciones cerradas todavía</div>`;
-      return;
-    }
+    const wins   = ops.filter(o => o.pnlPct > 0);
+    const losses = ops.filter(o => o.pnlPct <= 0);
+    const winRate = (wins.length / ops.length) * 100;
 
-    const winners = history.filter(h => h.pnlPct > 0).length;
-    const losers  = history.filter(h => h.pnlPct <= 0).length;
-    const avgPnl  = history.reduce((s,h) => s+h.pnlPct, 0) / history.length;
-    const bestPnl = Math.max(...history.map(h=>h.pnlPct));
-    const worstPnl= Math.min(...history.map(h=>h.pnlPct));
+    const avgWinPct  = wins.length   ? wins.reduce((s,o)=>s+o.pnlPct,0)/wins.length     : 0;
+    const avgLossPct = losses.length ? losses.reduce((s,o)=>s+o.pnlPct,0)/losses.length : 0;
+    const avgPnlPct  = ops.reduce((s,o)=>s+o.pnlPct,0) / ops.length;
 
+    // Esperanza matemática: (%win × avgWin) + (%loss × avgLoss)
+    const expectancy = (winRate/100 * avgWinPct) + ((1-winRate/100) * avgLossPct);
+
+    // Beneficio total en € (solo si hay coste asignado a las operaciones)
+    const totalPnlAbs = ops.reduce((s,o) => s + (o.pnlAbs || 0), 0);
+    const hasAbsData = ops.some(o => o.pnlAbs != null);
+
+    // Beneficio total en % sobre capital asignado (si está definido)
+    const totalPnlPctOnCapital = capital > 0 ? (totalPnlAbs / capital) * 100 : null;
+
+    // Días medios por operación
+    const avgDays = ops.reduce((s,o)=>s+(o.duration||0),0) / ops.length;
+
+    // Volatilidad (desviación estándar de los retornos %)
+    const mean = avgPnlPct;
+    const variance = ops.reduce((s,o) => s + Math.pow(o.pnlPct - mean, 2), 0) / ops.length;
+    const stdDev = Math.sqrt(variance);
+
+    // Sharpe simplificado (asumiendo rf=0): retorno medio / desviación estándar
+    const sharpe = stdDev > 0 ? (avgPnlPct / stdDev) : 0;
+
+    // Máxima pérdida individual
+    const maxLoss = Math.min(...ops.map(o => o.pnlPct));
+
+    // Máximo Drawdown (sobre la curva acumulada de retornos, ordenada cronológicamente)
+    const sorted = [...ops].sort((a,b) => (a.closedAt||0) - (b.closedAt||0));
+    let equity = 100, peak = 100, maxDD = 0;
+    sorted.forEach(o => {
+      equity *= (1 + o.pnlPct/100);
+      if (equity > peak) peak = equity;
+      const dd = ((peak - equity) / peak) * 100;
+      if (dd > maxDD) maxDD = dd;
+    });
+
+    return {
+      nOps: ops.length, winRate, avgPnlPct, expectancy,
+      totalPnlAbs, hasAbsData, totalPnlPctOnCapital,
+      avgDays, stdDev, sharpe, maxLoss, maxDD
+    };
+  }
+
+  function metricsGrid(m, capitalLabel) {
+    if (!m) return `<div class="sc2-empty">Sin operaciones cerradas en esta categoría</div>`;
+    const fmt = (v,d=2) => v!=null && !isNaN(v) ? v.toFixed(d) : '—';
+    const sign = v => v>=0?'+':'';
+    const color = v => v>=0?'var(--green)':'var(--red)';
+
+    return `
+      <div class="pos-metrics-grid">
+        <div class="pos-mtile"><div class="pos-mtile-lbl">Capital Asignado</div><div class="pos-mtile-val">${capitalLabel}</div></div>
+        <div class="pos-mtile"><div class="pos-mtile-lbl">Beneficio Total (€)</div><div class="pos-mtile-val" style="color:${m.hasAbsData?color(m.totalPnlAbs):'var(--text3)'}">${m.hasAbsData?(sign(m.totalPnlAbs)+'$'+fmt(m.totalPnlAbs,0)):'Sin coste asignado'}</div></div>
+        <div class="pos-mtile"><div class="pos-mtile-lbl">Beneficio Total (%)</div><div class="pos-mtile-val" style="color:${m.totalPnlPctOnCapital!=null?color(m.totalPnlPctOnCapital):'var(--text3)'}">${m.totalPnlPctOnCapital!=null?(sign(m.totalPnlPctOnCapital)+fmt(m.totalPnlPctOnCapital)+'%'):'—'}</div></div>
+        <div class="pos-mtile"><div class="pos-mtile-lbl">Ganancia Media</div><div class="pos-mtile-val" style="color:${color(m.avgPnlPct)}">${sign(m.avgPnlPct)}${fmt(m.avgPnlPct)}%</div></div>
+        <div class="pos-mtile"><div class="pos-mtile-lbl">Ratio Win</div><div class="pos-mtile-val" style="color:${m.winRate>=50?'var(--green)':'var(--amber)'}">${fmt(m.winRate,1)}%</div></div>
+        <div class="pos-mtile"><div class="pos-mtile-lbl">Esperanza Matemática</div><div class="pos-mtile-val" style="color:${color(m.expectancy)}">${sign(m.expectancy)}${fmt(m.expectancy)}%</div></div>
+        <div class="pos-mtile"><div class="pos-mtile-lbl">Días Medios / Op.</div><div class="pos-mtile-val">${fmt(m.avgDays,1)}d</div></div>
+        <div class="pos-mtile"><div class="pos-mtile-lbl">Ratio Sharpe</div><div class="pos-mtile-val" style="color:${m.sharpe>=1?'var(--green)':m.sharpe>=0?'var(--amber)':'var(--red)'}">${fmt(m.sharpe)}</div></div>
+        <div class="pos-mtile"><div class="pos-mtile-lbl">Volatilidad Media</div><div class="pos-mtile-val">${fmt(m.stdDev)}%</div></div>
+        <div class="pos-mtile"><div class="pos-mtile-lbl">Máxima Pérdida</div><div class="pos-mtile-val" style="color:var(--red)">${fmt(m.maxLoss)}%</div></div>
+        <div class="pos-mtile"><div class="pos-mtile-lbl">Máximo DD</div><div class="pos-mtile-val" style="color:var(--red)">-${fmt(m.maxDD)}%</div></div>
+        <div class="pos-mtile"><div class="pos-mtile-lbl">Nº Operaciones</div><div class="pos-mtile-val">${m.nOps}</div></div>
+      </div>`;
+  }
+
+  function historyTable(ops, prefix) {
+    if (ops.length === 0) return `<div class="sc2-empty">Sin operaciones cerradas todavía</div>`;
     const reasonLabel = { stop:'🛑 Stop', objetivo:'🎯 Objetivo', escape:'🚨 Escape falso', condiciones:'📉 Condiciones', manual:'✋ Manual' };
 
-    el.innerHTML = `
-      <!-- Resumen estadístico -->
-      <div class="pos-hist-stats">
-        <div class="pos-hist-stat">
-          <div class="pos-hist-stat-val">${history.length}</div>
-          <div class="pos-hist-stat-lbl">Operaciones</div>
-        </div>
-        <div class="pos-hist-stat">
-          <div class="pos-hist-stat-val" style="color:var(--green)">${winners}</div>
-          <div class="pos-hist-stat-lbl">Ganadoras</div>
-        </div>
-        <div class="pos-hist-stat">
-          <div class="pos-hist-stat-val" style="color:var(--red)">${losers}</div>
-          <div class="pos-hist-stat-lbl">Perdedoras</div>
-        </div>
-        <div class="pos-hist-stat">
-          <div class="pos-hist-stat-val" style="color:${avgPnl>=0?'var(--green)':'var(--red)'}">${avgPnl>=0?'+':''}${avgPnl.toFixed(1)}%</div>
-          <div class="pos-hist-stat-lbl">P&L medio</div>
-        </div>
-        <div class="pos-hist-stat">
-          <div class="pos-hist-stat-val" style="color:var(--green)">+${bestPnl.toFixed(1)}%</div>
-          <div class="pos-hist-stat-lbl">Mejor op.</div>
-        </div>
-        <div class="pos-hist-stat">
-          <div class="pos-hist-stat-val" style="color:var(--red)">${worstPnl.toFixed(1)}%</div>
-          <div class="pos-hist-stat-lbl">Peor op.</div>
-        </div>
-      </div>
-
-      <!-- Tabla historial -->
+    return `
       <table class="sc2-table" style="margin-top:14px;">
         <thead>
           <tr>
             <th>TICKER</th><th>ENTRADA</th><th>SALIDA</th>
-            <th>P&L</th><th>DURACIÓN</th><th>MOTIVO</th><th>NOTAS</th>
+            <th>P&L %</th><th>P&L €</th><th>DURACIÓN</th><th>MOTIVO</th><th>NOTAS</th>
             <th></th>
           </tr>
         </thead>
         <tbody>
-          ${history.map((h, i) => `
+          ${ops.map((h) => {
+            const globalIdx = history.indexOf(h);
+            return `
             <tr>
               <td>
-                <div class="sc2-ticker">${h.ticker}</div>
+                <div class="sc2-ticker">${h.ticker} <span class="pos-dir-badge ${h.direction==='bajista'?'short':'long'}" style="font-size:7px;">${h.direction==='bajista'?'SHORT':'LONG'}</span></div>
                 <div style="font-size:9px;color:var(--text3);font-family:var(--mono);">${h.entryDate} → ${h.exitDate}</div>
               </td>
               <td class="sc2-price">$${h.entry.toFixed(2)}</td>
               <td class="sc2-price">$${h.exit.toFixed(2)}</td>
-              <td class="sc2-score" style="color:${h.pnlPct>=0?'var(--green)':'var(--red)'}">
-                ${h.pnlPct>=0?'+':''}${h.pnlPct.toFixed(2)}%
-              </td>
+              <td class="sc2-score" style="color:${h.pnlPct>=0?'var(--green)':'var(--red)'}">${h.pnlPct>=0?'+':''}${h.pnlPct.toFixed(2)}%</td>
+              <td class="sc2-price" style="color:${h.pnlAbs!=null?(h.pnlAbs>=0?'var(--green)':'var(--red)'):'var(--text3)'}">${h.pnlAbs!=null?((h.pnlAbs>=0?'+':'')+'$'+h.pnlAbs.toFixed(0)):'—'}</td>
               <td class="sc2-vol">${h.duration}d</td>
               <td style="font-size:10px;color:var(--text2);">${reasonLabel[h.reason]||h.reason}</td>
               <td style="font-size:9px;color:var(--text3);max-width:180px;">${h.notasSalida||'—'}</td>
-              <td>
-                <button class="pos-del-btn" data-idx="${i}" title="Eliminar del historial" style="font-size:10px;padding:2px 6px;">✕</button>
-              </td>
-            </tr>`).join('')}
+              <td><button class="pos-del-btn" data-idx="${globalIdx}" title="Eliminar del historial" style="font-size:10px;padding:2px 6px;">✕</button></td>
+            </tr>`;
+          }).join('')}
         </tbody>
       </table>`;
+  }
 
-    // Listener eliminar del historial
+  let activeHistTab = 'alcista';
+  let capitalAlcista = null;
+  let capitalBajista = null;
+
+  async function loadCapitals() {
+    capitalAlcista = await UserData.get('ethan_capital_alcista');
+    capitalBajista = await UserData.get('ethan_capital_bajista');
+  }
+
+  function renderHistory() {
+    const el = document.getElementById('pos-history');
+    if (!el) return;
+
+    const alcistas = history.filter(h => (h.direction||'alcista') === 'alcista');
+    const bajistas = history.filter(h => h.direction === 'bajista');
+
+    const capA = capitalAlcista;
+    const capB = capitalBajista;
+    const mA = calcMetrics(alcistas, capA);
+    const mB = calcMetrics(bajistas, capB);
+
+    el.innerHTML = `
+      <div class="pos-hist-tabs">
+        <button class="pos-hist-tab ${activeHistTab==='alcista'?'active':''}" data-tab="alcista">📈 Alcista (${alcistas.length})</button>
+        <button class="pos-hist-tab ${activeHistTab==='bajista'?'active':''}" data-tab="bajista">📉 Bajista (${bajistas.length})</button>
+      </div>
+
+      <div class="pos-hist-panel" id="panel-alcista" style="display:${activeHistTab==='alcista'?'block':'none'}">
+        <div class="pos-capital-row">
+          <label>Capital asignado a Alcista (€)</label>
+          <input type="number" id="cap-alcista-input" class="wl-input" style="width:160px;" value="${capA??''}" placeholder="ej. 20000">
+          <button class="btn" id="cap-alcista-save" style="font-size:10px;">Guardar</button>
+        </div>
+        ${metricsGrid(mA, capA!=null?'$'+capA.toFixed(0):'Sin definir')}
+        ${historyTable(alcistas)}
+      </div>
+
+      <div class="pos-hist-panel" id="panel-bajista" style="display:${activeHistTab==='bajista'?'block':'none'}">
+        <div class="pos-capital-row">
+          <label>Capital asignado a Bajista (€)</label>
+          <input type="number" id="cap-bajista-input" class="wl-input" style="width:160px;" value="${capB??''}" placeholder="ej. 10000">
+          <button class="btn" id="cap-bajista-save" style="font-size:10px;">Guardar</button>
+        </div>
+        ${metricsGrid(mB, capB!=null?'$'+capB.toFixed(0):'Sin definir')}
+        ${historyTable(bajistas)}
+      </div>
+    `;
+
+    // Tabs
+    el.querySelectorAll('.pos-hist-tab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        activeHistTab = btn.dataset.tab;
+        renderHistory();
+      });
+    });
+
+    // Guardar capital
+    document.getElementById('cap-alcista-save')?.addEventListener('click', async () => {
+      const v = parseFloat(document.getElementById('cap-alcista-input').value);
+      capitalAlcista = isNaN(v) ? null : v;
+      await UserData.set('ethan_capital_alcista', capitalAlcista);
+      renderHistory();
+    });
+    document.getElementById('cap-bajista-save')?.addEventListener('click', async () => {
+      const v = parseFloat(document.getElementById('cap-bajista-input').value);
+      capitalBajista = isNaN(v) ? null : v;
+      await UserData.set('ethan_capital_bajista', capitalBajista);
+      renderHistory();
+    });
+
+    // Eliminar del historial
     el.querySelectorAll('.pos-del-btn[data-idx]').forEach(btn => {
       btn.addEventListener('click', async () => {
         if (!confirm('¿Eliminar esta operación del historial?')) return;
@@ -657,6 +782,7 @@ export async function render(container, { actionsSlot }) {
   }
 
 
+  await loadCapitals();
   renderAll();
   return { destroy() {} };
 }
