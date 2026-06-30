@@ -93,6 +93,11 @@ registerPage('baj-watchlist', {
   loader: () => import('./modules/bajista/watchlist.js')
 });
 
+registerPage('car-general', {
+  crumb: '4. Cartera <span>›</span> Análisis General',
+  title: 'Cartera · Análisis General',
+  loader: () => import('./modules/cartera/general.js')
+});
 registerPage('car-allocation', {
   crumb: '4. Cartera <span>›</span> 4.1 Asset Allocation',
   title: 'Asset Allocation',
