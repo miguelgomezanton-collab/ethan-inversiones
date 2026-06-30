@@ -1145,3 +1145,8 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
   .gen-ratio-grid { grid-template-columns:1fr; }
   .gen-compare-grid { grid-template-columns:1fr; }
 }
+
+/* ── Cartera: panel de diagnóstico NAV ── */
+.gen-debug-panel { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px 16px; }
+.gen-debug-panel summary { outline:none; }
+.gen-debug-panel summary::marker { color:var(--text3); }

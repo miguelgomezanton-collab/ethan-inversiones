@@ -140,23 +140,21 @@ function navMetrics(nav) {
   if (!nav || nav.length < 2) return null;
 
   // Sub-período: retorno = (V_fin - flujo_neto - V_inicio) / V_inicio
-  // Si el primer día ya tiene valor (cashIn ese mismo día), lo tratamos como
-  // el capital base del primer sub-período, no como "ganancia".
   const dailyReturns = [];
+  const debugLog = [];
   for (let i=1; i<nav.length; i++) {
     const prevValue = nav[i-1].value;
     const todayValue = nav[i].value;
     const netFlow = nav[i].cashIn - nav[i].cashOut;
-    // Base de comparación: valor anterior + lo que entró nuevo hoy (no es "retorno", es aportación)
     const base = prevValue + netFlow;
     if (base > 0.01) {
       const r = (todayValue - base) / base;
-      // Filtro de sanidad: descarta saltos imposibles (>80% en un día) que indican
-      // datos de precio incompletos en vez de movimiento real de mercado
-      if (Math.abs(r) < 0.9) dailyReturns.push(r);
+      const kept = Math.abs(r) < 0.9;
+      debugLog.push({ day: nav[i].day, prevValue, todayValue, cashIn: nav[i].cashIn, cashOut: nav[i].cashOut, netFlow, base, r, kept });
+      if (kept) dailyReturns.push(r);
     }
   }
-  if (dailyReturns.length < 2) return null;
+  if (dailyReturns.length < 2) return { debugLog, insufficient: true };
 
   const meanDaily = dailyReturns.reduce((s,r)=>s+r,0)/dailyReturns.length;
   const stdDaily = Math.sqrt(dailyReturns.reduce((s,r)=>s+(r-meanDaily)**2,0)/dailyReturns.length);
@@ -205,7 +203,7 @@ function navMetrics(nav) {
   return {
     totalReturn, annualReturn, annualVol, sharpe, sortino, calmar,
     maxDD, ddStart, ddTrough, recoveryDate, ddDurationDays,
-    returns: dailyReturns, nDays: tradingDays, twrSeries
+    returns: dailyReturns, nDays: tradingDays, twrSeries, debugLog
   };
 }
 
@@ -255,8 +253,34 @@ function kpiBlock(r) {
     </div>`;
 }
 
+function debugPanelSVG(m) {
+  if (!m || !m.debugLog) return '';
+  const log = [...m.debugLog].sort((a,b) => Math.abs(b.r) - Math.abs(a.r)).slice(0, 15);
+  return `
+    <details class="gen-debug-panel" style="margin-top:14px;">
+      <summary style="cursor:pointer;font-size:10px;color:var(--text3);font-family:var(--mono);">🔍 Diagnóstico: 15 días con mayor impacto en el cálculo (clic para expandir)</summary>
+      <table class="sc2-table" style="margin-top:10px;">
+        <thead><tr><th>FECHA</th><th>VALOR AYER</th><th>VALOR HOY</th><th>CASH IN</th><th>CASH OUT</th><th>BASE</th><th>RETORNO</th><th>USADO</th></tr></thead>
+        <tbody>
+          ${log.map(d => `
+            <tr style="${!d.kept?'opacity:0.4;':''}">
+              <td style="font-family:var(--mono);font-size:10px;">${fmtDate(d.day)}</td>
+              <td class="sc2-price">$${d.prevValue.toFixed(0)}</td>
+              <td class="sc2-price">$${d.todayValue.toFixed(0)}</td>
+              <td class="sc2-price" style="color:var(--teal)">${d.cashIn>0?'$'+d.cashIn.toFixed(0):'—'}</td>
+              <td class="sc2-price" style="color:var(--amber)">${d.cashOut>0?'$'+d.cashOut.toFixed(0):'—'}</td>
+              <td class="sc2-price">$${d.base.toFixed(0)}</td>
+              <td class="sc2-score" style="color:${d.r>=0?'var(--green)':'var(--red)'}">${(d.r*100).toFixed(1)}%</td>
+              <td style="font-size:10px;color:${d.kept?'var(--green)':'var(--red)'}">${d.kept?'✓ sí':'✗ filtrado'}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </details>`;
+}
+
 function navMetricsBlock(m) {
   if (!m) return `<div class="sc2-empty">Necesitas posiciones con fecha de entrada para calcular el NAV real</div>`;
+  if (m.insufficient) return `<div class="sc2-empty">Datos insuficientes tras el filtro de sanidad — expande el diagnóstico abajo</div>`;
   return `
     <div class="gen-metrics-grid">
       <div class="gen-mtile"><div class="gen-mtile-lbl">Retorno TWR Total</div><div class="gen-mtile-val" style="color:${m.totalReturn>=0?'var(--green)':'var(--red)'}">${fmtPct(m.totalReturn)}</div><div class="gen-mtile-sub">${m.nDays} días · neutraliza aportaciones</div></div>
@@ -437,6 +461,8 @@ export async function render(container, { actionsSlot }) {
       <div class="gen-section-title" style="margin-top:24px;">📈 Rendimiento Real (Time-Weighted) — Marcado a Mercado</div>
       ${navM ? `
         ${navMetricsBlock(navM)}
+        ${debugPanelSVG(navM)}
+        ${navM.twrSeries ? `
         <div class="gen-compare-grid" style="margin-top:14px;">
           <div class="gen-chart-box">
             <div class="gen-chart-title">Índice de Rendimiento (base 100, neutraliza aportaciones de capital)</div>
@@ -446,7 +472,7 @@ export async function render(container, { actionsSlot }) {
             <div class="gen-chart-title">Drawdown a lo largo del tiempo</div>
             ${ddChartSVG(navM.twrSeries)}
           </div>
-        </div>
+        </div>` : ''}
       ` : `<div class="sc2-empty">Necesitas posiciones con fecha de entrada para reconstruir el rendimiento real</div>`}
 
       <!-- DISTRIBUCIÓN DE RETORNOS -->
