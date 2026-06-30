@@ -1,0 +1,180 @@
+import{U as $}from"./userdata-C8tf_HXI.js";import"./index-DkkJmNlz.js";const j={XLK:"Tech",XLF:"Financials",XLV:"Health",XLE:"Energy",XLY:"Consumer D",XLP:"Consumer S",XLI:"Industrials",XLB:"Materials",XLU:"Utilities",XLRE:"Real Estate",XLC:"Comm"},I=r=>r!=null&&!isNaN(r)?"€"+r.toLocaleString("es-ES",{minimumFractionDigits:2,maximumFractionDigits:2}):"—",F=r=>r!=null&&!isNaN(r)?"€"+r.toLocaleString("es-ES",{minimumFractionDigits:0,maximumFractionDigits:0}):"—";function R(r){if(!r||!r.length)return null;const z=r.filter(b=>b.pnlPct>0),y=r.filter(b=>b.pnlPct<=0),x=z.length/r.length,k=z.length?z.reduce((b,B)=>b+B.pnlPct,0)/z.length:0,f=y.length?Math.abs(y.reduce((b,B)=>b+B.pnlPct,0)/y.length):0,C=f>0?k/f:null,L=C!=null?x-(1-x)/C:null;return{winRate:x*100,avgWinPct:k,avgLossPct:f,kelly:L,n:r.length}}async function K(r,{actionsSlot:z}){z.innerHTML="";const[y,x,k,f]=await Promise.all([$.get("ethan_positions").then(t=>t||[]),$.get("ethan_positions_history").then(t=>t||[]),$.get("ethan_capital_alcista"),$.get("ethan_capital_bajista")]),C={alcista:k||0,bajista:f||0};r.innerHTML=`
+    <div class="mm-tabs">
+      <button class="mm-tab active" data-tab="sizing">📐 Position Sizing</button>
+      <button class="mm-tab" data-tab="kelly">🎯 Kelly Criterion</button>
+      <button class="mm-tab" data-tab="backtest">🔁 Backtest de Sizing</button>
+      <button class="mm-tab" data-tab="limits">🛡️ Límites de Exposición</button>
+    </div>
+
+    <!-- TAB 1: Position Sizing -->
+    <div class="mm-panel active" id="panel-sizing">
+      <div class="mm-card">
+        <div class="mm-card-title">📐 Calculadora de Tamaño de Posición</div>
+        <div class="mm-card-desc">Calcula cuántas acciones comprar y cuánto capital invertir para cada operación que quieras abrir.</div>
+
+        <div class="mm-grid">
+          <div class="mm-field"><label>Dirección</label>
+            <select id="sz-direction" class="mm-select">
+              <option value="alcista">📈 LONG (Alcista)</option>
+              <option value="bajista">📉 SHORT (Bajista)</option>
+            </select>
+          </div>
+          <div class="mm-field"><label>Ticker / Valor</label><input type="text" id="sz-ticker" class="mm-input" value="AAPL" style="text-transform:uppercase;"></div>
+          <div class="mm-field"><label>Precio de Entrada (€)</label><input type="number" id="sz-entry" class="mm-input" value="150" step="0.01"></div>
+          <div class="mm-field"><label>Stop Loss (€)</label><input type="number" id="sz-stop" class="mm-input" value="145" step="0.01"></div>
+        </div>
+        <div class="mm-grid" style="margin-top:10px;">
+          <div class="mm-field"><label>Take Profit (€) <span style="color:var(--text3);text-transform:none;">(opcional)</span></label><input type="number" id="sz-tp" class="mm-input" placeholder="165.00" step="0.01"></div>
+          <div class="mm-field"><label>Capital Asignado <span style="color:var(--text3);text-transform:none;">(editable)</span></label><input type="number" id="sz-capital" class="mm-input" value="${C.alcista}" step="100"></div>
+          <div class="mm-field"><label>Riesgo por Operación (%)</label><input type="number" id="sz-risk" class="mm-input" value="1.5" step="0.25"></div>
+          <div class="mm-field" style="justify-content:flex-end;"><div id="sz-capital-source" style="font-size:9px;color:var(--text3);font-family:var(--mono);padding-bottom:9px;"></div></div>
+        </div>
+
+        <div class="mm-grid" style="grid-template-columns:1fr 1fr;margin-top:18px;">
+          <div class="mm-result-panel">
+            <div class="mm-result-panel-title" id="sz-res-title">Resultado para AAPL</div>
+            <div class="mm-result-row"><span>Dirección:</span> <strong id="sz-out-dir">📈 LONG</strong></div>
+            <div class="mm-result-row"><span>Precio:</span> <strong id="sz-out-price">—</strong></div>
+            <div class="mm-result-row"><span>Stop Loss:</span> <strong id="sz-out-stop" style="color:var(--red)">—</strong> <span id="sz-out-stop-dist" class="mm-result-sub-inline"></span></div>
+            <div class="mm-result-row" id="sz-out-tp-row" style="display:none;"><span>Take Profit:</span> <strong id="sz-out-tp" style="color:var(--green)">—</strong> <span id="sz-out-tp-dist" class="mm-result-sub-inline"></span></div>
+            <div class="mm-result-row"><span>Riesgo permitido:</span> <strong id="sz-out-risk" style="color:var(--amber)">—</strong> <span id="sz-out-risk-pct" class="mm-result-sub-inline"></span></div>
+          </div>
+          <div class="mm-result-panel highlight">
+            <div class="mm-result-panel-title" style="color:var(--teal);">Tamaño de Posición</div>
+            <div class="mm-result-row"><span>Acciones:</span> <strong id="sz-out-shares" style="font-size:18px;color:var(--teal);">—</strong></div>
+            <div class="mm-result-row"><span>Capital a invertir:</span> <strong id="sz-out-invested">—</strong> <span id="sz-out-invested-pct" class="mm-result-sub-inline"></span></div>
+            <div class="mm-result-row"><span>Pérdida máxima:</span> <strong id="sz-out-maxloss" style="color:var(--red)">—</strong> <span id="sz-out-maxloss-pct" class="mm-result-sub-inline"></span></div>
+            <div class="mm-result-row" id="sz-out-rr-row" style="display:none;"><span>Ratio R:R:</span> <strong id="sz-out-rr" style="color:var(--green)">—</strong></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 2: Kelly -->
+    <div class="mm-panel" id="panel-kelly">
+      <div class="mm-card">
+        <div class="mm-card-title">🎯 Calculadora de Kelly Criterion</div>
+        <div class="mm-card-desc">El Kelly Criterion calcula el % óptimo de capital a arriesgar por operación, maximizando el crecimiento compuesto a largo plazo.</div>
+
+        <div class="mm-subtabs">
+          <button class="mm-subtab active" data-kdir="alcista">📈 Alcista</button>
+          <button class="mm-subtab" data-kdir="bajista">📉 Bajista</button>
+        </div>
+        <div id="kl-source-badge"></div>
+
+        <div class="mm-grid">
+          <div class="mm-field"><label>Win Rate (%)</label><input type="number" id="kl-winrate" class="mm-input" value="55"></div>
+          <div class="mm-field"><label>Ganancia Media (%)</label><input type="number" id="kl-avgwin" class="mm-input" value="8"></div>
+          <div class="mm-field"><label>Pérdida Media (%)</label><input type="number" id="kl-avgloss" class="mm-input" value="5"></div>
+          <div class="mm-field"><label>Fracción de Kelly a usar</label>
+            <select id="kl-fraction" class="mm-select">
+              <option value="1">Kelly Completo (100%)</option>
+              <option value="0.5" selected>Medio Kelly (50%) — recomendado</option>
+              <option value="0.25">Cuarto Kelly (25%) — conservador</option>
+            </select>
+          </div>
+        </div>
+        <div class="mm-result-hero">
+          <div class="mm-result-card">
+            <div class="mm-result-label">Kelly Óptimo (f*)</div>
+            <div class="mm-result-val" id="kl-optimal">—</div>
+          </div>
+          <div class="mm-result-card">
+            <div class="mm-result-label">Kelly Ajustado (recomendado)</div>
+            <div class="mm-result-val" id="kl-adjusted" style="color:var(--teal)">—</div>
+            <div class="mm-result-sub" id="kl-fraction-label"></div>
+          </div>
+          <div class="mm-result-card">
+            <div class="mm-result-label">Tu Sizing Actual</div>
+            <div class="mm-result-val" id="kl-current" style="color:var(--amber)">—</div>
+            <div class="mm-result-sub">según Riesgo% configurado</div>
+          </div>
+          <div class="mm-result-card">
+            <div class="mm-result-label">Veredicto</div>
+            <div class="mm-result-val" id="kl-verdict" style="font-size:14px;">—</div>
+          </div>
+        </div>
+        <div style="margin-top:16px;font-size:11px;color:var(--text3);background:var(--surface2);padding:12px 14px;border-radius:8px;line-height:1.6;">
+          ⚠ El Kelly completo maximiza el crecimiento teórico pero implica drawdowns muy violentos. La mayoría de gestores profesionales usan <strong style="color:var(--text2)">Medio Kelly o menos</strong>.
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 3: Backtest de Sizing -->
+    <div class="mm-panel" id="panel-backtest">
+      <div class="mm-card">
+        <div class="mm-card-title">🔁 Backtest de Sizing — ¿Qué habría pasado con otro método?</div>
+        <div class="mm-card-desc">Aplica retroactivamente distintos métodos de sizing a cada una de tus operaciones cerradas reales, y compara el resultado final: capital, rentabilidad, drawdown y volatilidad.</div>
+
+        <div class="mm-subtabs">
+          <button class="mm-subtab" data-btdir="alcista">📈 Alcista</button>
+          <button class="mm-subtab" data-btdir="bajista">📉 Bajista</button>
+          <button class="mm-subtab active" data-btdir="total">🌐 Total</button>
+        </div>
+        <div id="bt-source-badge"></div>
+
+        <div class="mm-grid">
+          <div class="mm-field"><label>Capital Inicial (€)</label><input type="number" id="bt-capital" class="mm-input" value="${(k||0)+(f||0)||1e4}"></div>
+          <div class="mm-field"><label>Riesgo % (para "Tu Sizing Real")</label><input type="number" id="bt-risk" class="mm-input" value="1.5" step="0.25"></div>
+          <div class="mm-field" style="grid-column:span 2;display:flex;align-items:flex-end;">
+            <button class="btn btn-primary" id="bt-run-btn" style="width:100%;">▶ Ejecutar Backtest</button>
+          </div>
+        </div>
+        <div id="bt-status" style="margin-top:10px;font-family:var(--mono);font-size:10px;color:var(--text3);"></div>
+        <div id="bt-results" style="margin-top:18px;"></div>
+      </div>
+    </div>
+
+    <!-- TAB 4: Límites -->
+    <div class="mm-panel" id="panel-limits">
+      <div class="mm-card">
+        <div class="mm-card-title">🛡️ Límites y Reglas de Exposición</div>
+        <div class="mm-card-desc">Define tus reglas de gestión de riesgo y compáralas con tu cartera actual real.</div>
+        <div class="mm-grid">
+          <div class="mm-field"><label>Capital Total (€)</label><input type="number" id="lim-capital" class="mm-input" value="${(k||0)+(f||0)||1e4}"></div>
+          <div class="mm-field"><label>Máx. % por Posición</label><input type="number" id="lim-maxpos" class="mm-input" value="20"></div>
+          <div class="mm-field"><label>Máx. % por Sector</label><input type="number" id="lim-maxsector" class="mm-input" value="35"></div>
+          <div class="mm-field"><label>Máx. Exposición Total</label><input type="number" id="lim-maxtotal" class="mm-input" value="90"></div>
+        </div>
+        <button class="btn btn-primary" id="lim-check-btn" style="margin-top:14px;">Comprobar contra mi cartera actual</button>
+        <div id="lim-results" style="margin-top:18px;"></div>
+      </div>
+    </div>
+  `;function L(){const t=document.getElementById("sz-direction").value,s=C[t]||0;document.getElementById("sz-capital").value=s,document.getElementById("sz-capital-source").textContent=s>0?`Capital Asignado a ${t==="bajista"?"Bajista":"Alcista"} en Cartera`:`Sin Capital Asignado a ${t==="bajista"?"Bajista":"Alcista"} — configúralo en Cartera`,b()}function b(){const t=document.getElementById("sz-direction").value,s=document.getElementById("sz-ticker").value.trim().toUpperCase()||"—",a=parseFloat(document.getElementById("sz-capital").value)||0,i=parseFloat(document.getElementById("sz-risk").value)||0,d=parseFloat(document.getElementById("sz-entry").value)||0,p=parseFloat(document.getElementById("sz-stop").value)||0,c=parseFloat(document.getElementById("sz-tp").value)||null,u=a*(i/100),n=Math.abs(d-p),m=n>0?Math.floor(u/n):0,g=m*d,e=a>0?g/a*100:0,o=m*n,l=a>0?o/a*100:0,v=t==="alcista";if(document.getElementById("sz-res-title").textContent=`Resultado para ${s}`,document.getElementById("sz-out-dir").innerHTML=v?"📈 LONG":"📉 SHORT",document.getElementById("sz-out-dir").style.color=v?"var(--green)":"var(--red)",document.getElementById("sz-out-price").textContent=I(d),document.getElementById("sz-out-stop").textContent=I(p),document.getElementById("sz-out-stop-dist").textContent=`(-${I(n)}/acc)`,document.getElementById("sz-out-risk").textContent=I(u),document.getElementById("sz-out-risk-pct").textContent=`(${i.toFixed(2)}% de ${F(a)})`,c&&c>0){const h=Math.abs(c-d),P=n>0?(h/n).toFixed(2):"—";document.getElementById("sz-out-tp-row").style.display="flex",document.getElementById("sz-out-tp").textContent=I(c),document.getElementById("sz-out-tp-dist").textContent=`(+${I(h)}/acc)`,document.getElementById("sz-out-rr-row").style.display="flex",document.getElementById("sz-out-rr").textContent=`1 : ${P}`}else document.getElementById("sz-out-tp-row").style.display="none",document.getElementById("sz-out-rr-row").style.display="none";document.getElementById("sz-out-shares").textContent=m.toLocaleString("es-ES"),document.getElementById("sz-out-invested").textContent=F(g),document.getElementById("sz-out-invested-pct").textContent=`(${e.toFixed(1)}% del total)`,document.getElementById("sz-out-maxloss").textContent=F(o),document.getElementById("sz-out-maxloss-pct").textContent=`(${l.toFixed(2)}% del capital)`}["sz-capital","sz-risk","sz-entry","sz-stop","sz-tp","sz-ticker"].forEach(t=>{document.getElementById(t).addEventListener("input",b)}),document.getElementById("sz-direction").addEventListener("change",L),L();let B="alcista";function w(t){const s=x.filter(d=>(d.direction||"alcista")===t),a=R(s),i=document.getElementById("kl-source-badge");a?(i.innerHTML=`<span class="mm-source-badge real">✓ Auto-rellenado con ${a.n} operaciones reales (${t})</span>`,document.getElementById("kl-winrate").value=a.winRate.toFixed(1),document.getElementById("kl-avgwin").value=a.avgWinPct.toFixed(1),document.getElementById("kl-avgloss").value=a.avgLossPct.toFixed(1)):i.innerHTML=`<span class="mm-source-badge">⚠ Sin operaciones cerradas en ${t} — introduce datos manualmente para simular</span>`,A()}document.querySelectorAll(".mm-subtab[data-kdir]").forEach(t=>{t.addEventListener("click",()=>{document.querySelectorAll(".mm-subtab[data-kdir]").forEach(s=>s.classList.remove("active")),t.classList.add("active"),B=t.dataset.kdir,w(B)})});function A(){var m;const t=(parseFloat(document.getElementById("kl-winrate").value)||0)/100,s=parseFloat(document.getElementById("kl-avgwin").value)||0,a=parseFloat(document.getElementById("kl-avgloss").value)||0,i=parseFloat(document.getElementById("kl-fraction").value),d=parseFloat((m=document.getElementById("sz-risk"))==null?void 0:m.value)||1.5;if(a<=0)return;const p=s/a,c=t-(1-t)/p,u=c*i;document.getElementById("kl-optimal").textContent=(c*100).toFixed(1)+"%",document.getElementById("kl-optimal").style.color=c>0?"var(--green)":"var(--red)",document.getElementById("kl-adjusted").textContent=(u*100).toFixed(1)+"%",document.getElementById("kl-fraction-label").textContent=`×${i} del Kelly completo`,document.getElementById("kl-current").textContent=d.toFixed(2)+"%";const n=document.getElementById("kl-verdict");c<=0?(n.textContent="🔴 Sin Edge",n.style.color="var(--red)"):d>c*100?(n.textContent="⚠️ Sobre-apalancado",n.style.color="var(--amber)"):c>.25?(n.textContent="⚠️ Edge muy alto, revisa",n.style.color="var(--amber)"):c>.05?(n.textContent="✅ Edge saludable",n.style.color="var(--green)"):(n.textContent="🟡 Edge marginal",n.style.color="var(--amber)")}["kl-winrate","kl-avgwin","kl-avgloss","kl-fraction"].forEach(t=>{document.getElementById(t).addEventListener("input",A)}),w("alcista");let E="total";function S(t){return[...t==="total"?x:x.filter(a=>(a.direction||"alcista")===t)].sort((a,i)=>(a.closedAt||0)-(i.closedAt||0))}function T(){const t=S(E),s=document.getElementById("bt-source-badge"),a=E==="total"?"Total (Alcista + Bajista)":E==="alcista"?"Alcista":"Bajista";t.length>0?s.innerHTML=`<span class="mm-source-badge real">✓ ${t.length} operaciones reales cerradas · ${a}</span>`:s.innerHTML=`<span class="mm-source-badge">⚠ Sin operaciones cerradas en ${a}</span>`}document.querySelectorAll("[data-btdir]").forEach(t=>{t.addEventListener("click",()=>{document.querySelectorAll("[data-btdir]").forEach(s=>s.classList.remove("active")),t.classList.add("active"),E=t.dataset.btdir,T(),document.getElementById("bt-results").innerHTML="",document.getElementById("bt-status").textContent=""})}),T();function M(t,s,a){let i=s,d=s,p=0;const c=[s],u=[];t.forEach(e=>{const o=a(e,i),v=i*o*(e.pnlPct/100);i+=v,c.push(i),u.push(v/Math.max(i-v,1)),d=Math.max(d,i);const h=d>0?(d-i)/d*100:0;h>p&&(p=h)});const n=(i-s)/s*100,m=u.length?u.reduce((e,o)=>e+o,0)/u.length:0,g=u.length?Math.sqrt(u.reduce((e,o)=>e+(o-m)**2,0)/u.length):0;return{finalCapital:i,totalReturn:n,maxDD:p,volatility:g*100,curve:c}}return document.getElementById("bt-run-btn").addEventListener("click",()=>{const t=parseFloat(document.getElementById("bt-capital").value)||1e4,s=(parseFloat(document.getElementById("bt-risk").value)||1.5)/100,a=S(E),i=document.getElementById("bt-status");if(a.length===0){i.textContent="Sin operaciones cerradas en esta categoría — no se puede simular",document.getElementById("bt-results").innerHTML="";return}i.textContent=`Simulando ${a.length} operaciones con 4 métodos distintos...`;const d=R(a),p=(d==null?void 0:d.kelly)||0,c=Math.max(0,p*.5),n=[{name:"Tu Sizing Real",desc:`Riesgo fijo ${(s*100).toFixed(1)}%`,fn:()=>s,color:"var(--blue)"},{name:"Kelly Completo",desc:`f* = ${(p*100).toFixed(1)}%`,fn:()=>Math.max(0,p),color:"var(--red)"},{name:"Medio Kelly",desc:`½ × f* = ${(c*100).toFixed(1)}%`,fn:()=>c,color:"var(--teal)"},{name:"Tamaño Fijo 10%",desc:"10% capital siempre",fn:()=>.1,color:"var(--amber)"}].map(l=>({...l,...M(a,t,l.fn)})),m=n.reduce((l,v)=>l.totalReturn>v.totalReturn?l:v),g=n.reduce((l,v)=>l.maxDD<v.maxDD?l:v),e=E==="total"?"Total (Alcista + Bajista)":E==="alcista"?"Alcista":"Bajista";i.textContent=`Backtest completado sobre ${a.length} operaciones reales cerradas · ${e}`;const o=document.getElementById("bt-results");o.innerHTML=`
+      <div class="mm-bt-grid">
+        ${n.map(l=>`
+          <div class="mm-bt-card ${l===m?"best":""}">
+            <div class="mm-bt-card-name">
+              <span style="color:${l.color}">${l.name}</span>
+              ${l===m?'<span class="method-badge recommended">MEJOR RENT.</span>':""}
+            </div>
+            <div style="font-size:9px;color:var(--text3);margin-bottom:10px;font-family:var(--mono);">${l.desc}</div>
+            <div class="mm-bt-metric"><span>Capital Final</span><strong>${F(l.finalCapital)}</strong></div>
+            <div class="mm-bt-metric"><span>Rentabilidad</span><strong style="color:${l.totalReturn>=0?"var(--green)":"var(--red)"}">${l.totalReturn>=0?"+":""}${l.totalReturn.toFixed(1)}%</strong></div>
+            <div class="mm-bt-metric"><span>Máx Drawdown</span><strong style="color:var(--red)">-${l.maxDD.toFixed(1)}%</strong></div>
+            <div class="mm-bt-metric"><span>Volatilidad</span><strong>${l.volatility.toFixed(1)}%</strong></div>
+          </div>`).join("")}
+      </div>
+      <div style="margin-top:14px;font-size:11px;color:var(--text2);background:var(--surface2);padding:12px 14px;border-radius:8px;line-height:1.6;">
+        💡 <strong style="color:var(--teal)">${m.name}</strong> habría dado la mayor rentabilidad (${m.totalReturn.toFixed(1)}%), pero
+        <strong style="color:var(--text1)">${g.name}</strong> habría sido el más seguro (drawdown máx. ${g.maxDD.toFixed(1)}%).
+        Esto ilustra el trade-off clásico: más sizing = más rentabilidad potencial pero también más riesgo de ruina.
+      </div>
+    `}),document.getElementById("lim-check-btn").addEventListener("click",()=>{const t=parseFloat(document.getElementById("lim-capital").value)||1e4,s=parseFloat(document.getElementById("lim-maxpos").value)||20,a=parseFloat(document.getElementById("lim-maxsector").value)||35,i=parseFloat(document.getElementById("lim-maxtotal").value)||90,d=document.getElementById("lim-results");if(y.length===0){d.innerHTML='<div class="sc2-empty">Sin posiciones abiertas — añade alguna en el módulo Cartera</div>';return}const p=y.map(e=>({ticker:e.ticker,sector:e.sector||null,value:e.shares&&e.entry?e.shares*e.entry:e.cost||0})),u=p.reduce((e,o)=>e+o.value,0)/t*100,n={};p.forEach(e=>{const o=e.sector||"Sin sector";n[o]=(n[o]||0)+e.value});const m=(e,o)=>e>o?"bad":e>o*.8?"warn":"ok",g=e=>e==="ok"?"✓ OK":e==="warn"?"⚠ Cerca":"✗ Excede";d.innerHTML=`
+      <div class="mm-source-badge real" style="margin-bottom:14px;">✓ Conectado a tus ${y.length} posiciones abiertas reales</div>
+      <div class="mm-limits-grid">
+        <div>
+          <div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:10px;">Por Posición</div>
+          ${p.map(e=>{const o=e.value/t*100,l=m(o,s);return`<div class="mm-limit-row"><span>${e.ticker}</span><span style="font-family:var(--mono);">${o.toFixed(1)}% / ${s}%</span><span class="mm-limit-status ${l}">${g(l)}</span></div>`}).join("")}
+        </div>
+        <div>
+          <div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:10px;">Por Sector</div>
+          ${Object.entries(n).map(([e,o])=>{const l=o/t*100,v=m(l,a);return`<div class="mm-limit-row"><span>${j[e]||e}</span><span style="font-family:var(--mono);">${l.toFixed(1)}% / ${a}%</span><span class="mm-limit-status ${v}">${g(v)}</span></div>`}).join("")}
+          <div class="mm-limit-row" style="margin-top:8px;border-top:1px solid var(--border);padding-top:14px;">
+            <span style="font-weight:700;">Exposición Total</span>
+            <span style="font-family:var(--mono);">${u.toFixed(1)}% / ${i}%</span>
+            <span class="mm-limit-status ${m(u,i)}">${g(m(u,i))}</span>
+          </div>
+        </div>
+      </div>
+    `}),r.querySelectorAll(".mm-tab").forEach(t=>{t.addEventListener("click",()=>{r.querySelectorAll(".mm-tab").forEach(s=>s.classList.remove("active")),r.querySelectorAll(".mm-panel").forEach(s=>s.classList.remove("active")),t.classList.add("active"),document.getElementById("panel-"+t.dataset.tab).classList.add("active")})}),{destroy(){}}}export{K as render};
