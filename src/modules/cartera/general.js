@@ -1,10 +1,9 @@
 // ═══════════════════════════════════════════════
 // MÓDULO: Cartera · General + Proyecciones
-// Combina datos reales (Firestore) de cartera.js:
-// - Ratios de rentabilidad/riesgo Alcista vs Bajista
-// - Proyección a 5 años con sizing configurable
-// - Drawdown esperado por rachas perdedoras
-// - Escenarios Conservador / Base / Agresivo
+// v2 — NAV diario real marcado a mercado.
+// Todas las métricas de riesgo (Sharpe, Sortino,
+// Calmar, Max DD) se calculan sobre la curva de
+// NAV real, no sobre aproximaciones por operación.
 // ═══════════════════════════════════════════════
 
 import { UserData } from '../../userdata.js';
@@ -15,6 +14,32 @@ const PROXIES = [
   u => `https://soft-field-156f.miguel-gomez-anton.workers.dev/?url=${encodeURIComponent(u)}`,
   u => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`
 ];
+
+async function fetchDailyHistory(ticker, rangeDays) {
+  // Pide suficiente histórico para cubrir desde la entrada más antigua
+  const range = rangeDays > 365*1.5 ? '5y' : rangeDays > 200 ? '2y' : '1y';
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=${range}`;
+  for (const fn of PROXIES) {
+    try {
+      const r = await fetch(fn(url), { signal: AbortSignal.timeout(8000) });
+      if (!r.ok) continue;
+      const j = JSON.parse(await r.text());
+      const res = j?.chart?.result?.[0]; if (!res) continue;
+      const closes = res.indicators?.quote?.[0]?.close;
+      const ts = res.timestamp;
+      if (!closes || !ts) continue;
+      // Mapa fecha(YYYY-MM-DD) -> precio cierre
+      const map = {};
+      ts.forEach((t,i) => {
+        if (closes[i] == null) return;
+        const d = new Date(t*1000).toISOString().slice(0,10);
+        map[d] = closes[i];
+      });
+      return map;
+    } catch {}
+  }
+  return null;
+}
 
 async function fetchPrice(ticker) {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=5d`;
@@ -30,126 +55,268 @@ async function fetchPrice(ticker) {
 }
 
 // ── Formatters ──────────────────────────────────
-const fmt   = (n,d=2) => n!=null && !isNaN(n) ? n.toFixed(d) : '—';
+const fmt   = (n,d=2) => n!=null && !isNaN(n) && isFinite(n) ? n.toFixed(d) : '—';
 const fmtE  = n => n!=null && !isNaN(n) ? '$'+n.toLocaleString('es-ES',{minimumFractionDigits:0,maximumFractionDigits:0}) : '—';
 const fmtPct= n => n!=null && !isNaN(n) ? (n>=0?'+':'')+(n*100).toFixed(2)+'%' : '—';
-const fmtK  = n => n!=null && !isNaN(n) ? (n>=1000 ? '$'+(n/1000).toFixed(1)+'k' : fmtE(n)) : '—';
+const fmtDate = d => d ? new Date(d).toLocaleDateString('es-ES',{day:'2-digit',month:'short',year:'numeric'}) : '—';
 
-// ── Ratios (idéntico a la fórmula original, adaptado a pnlPct ya en %) ──
+function dateRange(start, end) {
+  const out = [];
+  let d = new Date(start);
+  const endD = new Date(end);
+  while (d <= endD) { out.push(d.toISOString().slice(0,10)); d.setDate(d.getDate()+1); }
+  return out;
+}
+
+// ── Construcción del NAV diario real ────────────
+// Para cada día desde la primera entrada hasta hoy, suma el valor a mercado
+// de todas las posiciones vivas ese día (usando el último precio conocido
+// hasta esa fecha — forward-fill para fines de semana/festivos).
+async function buildNavSeries(allTrades) {
+  if (allTrades.length === 0) return null;
+
+  const startDate = allTrades.reduce((min,t) => t.entryDate < min ? t.entryDate : min, allTrades[0].entryDate);
+  const today = new Date().toISOString().slice(0,10);
+  const days = dateRange(startDate, today);
+  const maxRangeDays = days.length;
+
+  // Histórico de precios por ticker único
+  const tickers = [...new Set(allTrades.map(t => t.ticker))];
+  const histMap = {};
+  await Promise.all(tickers.map(async tk => {
+    histMap[tk] = await fetchDailyHistory(tk, maxRangeDays);
+  }));
+
+  // Para cada día, sumar valor de posiciones vivas (forward-fill precio)
+  const lastKnownPrice = {};
+  const nav = days.map(day => {
+    let total = 0;
+    allTrades.forEach(t => {
+      const isOpen = !t.exitDate || t.exitDate >= day;
+      const isActive = t.entryDate <= day && (t.exitDate ? day <= t.exitDate : true);
+      if (!isActive) return;
+      const hist = histMap[t.ticker];
+      let price = hist?.[day];
+      if (price == null && hist) {
+        // Forward-fill: usar el último precio conocido hasta esta fecha
+        price = lastKnownPrice[t.ticker] ?? t.entry;
+      }
+      if (price != null) lastKnownPrice[t.ticker] = price;
+      const usedPrice = price ?? t.entry;
+      const shares = t.shares || (t.cost && t.entry ? t.cost/t.entry : 0);
+      const value = t.direction === 'bajista'
+        ? (t.entry * shares) + (shares * (t.entry - usedPrice))  // short: gana si baja
+        : shares * usedPrice;
+      total += value;
+    });
+    return { day, value: total };
+  });
+
+  return nav;
+}
+
+// ── Métricas sobre NAV real ──────────────────────
+function navMetrics(nav, capitalBase) {
+  if (!nav || nav.length < 2) return null;
+  const values = nav.map(n => n.value).filter(v => v > 0);
+  if (values.length < 2) return null;
+
+  // Retornos diarios
+  const returns = [];
+  for (let i=1;i<values.length;i++) {
+    if (values[i-1] > 0) returns.push((values[i]-values[i-1])/values[i-1]);
+  }
+  if (returns.length === 0) return null;
+
+  const meanDaily = returns.reduce((s,r)=>s+r,0)/returns.length;
+  const stdDaily = Math.sqrt(returns.reduce((s,r)=>s+(r-meanDaily)**2,0)/returns.length);
+
+  // Anualización (252 días de trading)
+  const annualReturn = Math.pow(1+meanDaily, 252) - 1;
+  const annualVol = stdDaily * Math.sqrt(252);
+  const sharpe = annualVol > 0 ? annualReturn/annualVol : 0;
+
+  // Sortino: solo desviación de retornos negativos
+  const negReturns = returns.filter(r => r < 0);
+  const downsideDev = negReturns.length ? Math.sqrt(negReturns.reduce((s,r)=>s+r**2,0)/negReturns.length) * Math.sqrt(252) : 0;
+  const sortino = downsideDev > 0 ? annualReturn/downsideDev : 0;
+
+  // Max Drawdown real con fechas
+  let peak = values[0], peakIdx = 0, maxDD = 0, ddStart = nav[0].day, ddEnd = nav[0].day, ddTrough = nav[0].day;
+  let curPeakIdx = 0;
+  values.forEach((v,i) => {
+    if (v > peak) { peak = v; curPeakIdx = i; }
+    const dd = peak > 0 ? (peak-v)/peak : 0;
+    if (dd > maxDD) { maxDD = dd; ddStart = nav[curPeakIdx].day; ddTrough = nav[i].day; }
+  });
+  // Buscar fecha de recuperación (primera vez que vuelve a superar el peak previo al drawdown)
+  let recoveryDate = null;
+  const peakValueAtDD = values[nav.findIndex(n=>n.day===ddStart)];
+  for (let i = nav.findIndex(n=>n.day===ddTrough); i < values.length; i++) {
+    if (values[i] >= peakValueAtDD) { recoveryDate = nav[i].day; break; }
+  }
+  const ddDurationDays = recoveryDate
+    ? Math.round((new Date(recoveryDate)-new Date(ddStart))/86400000)
+    : null; // null = aún no recuperado
+
+  // Calmar Ratio: retorno anualizado / max drawdown
+  const calmar = maxDD > 0 ? annualReturn/maxDD : 0;
+
+  const totalReturn = values[0] > 0 ? (values[values.length-1]-values[0])/values[0] : 0;
+
+  return {
+    startValue: values[0], endValue: values[values.length-1], totalReturn,
+    annualReturn, annualVol, sharpe, sortino, calmar,
+    maxDD, ddStart, ddTrough, recoveryDate, ddDurationDays,
+    returns, nDays: values.length
+  };
+}
+
+// ── Ratios sobre operaciones cerradas (igual que antes, para KPIs por op) ──
 function calcRatios(ops) {
   if (!ops.length) return null;
   const opsN = ops.map(o => ({ ...o, pct: o.pnlPct/100, pl: o.pnlAbs }));
   const totalPL = opsN.reduce((s,o)=> s + (o.pl||0), 0);
   const hasAbsData = opsN.some(o => o.pl != null);
-
   const winners = opsN.filter(o => o.pct > 0), losers = opsN.filter(o => o.pct <= 0);
   const winRate = winners.length / opsN.length;
   const avgWinPct  = winners.length ? winners.reduce((s,o)=>s+o.pct,0)/winners.length : 0;
   const avgLossPct = losers.length  ? Math.abs(losers.reduce((s,o)=>s+o.pct,0)/losers.length) : 0;
   const esperanza  = winRate*avgWinPct - (1-winRate)*avgLossPct;
-
-  const rents = opsN.map(o => o.pct);
-  const meanRent = rents.reduce((s,r)=>s+r,0)/rents.length;
-  const stdRent  = Math.sqrt(rents.reduce((s,r)=>s+(r-meanRent)**2,0)/rents.length);
-  const sharpe   = stdRent > 0 ? meanRent/stdRent : 0;
-
   const diasArr = opsN.map(o=>o.duration).filter(d=>d>0);
   const diasMedio = diasArr.length ? diasArr.reduce((s,d)=>s+d,0)/diasArr.length : 0;
   const opsAnio = diasMedio > 0 ? 365.25/diasMedio : 0;
-
   const maxWin  = opsN.reduce((a,b)=> a.pct > b.pct ? a : b);
   const maxLoss = opsN.reduce((a,b)=> a.pct < b.pct ? a : b);
-
   const grossWin  = winners.length ? winners.reduce((s,o)=>s+o.pct,0) : 0;
   const grossLoss = losers.length  ? Math.abs(losers.reduce((s,o)=>s+o.pct,0)) : 0;
   const profitFactor = grossLoss > 0 ? grossWin/grossLoss : (grossWin>0?Infinity:0);
-
   let maxConsecLoss = 0, cl = 0;
   opsN.forEach(o => { if (o.pct <= 0) { cl++; maxConsecLoss = Math.max(maxConsecLoss, cl); } else cl = 0; });
 
-  return { totalPL, hasAbsData, winRate, avgWinPct, avgLossPct, esperanza, sharpe,
-    diasMedio, opsAnio, maxWin, maxLoss, profitFactor, maxConsecLoss,
-    winners: winners.length, losers: losers.length, total: opsN.length, stdRent, rentMedia: meanRent };
+  // Kelly Criterion: f* = W - (1-W)/R, donde R = avgWin/avgLoss
+  const R = avgLossPct > 0 ? avgWinPct/avgLossPct : null;
+  const kelly = R != null ? winRate - (1-winRate)/R : null;
+
+  return { totalPL, hasAbsData, winRate, avgWinPct, avgLossPct, esperanza,
+    diasMedio, opsAnio, maxWin, maxLoss, profitFactor, maxConsecLoss, kelly, R,
+    winners: winners.length, losers: losers.length, total: opsN.length };
 }
 
-function kpiBlock(r, colorClass) {
+function kpiBlock(r) {
   if (!r) return `<div class="sc2-empty">Sin operaciones cerradas en esta categoría</div>`;
   return `
     <div class="gen-metrics-grid">
-      <div class="gen-mtile ${colorClass}"><div class="gen-mtile-lbl">P/L Total</div><div class="gen-mtile-val" style="color:${r.hasAbsData?(r.totalPL>=0?'var(--green)':'var(--red)'):'var(--text3)'}">${r.hasAbsData?fmtE(r.totalPL):'Sin coste'}</div><div class="gen-mtile-sub">${r.total} operaciones</div></div>
-      <div class="gen-mtile ${colorClass}"><div class="gen-mtile-lbl">Win Rate</div><div class="gen-mtile-val">${(r.winRate*100).toFixed(1)}%</div><div class="gen-mtile-sub">${r.winners}W / ${r.losers}L</div></div>
-      <div class="gen-mtile ${colorClass}"><div class="gen-mtile-lbl">Rent. Media/Op</div><div class="gen-mtile-val" style="color:${r.rentMedia>=0?'var(--green)':'var(--red)'}">${fmtPct(r.rentMedia)}</div><div class="gen-mtile-sub">${fmt(r.diasMedio,0)}d · ${fmt(r.opsAnio,1)} ops/año</div></div>
-      <div class="gen-mtile ${colorClass}"><div class="gen-mtile-lbl">Esperanza Mat.</div><div class="gen-mtile-val" style="color:${r.esperanza>=0?'var(--green)':'var(--red)'}">${fmtPct(r.esperanza)}</div><div class="gen-mtile-sub">Sharpe: ${fmt(r.sharpe)}</div></div>
-      <div class="gen-mtile ${colorClass}"><div class="gen-mtile-lbl">Profit Factor</div><div class="gen-mtile-val">${r.profitFactor===Infinity?'∞':fmt(r.profitFactor)}</div><div class="gen-mtile-sub">AvgW: ${fmtPct(r.avgWinPct)} · AvgL: -${(r.avgLossPct*100).toFixed(2)}%</div></div>
-      <div class="gen-mtile ${colorClass}"><div class="gen-mtile-lbl">Máx Ganancia</div><div class="gen-mtile-val" style="color:var(--green)">${fmtPct(r.maxWin.pct)}</div><div class="gen-mtile-sub">${r.maxWin.ticker} · ${r.maxWin.duration}d</div></div>
-      <div class="gen-mtile ${colorClass}"><div class="gen-mtile-lbl">Máx Pérdida</div><div class="gen-mtile-val" style="color:var(--red)">${fmtPct(r.maxLoss.pct)}</div><div class="gen-mtile-sub">${r.maxLoss.ticker} · ${r.maxLoss.duration}d</div></div>
-      <div class="gen-mtile ${colorClass}"><div class="gen-mtile-lbl">Máx Rachas Perd.</div><div class="gen-mtile-val" style="color:var(--red)">${r.maxConsecLoss}</div><div class="gen-mtile-sub">consecutivas</div></div>
+      <div class="gen-mtile"><div class="gen-mtile-lbl">P/L Total</div><div class="gen-mtile-val" style="color:${r.hasAbsData?(r.totalPL>=0?'var(--green)':'var(--red)'):'var(--text3)'}">${r.hasAbsData?fmtE(r.totalPL):'Sin coste'}</div><div class="gen-mtile-sub">${r.total} operaciones</div></div>
+      <div class="gen-mtile"><div class="gen-mtile-lbl">Win Rate</div><div class="gen-mtile-val">${(r.winRate*100).toFixed(1)}%</div><div class="gen-mtile-sub">${r.winners}W / ${r.losers}L</div></div>
+      <div class="gen-mtile"><div class="gen-mtile-lbl">Esperanza Mat.</div><div class="gen-mtile-val" style="color:${r.esperanza>=0?'var(--green)':'var(--red)'}">${fmtPct(r.esperanza)}</div><div class="gen-mtile-sub">por operación</div></div>
+      <div class="gen-mtile"><div class="gen-mtile-lbl">Profit Factor</div><div class="gen-mtile-val">${r.profitFactor===Infinity?'∞':fmt(r.profitFactor)}</div><div class="gen-mtile-sub">AvgW: ${fmtPct(r.avgWinPct)} · AvgL: -${(r.avgLossPct*100).toFixed(2)}%</div></div>
+      <div class="gen-mtile"><div class="gen-mtile-lbl">Máx Ganancia</div><div class="gen-mtile-val" style="color:var(--green)">${fmtPct(r.maxWin.pct)}</div><div class="gen-mtile-sub">${r.maxWin.ticker} · ${r.maxWin.duration}d</div></div>
+      <div class="gen-mtile"><div class="gen-mtile-lbl">Máx Pérdida</div><div class="gen-mtile-val" style="color:var(--red)">${fmtPct(r.maxLoss.pct)}</div><div class="gen-mtile-sub">${r.maxLoss.ticker} · ${r.maxLoss.duration}d</div></div>
+      <div class="gen-mtile"><div class="gen-mtile-lbl">Máx Rachas Perd.</div><div class="gen-mtile-val" style="color:var(--red)">${r.maxConsecLoss}</div><div class="gen-mtile-sub">consecutivas</div></div>
+      <div class="gen-mtile"><div class="gen-mtile-lbl">Kelly Óptimo</div><div class="gen-mtile-val" style="color:${r.kelly!=null&&r.kelly>0?'var(--green)':'var(--text3)'}">${r.kelly!=null?(r.kelly*100).toFixed(1)+'%':'—'}</div><div class="gen-mtile-sub">% capital/op recomendado</div></div>
     </div>`;
 }
 
-// ── SVG simple line/radar charts (sin dependencias) ──
-function lineChartSVG(curve, labelEvery=1) {
-  if (curve.length < 2) return `<div class="sc2-empty" style="padding:30px;">Necesitas al menos 2 operaciones</div>`;
-  const w=900, h=220, pad=24;
-  const min = Math.min(...curve, 0), max = Math.max(...curve, 0);
-  const range = (max-min) || 1;
-  const stepX = (w-pad*2) / (curve.length-1);
-  const pts = curve.map((v,i) => `${pad+i*stepX},${h-pad-((v-min)/range)*(h-pad*2)}`).join(' ');
-  const zeroY = h-pad-((0-min)/range)*(h-pad*2);
-  const last = curve[curve.length-1];
-  const lineColor = last>=0 ? '#4ade80' : '#f47174';
+function navMetricsBlock(m) {
+  if (!m) return `<div class="sc2-empty">Necesitas posiciones con fecha de entrada para calcular el NAV real</div>`;
+  return `
+    <div class="gen-metrics-grid">
+      <div class="gen-mtile"><div class="gen-mtile-lbl">Retorno Total</div><div class="gen-mtile-val" style="color:${m.totalReturn>=0?'var(--green)':'var(--red)'}">${fmtPct(m.totalReturn)}</div><div class="gen-mtile-sub">${m.nDays} días</div></div>
+      <div class="gen-mtile"><div class="gen-mtile-lbl">Retorno Anualizado</div><div class="gen-mtile-val" style="color:${m.annualReturn>=0?'var(--green)':'var(--red)'}">${fmtPct(m.annualReturn)}</div><div class="gen-mtile-sub">CAGR estimado</div></div>
+      <div class="gen-mtile"><div class="gen-mtile-lbl">Volatilidad Anualizada</div><div class="gen-mtile-val">${fmt(m.annualVol*100,1)}%</div><div class="gen-mtile-sub">desv. estándar</div></div>
+      <div class="gen-mtile"><div class="gen-mtile-lbl">Sharpe Ratio</div><div class="gen-mtile-val" style="color:${m.sharpe>=1?'var(--green)':m.sharpe>=0?'var(--amber)':'var(--red)'}">${fmt(m.sharpe)}</div><div class="gen-mtile-sub">anualizado, rf=0</div></div>
+      <div class="gen-mtile"><div class="gen-mtile-lbl">Sortino Ratio</div><div class="gen-mtile-val" style="color:${m.sortino>=1?'var(--green)':m.sortino>=0?'var(--amber)':'var(--red)'}">${fmt(m.sortino)}</div><div class="gen-mtile-sub">solo riesgo bajista</div></div>
+      <div class="gen-mtile"><div class="gen-mtile-lbl">Calmar Ratio</div><div class="gen-mtile-val" style="color:${m.calmar>=1?'var(--green)':m.calmar>=0?'var(--amber)':'var(--red)'}">${fmt(m.calmar)}</div><div class="gen-mtile-sub">retorno / max DD</div></div>
+      <div class="gen-mtile"><div class="gen-mtile-lbl">Máximo Drawdown Real</div><div class="gen-mtile-val" style="color:var(--red)">-${fmt(m.maxDD*100,1)}%</div><div class="gen-mtile-sub">${fmtDate(m.ddStart)} → ${fmtDate(m.ddTrough)}</div></div>
+      <div class="gen-mtile"><div class="gen-mtile-lbl">Recuperación DD</div><div class="gen-mtile-val" style="color:${m.recoveryDate?'var(--green)':'var(--amber)'}">${m.ddDurationDays!=null?m.ddDurationDays+'d':'En curso'}</div><div class="gen-mtile-sub">${m.recoveryDate?fmtDate(m.recoveryDate):'sin recuperar'}</div></div>
+    </div>`;
+}
+
+// ── SVG charts ───────────────────────────────────
+function navChartSVG(nav) {
+  if (!nav || nav.length < 2) return `<div class="sc2-empty" style="padding:30px;">Sin suficientes datos para graficar</div>`;
+  const w=900, h=240, pad=24;
+  const values = nav.map(n=>n.value);
+  const min = Math.min(...values), max = Math.max(...values);
+  const range = (max-min)||1;
+  const stepX = (w-pad*2) / (values.length-1);
+  const pts = values.map((v,i) => `${pad+i*stepX},${h-pad-((v-min)/range)*(h-pad*2)}`).join(' ');
+  const last = values[values.length-1], first = values[0];
+  const lineColor = last>=first ? '#4ade80' : '#f47174';
+  // Área debajo
+  const areaPts = `${pad},${h-pad} ${pts} ${pad+(values.length-1)*stepX},${h-pad}`;
   return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:${h}px;">
-    <line x1="${pad}" y1="${zeroY}" x2="${w-pad}" y2="${zeroY}" stroke="var(--border)" stroke-width="1" stroke-dasharray="4,4"/>
+    <polygon points="${areaPts}" fill="${lineColor}" opacity="0.08"/>
     <polyline points="${pts}" fill="none" stroke="${lineColor}" stroke-width="2"/>
-    <circle cx="${pad+(curve.length-1)*stepX}" cy="${h-pad-((last-min)/range)*(h-pad*2)}" r="4" fill="${lineColor}"/>
+    <circle cx="${pad+(values.length-1)*stepX}" cy="${h-pad-((last-min)/range)*(h-pad*2)}" r="4" fill="${lineColor}"/>
+  </svg>
+  <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:4px;">
+    <span>${fmtDate(nav[0].day)}</span><span>${fmtDate(nav[nav.length-1].day)}</span>
+  </div>`;
+}
+
+function ddChartSVG(nav) {
+  if (!nav || nav.length < 2) return '';
+  const w=900, h=120, pad=10;
+  let peak = nav[0].value;
+  const dds = nav.map(n => { peak = Math.max(peak, n.value); return peak>0 ? (peak-n.value)/peak : 0; });
+  const max = Math.max(...dds, 0.001);
+  const stepX = (w-pad*2) / (dds.length-1);
+  const pts = dds.map((d,i) => `${pad+i*stepX},${pad + (d/max)*(h-pad*2)}`).join(' ');
+  const areaPts = `${pad},${pad} ${pts} ${pad+(dds.length-1)*stepX},${pad}`;
+  return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:${h}px;">
+    <polygon points="${areaPts}" fill="#f47174" opacity="0.15"/>
+    <polyline points="${pts}" fill="none" stroke="#f47174" stroke-width="1.5"/>
   </svg>`;
 }
 
-function projectionChartSVG(curveMain, curveLow, curveHigh, months) {
-  const w=900, h=260, pad=30;
-  const all = [...curveMain, ...curveLow, ...curveHigh];
-  const min = Math.min(...all), max = Math.max(...all);
-  const range = (max-min)||1;
-  const stepX = (w-pad*2) / (months-1);
-  const toPts = arr => arr.map((v,i) => `${pad+i*stepX},${h-pad-((v-min)/range)*(h-pad*2)}`).join(' ');
+function histogramSVG(returns) {
+  if (!returns || returns.length < 3) return `<div class="sc2-empty" style="padding:30px;">Necesitas más operaciones para el histograma</div>`;
+  const pcts = returns.map(r => r*100);
+  const min = Math.min(...pcts), max = Math.max(...pcts);
+  const bins = 12;
+  const binSize = (max-min)/bins || 1;
+  const counts = new Array(bins).fill(0);
+  pcts.forEach(p => {
+    let idx = Math.floor((p-min)/binSize);
+    if (idx >= bins) idx = bins-1; if (idx < 0) idx = 0;
+    counts[idx]++;
+  });
+  const w=900, h=200, pad=24;
+  const maxCount = Math.max(...counts, 1);
+  const barW = (w-pad*2)/bins;
+  const bars = counts.map((c,i) => {
+    const barH = (c/maxCount)*(h-pad*2);
+    const x = pad+i*barW;
+    const y = h-pad-barH;
+    const binStart = min+i*binSize;
+    const color = binStart >= 0 ? '#4ade80' : '#f47174';
+    return `<rect x="${x+1}" y="${y}" width="${barW-2}" height="${barH}" fill="${color}" opacity="0.7"/>`;
+  }).join('');
+  const zeroX = pad + ((0-min)/(max-min||1))*(w-pad*2);
   return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:${h}px;">
-    <polyline points="${toPts(curveLow)}" fill="none" stroke="#5fa8e0" stroke-width="1.5" stroke-dasharray="5,3" opacity="0.7"/>
-    <polyline points="${toPts(curveHigh)}" fill="none" stroke="#fbbf24" stroke-width="1.5" stroke-dasharray="5,3" opacity="0.7"/>
-    <polyline points="${toPts(curveMain)}" fill="none" stroke="#40d9c0" stroke-width="2.5"/>
-    <circle cx="${pad+(months-1)*stepX}" cy="${h-pad-((curveMain[curveMain.length-1]-min)/range)*(h-pad*2)}" r="4" fill="#40d9c0"/>
+    ${bars}
+    <line x1="${zeroX}" y1="${pad}" x2="${zeroX}" y2="${h-pad}" stroke="var(--text3)" stroke-width="1" stroke-dasharray="3,3"/>
   </svg>
-  <div style="display:flex;gap:16px;margin-top:8px;font-size:9px;font-family:var(--mono);">
-    <span style="color:#40d9c0;">■ Riesgo actual</span>
-    <span style="color:#5fa8e0;">■ Riesgo mitad</span>
-    <span style="color:#fbbf24;">■ Riesgo doble</span>
+  <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:4px;">
+    <span>${min.toFixed(1)}%</span><span>0%</span><span>${max.toFixed(1)}%</span>
   </div>`;
 }
 
 function radarChartSVG(rb, rr) {
-  const labels = ['Win Rate','Rent. Media','Esperanza','Sharpe','Profit Factor'];
-  const mk = r => r ? [r.winRate, Math.max(0,r.rentMedia+0.5)/1, Math.max(0,r.esperanza+0.5)/1, Math.max(0,(r.sharpe+1)/3), Math.min((r.profitFactor===Infinity?3:r.profitFactor)/3,1)] : [0,0,0,0,0];
+  const labels = ['Win Rate','Esperanza','Profit Factor','Kelly'];
+  const mk = r => r ? [r.winRate, Math.max(0,Math.min(1,r.esperanza+0.3)), Math.min((r.profitFactor===Infinity?3:r.profitFactor)/3,1), Math.max(0,Math.min(1,(r.kelly||0)+0.3))] : [0,0,0,0];
   const dataB = mk(rb), dataR = mk(rr);
-  const cx=150, cy=150, R=110, n=5;
-  const pt = (val, i) => {
-    const angle = (Math.PI*2*i/n) - Math.PI/2;
-    const r = R * Math.max(0,Math.min(1,val));
-    return `${cx+r*Math.cos(angle)},${cy+r*Math.sin(angle)}`;
-  };
+  const cx=150, cy=150, R=110, n=4;
+  const pt = (val, i) => { const a=(Math.PI*2*i/n)-Math.PI/2; const r=R*Math.max(0,Math.min(1,val)); return `${cx+r*Math.cos(a)},${cy+r*Math.sin(a)}`; };
   const polyB = dataB.map((v,i)=>pt(v,i)).join(' ');
   const polyR = dataR.map((v,i)=>pt(v,i)).join(' ');
-  const axisLines = Array.from({length:n}).map((_,i) => {
-    const angle = (Math.PI*2*i/n) - Math.PI/2;
-    return `<line x1="${cx}" y1="${cy}" x2="${cx+R*Math.cos(angle)}" y2="${cy+R*Math.sin(angle)}" stroke="var(--border)" stroke-width="1"/>`;
-  }).join('');
-  const labelPos = labels.map((l,i) => {
-    const angle = (Math.PI*2*i/n) - Math.PI/2;
-    const lx = cx+(R+22)*Math.cos(angle), ly = cy+(R+22)*Math.sin(angle);
-    return `<text x="${lx}" y="${ly}" font-size="9" fill="var(--text3)" text-anchor="middle" font-family="var(--mono)">${l}</text>`;
-  }).join('');
-  return `<svg viewBox="0 0 300 300" style="width:100%;max-width:340px;height:auto;display:block;margin:0 auto;">
+  const axisLines = Array.from({length:n}).map((_,i) => { const a=(Math.PI*2*i/n)-Math.PI/2; return `<line x1="${cx}" y1="${cy}" x2="${cx+R*Math.cos(a)}" y2="${cy+R*Math.sin(a)}" stroke="var(--border)" stroke-width="1"/>`; }).join('');
+  const labelPos = labels.map((l,i) => { const a=(Math.PI*2*i/n)-Math.PI/2; const lx=cx+(R+22)*Math.cos(a), ly=cy+(R+22)*Math.sin(a); return `<text x="${lx}" y="${ly}" font-size="9" fill="var(--text3)" text-anchor="middle" font-family="var(--mono)">${l}</text>`; }).join('');
+  return `<svg viewBox="0 0 300 300" style="width:100%;max-width:320px;height:auto;display:block;margin:0 auto;">
     <circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="var(--border)" stroke-width="1"/>
-    <circle cx="${cx}" cy="${cy}" r="${R*0.66}" fill="none" stroke="var(--border)" stroke-width="0.5"/>
-    <circle cx="${cx}" cy="${cy}" r="${R*0.33}" fill="none" stroke="var(--border)" stroke-width="0.5"/>
+    <circle cx="${cx}" cy="${cy}" r="${R*0.5}" fill="none" stroke="var(--border)" stroke-width="0.5"/>
     ${axisLines}
     <polygon points="${polyB}" fill="rgba(74,222,128,0.12)" stroke="#4ade80" stroke-width="1.5"/>
     <polygon points="${polyR}" fill="rgba(244,113,116,0.10)" stroke="#f47174" stroke-width="1.5"/>
@@ -165,12 +332,9 @@ export async function render(container, { actionsSlot }) {
   actionsSlot.innerHTML = `<button class="btn btn-primary" id="gen-refresh-btn">↻ Actualizar</button>`;
   container.innerHTML = `<div id="gen-content"><div class="empty"><div class="loader-ring"></div><div class="empty-title">Cargando análisis...</div></div></div>`;
 
-  let riskPct = 0.01;   // 1% por defecto
-  let ddPctMax = 0.10;  // 10% por defecto
-
   async function load() {
     const el = document.getElementById('gen-content');
-    el.innerHTML = `<div class="empty"><div class="loader-ring"></div><div class="empty-title">Calculando métricas de cartera...</div></div>`;
+    el.innerHTML = `<div class="empty"><div class="loader-ring"></div><div class="empty-title">Reconstruyendo NAV diario real...</div><div class="empty-desc">Descargando histórico de precios — puede tardar según el número de tickers</div></div>`;
 
     const [positions, history, capitalAlcista, capitalBajista, satelite, corePct] = await Promise.all([
       UserData.get('ethan_positions').then(v=>v||[]),
@@ -184,23 +348,38 @@ export async function render(container, { actionsSlot }) {
     const pricesMap = {};
     await Promise.all(positions.map(async p => { pricesMap[p.ticker] = await fetchPrice(p.ticker); }));
 
-    paint(positions, history, capitalAlcista, capitalBajista, satelite, corePct, pricesMap);
+    // Construir lista unificada de trades (abiertos + cerrados) con fechas normalizadas
+    const allTrades = [
+      ...positions.filter(p=>p.entryDate).map(p => ({
+        ticker:p.ticker, direction:p.direction||'alcista', entry:p.entry,
+        shares:p.shares, cost:p.cost, entryDate:p.entryDate, exitDate:null
+      })),
+      ...history.filter(h=>h.entryDateISO).map(h => ({
+        ticker:h.ticker, direction:h.direction||'alcista', entry:h.entry,
+        shares:h.shares, cost:h.cost, entryDate:h.entryDateISO, exitDate:h.exitDateISO
+      }))
+    ];
+
+    let nav = null, navM = null;
+    if (allTrades.length > 0) {
+      nav = await buildNavSeries(allTrades);
+      navM = navMetrics(nav, (capitalAlcista||0)+(capitalBajista||0));
+    }
+
+    paint(positions, history, capitalAlcista, capitalBajista, satelite, corePct, pricesMap, nav, navM);
   }
 
-  function paint(positions, history, capA, capB, satelite, corePct, prices) {
+  function paint(positions, history, capA, capB, satelite, corePct, prices, nav, navM) {
     const el = document.getElementById('gen-content');
 
     const alcistaOps = history.filter(h => (h.direction||'alcista')==='alcista');
     const bajistaOps = history.filter(h => h.direction==='bajista');
-    const allOps = [...history].sort((a,b)=>(a.closedAt||0)-(b.closedAt||0));
-
     const rb = calcRatios(alcistaOps);
     const rr = calcRatios(bajistaOps);
-    const rg = calcRatios(allOps);
+    const rg = calcRatios(history);
 
     const totalCapital = (capA||0)+(capB||0);
 
-    // Exposición y P&L no realizado
     let exposureLong=0, exposureShort=0, unrealizedPnl=0;
     positions.forEach(p => {
       const price = prices[p.ticker];
@@ -212,51 +391,47 @@ export async function render(container, { actionsSlot }) {
       }
     });
 
-    // Curva de equity combinada (en € si hay datos, si no en % acumulado)
-    let equityCurve = [];
-    if (rg && rg.hasAbsData) {
-      let acc = 0; allOps.forEach(o => { acc += (o.pnlAbs||0); equityCurve.push(acc); });
-    } else {
-      let acc = 100; allOps.forEach(o => { acc *= (1+o.pnlPct/100); equityCurve.push(acc); });
-    }
-
     el.innerHTML = `
-      <!-- KPIs GENERALES -->
-      ${kpiBlock(rg, 'gen')}
+      <!-- KPIs OPERACIONALES -->
+      <div class="gen-section-title">📊 Rentabilidad por Operaciones — Global</div>
+      ${kpiBlock(rg)}
 
-      <!-- COMPARATIVA + EQUITY -->
+      <!-- NAV REAL -->
+      <div class="gen-section-title" style="margin-top:24px;">📈 NAV Real — Marcado a Mercado</div>
+      ${navM ? `
+        ${navMetricsBlock(navM)}
+        <div class="gen-compare-grid" style="margin-top:14px;">
+          <div class="gen-chart-box">
+            <div class="gen-chart-title">Evolución del NAV</div>
+            ${navChartSVG(nav)}
+          </div>
+          <div class="gen-chart-box">
+            <div class="gen-chart-title">Drawdown a lo largo del tiempo</div>
+            ${ddChartSVG(nav)}
+          </div>
+        </div>
+      ` : `<div class="sc2-empty">Necesitas posiciones con fecha de entrada para reconstruir el NAV real</div>`}
+
+      <!-- DISTRIBUCIÓN DE RETORNOS -->
+      ${rg ? `
+      <div class="gen-section-title" style="margin-top:24px;">📐 Distribución de Retornos por Operación</div>
+      <div class="gen-chart-box">
+        <div class="gen-chart-title">Histograma (% por operación)</div>
+        ${histogramSVG(history.map(h=>h.pnlPct/100))}
+      </div>` : ''}
+
+      <!-- COMPARATIVA ALCISTA VS BAJISTA -->
       <div class="gen-section-title" style="margin-top:24px;">⚖️ Comparativa Alcista vs Bajista</div>
       <div class="gen-compare-grid">
         <div class="gen-chart-box"><div class="gen-chart-title">Radar comparativo</div>${radarChartSVG(rb,rr)}</div>
-        <div class="gen-chart-box"><div class="gen-chart-title">Equity Curve Combinada</div>${lineChartSVG(equityCurve)}</div>
-      </div>
-
-      <!-- RATIO CARDS -->
-      <div class="gen-ratio-grid">
-        <div class="gen-ratio-card">
-          <div class="gen-chart-title">📊 Ratios Rentabilidad</div>
-          ${rg ? `
-            <div class="gen-ratio-row"><span>Rent. Media/Op</span><strong>${fmtPct(rg.rentMedia)}</strong></div>
-            <div class="gen-ratio-row"><span>Días Medios</span><strong>${fmt(rg.diasMedio,1)}</strong></div>
-            <div class="gen-ratio-row"><span>Ops/Año</span><strong>${fmt(rg.opsAnio,1)}</strong></div>
-            <div class="gen-ratio-row"><span>Desv. Estándar</span><strong>${fmtPct(rg.stdRent)}</strong></div>
-          ` : `<div class="sc2-empty">Sin datos</div>`}
-        </div>
-        <div class="gen-ratio-card">
-          <div class="gen-chart-title">⚖️ Ratios Riesgo</div>
-          ${rg ? `
-            <div class="gen-ratio-row"><span>Win Rate</span><strong>${(rg.winRate*100).toFixed(1)}%</strong></div>
-            <div class="gen-ratio-row"><span>Profit Factor</span><strong>${rg.profitFactor===Infinity?'∞':fmt(rg.profitFactor)}</strong></div>
-            <div class="gen-ratio-row"><span>Sharpe</span><strong>${fmt(rg.sharpe)}</strong></div>
-            <div class="gen-ratio-row"><span>Máx Rachas Perd.</span><strong style="color:var(--red)">${rg.maxConsecLoss}</strong></div>
-          ` : `<div class="sc2-empty">Sin datos</div>`}
-        </div>
         <div class="gen-ratio-card">
           <div class="gen-chart-title">💰 P/L Resumen</div>
           <div class="gen-ratio-row"><span>P/L Alcista</span><strong style="color:var(--green)">${rb&&rb.hasAbsData?fmtE(rb.totalPL):'—'}</strong></div>
           <div class="gen-ratio-row"><span>P/L Bajista</span><strong style="color:var(--red)">${rr&&rr.hasAbsData?fmtE(rr.totalPL):'—'}</strong></div>
           <div class="gen-ratio-row"><span>P/L Total</span><strong style="color:${rg&&rg.totalPL>=0?'var(--green)':'var(--red)'}">${rg&&rg.hasAbsData?fmtE(rg.totalPL):'—'}</strong></div>
-          <div class="gen-ratio-row"><span>Esperanza</span><strong style="color:${rg&&rg.esperanza>=0?'var(--green)':'var(--red)'}">${rg?fmtPct(rg.esperanza):'—'}</strong></div>
+          <div class="gen-ratio-row"><span>Esperanza Global</span><strong style="color:${rg&&rg.esperanza>=0?'var(--green)':'var(--red)'}">${rg?fmtPct(rg.esperanza):'—'}</strong></div>
+          <div class="gen-ratio-row"><span>Kelly Alcista</span><strong>${rb?.kelly!=null?(rb.kelly*100).toFixed(1)+'%':'—'}</strong></div>
+          <div class="gen-ratio-row"><span>Kelly Bajista</span><strong>${rr?.kelly!=null?(rr.kelly*100).toFixed(1)+'%':'—'}</strong></div>
         </div>
       </div>
 
@@ -269,35 +444,7 @@ export async function render(container, { actionsSlot }) {
         <div class="gen-hero-card"><div class="gen-hero-label">Exposición Short</div><div class="gen-hero-value" style="color:var(--red)">${fmtE(exposureShort)}</div></div>
       </div>
 
-      <!-- CONFIGURACIÓN DE PROYECCIÓN -->
-      <div class="gen-section-title" style="margin-top:24px;">🚀 Configuración de Proyección</div>
-      <div class="pos-capital-row" style="margin-bottom:16px;flex-wrap:wrap;">
-        <label>Capital Inicial (€)</label>
-        <input type="number" id="proj-capital" class="wl-input" style="width:140px;" value="${totalCapital||10000}">
-        <label style="margin-left:16px;">Riesgo por Operación (%)</label>
-        <input type="number" id="proj-risk" class="wl-input" style="width:90px;" value="1" step="0.25" min="0.25" max="5">
-        <label style="margin-left:16px;">DD Máx. Tolerable (%)</label>
-        <input type="number" id="proj-dd" class="wl-input" style="width:90px;" value="10" step="1" min="5" max="30">
-        <button class="btn btn-primary" id="proj-recalc-btn" style="margin-left:10px;">Recalcular</button>
-      </div>
-
-      <div id="gen-projections"></div>
-    `;
-
-    document.getElementById('proj-recalc-btn')?.addEventListener('click', () => {
-      const capital = parseFloat(document.getElementById('proj-capital').value)||10000;
-      riskPct  = (parseFloat(document.getElementById('proj-risk').value)||1)/100;
-      ddPctMax = (parseFloat(document.getElementById('proj-dd').value)||10)/100;
-      renderProjections(rg, capital, riskPct, ddPctMax);
-    });
-
-    // Primera carga de proyecciones
-    const initCapital = totalCapital || 10000;
-    renderProjections(rg, initCapital, riskPct, ddPctMax);
-
-    // Composición Asset Allocation
-    const allocEl = document.createElement('div');
-    allocEl.innerHTML = `
+      <!-- COMPOSICIÓN ASSET ALLOCATION -->
       <div class="gen-section-title" style="margin-top:24px;">🧩 Composición Asset Allocation</div>
       <div class="gen-alloc-row">
         <div class="gen-alloc-card">
@@ -318,123 +465,8 @@ export async function render(container, { actionsSlot }) {
           </div>
         </div>
       </div>
+
       <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:20px;text-align:right;">Última actualización: ${new Date().toLocaleString('es-ES')}</div>
-    `;
-    el.appendChild(allocEl);
-  }
-
-  function renderProjections(ratios, capital, riskPct, ddPct) {
-    const el = document.getElementById('gen-projections');
-    if (!el) return;
-
-    if (!ratios) {
-      el.innerHTML = `<div class="sc2-empty">Necesitas operaciones cerradas para proyectar (cierra posiciones en el módulo Cartera)</div>`;
-      return;
-    }
-
-    const { rentMedia, opsAnio, diasMedio, winRate, avgWinPct, avgLossPct } = ratios;
-    const sizing = avgLossPct>0 ? Math.min(riskPct/avgLossPct, 1) : 0;
-    const impactoGan  = avgWinPct * sizing;
-    const impactoPerd = avgLossPct * sizing;
-    const rentEfectiva = winRate*impactoGan - (1-winRate)*impactoPerd;
-    const totalOps5y = Math.round(opsAnio*5);
-    const cap1y = capital * Math.pow(1+rentEfectiva, Math.round(opsAnio));
-    const cap5y = capital * Math.pow(1+rentEfectiva, totalOps5y);
-
-    // Tabla por año
-    let projRows = '';
-    for (let y=1;y<=5;y++) {
-      const cap = capital * Math.pow(1+rentEfectiva, Math.round(opsAnio*y));
-      const bw = Math.min((cap/Math.max(cap5y,capital*1.01))*100, 100);
-      projRows += `<div class="proj-row"><span class="proj-year">Año ${y}</span><div class="proj-bar-track"><div class="proj-bar-fill" style="width:${bw}%"></div></div><span class="proj-val">${fmtK(cap)}</span></div>`;
-    }
-
-    // Curva de proyección con 3 escenarios de riesgo
-    const months = 61;
-    const mkCurve = rE => Array.from({length:months}, (_,m) => capital*Math.pow(1+rE, Math.round(opsAnio*m/12)));
-    const sH = avgLossPct>0 ? Math.min((riskPct/2)/avgLossPct,1) : 0;
-    const sD = avgLossPct>0 ? Math.min((riskPct*2)/avgLossPct,1) : 0;
-    const rH = winRate*avgWinPct*sH - (1-winRate)*avgLossPct*sH;
-    const rD = winRate*avgWinPct*sD - (1-winRate)*avgLossPct*sD;
-
-    // Drawdown esperado
-    const lossRate = 1-winRate;
-    let ddRows = '';
-    for (let n=2;n<=10;n++) {
-      const prob = Math.pow(lossRate,n);
-      const dd = (1-Math.pow(1-impactoPerd,n))*100;
-      const p100 = (1-Math.pow(1-prob,100))*100;
-      const exc = dd > ddPct*100;
-      ddRows += `<div class="gen-dd-row ${exc?'exceeds':''}"><span>${n} pérdidas seguidas</span><span class="gen-dd-val">DD: <strong style="color:${exc?'var(--red)':'var(--amber)'}">${dd.toFixed(1)}%</strong>${exc?' ⚠️':''} · P(100 ops): ${p100.toFixed(1)}%</span></div>`;
-    }
-    const lDD = impactoPerd>0 ? Math.log(1-ddPct)/Math.log(1-impactoPerd) : Infinity;
-    const ddVerdict = lDD>8 ? '<span style="color:var(--green)">✅ Muy seguro</span>' : lDD>5 ? '<span style="color:var(--amber)">⚠️ Moderado</span>' : '<span style="color:var(--red)">🔴 Peligroso</span>';
-
-    // Escenarios
-    const scenarios = [
-      { name:'Conservador', mult:0.5, desc:'Mitad riesgo', color:'var(--amber)' },
-      { name:'Base (actual)', mult:1, desc:`Riesgo ${(riskPct*100).toFixed(1)}%`, color:'var(--teal)' },
-      { name:'Agresivo', mult:2, desc:'Doble riesgo', color:'var(--red)' },
-    ];
-    const scenarioCards = scenarios.map(s => {
-      const sz = avgLossPct>0 ? Math.min((riskPct*s.mult)/avgLossPct,1) : 0;
-      const rE = winRate*avgWinPct*sz - (1-winRate)*avgLossPct*sz;
-      const cp = capital*Math.pow(1+rE, totalOps5y);
-      const ddL = (avgLossPct*sz)>0 ? Math.floor(Math.log(1-ddPct)/Math.log(1-avgLossPct*sz)) : Infinity;
-      return `
-        <div class="gen-scenario-card">
-          <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
-            <strong style="color:${s.color};font-size:11px;">${s.name}</strong>
-            <span style="font-size:9px;color:var(--text3);font-family:var(--mono);">${s.desc}</span>
-          </div>
-          <div class="gen-scenario-grid">
-            <div>Impacto/op: <strong>${fmtPct(rE)}</strong></div>
-            <div>Capital 5Y: <strong>${fmtK(cp)}</strong></div>
-            <div>DD/pérdida: <strong style="color:var(--red)">${(avgLossPct*sz*100).toFixed(2)}%</strong></div>
-            <div>Pérdidas→DD: <strong style="color:${ddL>8?'var(--green)':ddL>5?'var(--amber)':'var(--red)'}">${isFinite(ddL)?ddL:'∞'}</strong></div>
-          </div>
-        </div>`;
-    }).join('');
-
-    el.innerHTML = `
-      <div class="gen-hero" style="margin-bottom:18px;">
-        <div class="gen-hero-card"><div class="gen-hero-label">Capital Inicial</div><div class="gen-hero-value">${fmtE(capital)}</div></div>
-        <div class="gen-hero-card"><div class="gen-hero-label">Rent. Histórica/Op</div><div class="gen-hero-value" style="color:var(--blue)">${fmtPct(rentMedia)}</div><div class="gen-hero-sub">${fmt(diasMedio,0)}d · ${fmt(opsAnio,1)} ops/año</div></div>
-        <div class="gen-hero-card"><div class="gen-hero-label">Sizing</div><div class="gen-hero-value" style="color:var(--amber)">${(sizing*100).toFixed(1)}%</div><div class="gen-hero-sub">Riesgo ${(riskPct*100).toFixed(1)}%</div></div>
-        <div class="gen-hero-card"><div class="gen-hero-label">Impacto Real/Op</div><div class="gen-hero-value" style="color:${rentEfectiva>=0?'var(--green)':'var(--red)'}">${fmtPct(rentEfectiva)}</div><div class="gen-hero-sub">Esperanza × Sizing</div></div>
-        <div class="gen-hero-card"><div class="gen-hero-label">Proyección 1Y</div><div class="gen-hero-value" style="color:var(--green)">${fmtK(cap1y)}</div><div class="gen-hero-sub">×${(cap1y/capital).toFixed(2)}</div></div>
-        <div class="gen-hero-card"><div class="gen-hero-label">Proyección 5Y</div><div class="gen-hero-value" style="color:var(--green)">${fmtK(cap5y)}</div><div class="gen-hero-sub">×${(cap5y/capital).toFixed(2)}</div></div>
-      </div>
-
-      <div class="gen-compare-grid">
-        <div class="gen-chart-box">
-          <div class="gen-chart-title">Proyección por Año (5Y)</div>
-          <p class="gen-chart-desc">Basado en rentabilidad media × sizing actual, con reinversión compuesta.</p>
-          <div class="gen-proj-table">${projRows}</div>
-        </div>
-        <div class="gen-chart-box">
-          <div class="gen-chart-title">Curva de Crecimiento (60 meses)</div>
-          ${projectionChartSVG(mkCurve(rentEfectiva), mkCurve(rH), mkCurve(rD), months)}
-        </div>
-      </div>
-
-      <div class="gen-compare-grid" style="margin-top:18px;">
-        <div class="gen-chart-box">
-          <div class="gen-chart-title">📉 Drawdown Esperado</div>
-          <p class="gen-chart-desc">Según tu win rate, sizing y rachas perdedoras probables.</p>
-          <div style="background:var(--surface2);border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:11px;color:var(--text2);">
-            Cada pérdida: <strong style="color:var(--red)">-${(impactoPerd*100).toFixed(2)}%</strong> en cuenta
-          </div>
-          ${ddRows}
-          <div class="gen-dd-summary">
-            <strong style="color:var(--teal)">Con tu sizing:</strong> <strong>${isFinite(lDD)?Math.floor(lDD):'∞'} pérdidas consecutivas</strong> hasta DD máx ${(ddPct*100).toFixed(0)}%. ${ddVerdict}
-          </div>
-        </div>
-        <div class="gen-chart-box">
-          <div class="gen-chart-title">🎯 Escenarios</div>
-          ${scenarioCards}
-        </div>
-      </div>
     `;
   }
 
