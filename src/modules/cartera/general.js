@@ -94,8 +94,14 @@ async function buildNavSeries(allTrades) {
     allTrades.forEach(t => {
       const cost = t.cost || (t.shares && t.entry ? t.shares*t.entry : 0);
       if (t.entryDate === day) cashInToday += cost;
-      if (t.exitDate === day) {
-        // El valor de salida real (a precio de cierre) se trata como cashOut
+
+      const isClosingToday = t.exitDate === day;
+      // El trade sigue "activo" en el NAV hasta el día ANTERIOR a su cierre.
+      // El día de cierre, su valor sale del NAV vía cashOut, no se vuelve a
+      // sumar a total (evita contarlo dos veces y generar caídas ficticias).
+      const isActive = t.entryDate <= day && (t.exitDate ? day < t.exitDate : true);
+
+      if (isClosingToday) {
         const hist = histMap[t.ticker];
         const exitPrice = hist?.[day] ?? lastKnownPrice[t.ticker] ?? t.entry;
         const shares = t.shares || (t.cost && t.entry ? t.cost/t.entry : 0);
@@ -103,9 +109,9 @@ async function buildNavSeries(allTrades) {
           ? (t.entry*shares) + (shares*(t.entry-exitPrice))
           : shares*exitPrice;
         cashOutToday += exitValue;
+        return; // no suma a total: ya salió de la cartera
       }
 
-      const isActive = t.entryDate <= day && (t.exitDate ? day <= t.exitDate : true);
       if (!isActive) return;
       const hist = histMap[t.ticker];
       let price = hist?.[day];
@@ -147,7 +153,7 @@ function navMetrics(nav) {
       const r = (todayValue - base) / base;
       // Filtro de sanidad: descarta saltos imposibles (>80% en un día) que indican
       // datos de precio incompletos en vez de movimiento real de mercado
-      if (Math.abs(r) < 0.8) dailyReturns.push(r);
+      if (Math.abs(r) < 0.9) dailyReturns.push(r);
     }
   }
   if (dailyReturns.length < 2) return null;
