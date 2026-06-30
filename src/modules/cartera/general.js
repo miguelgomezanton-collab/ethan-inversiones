@@ -80,95 +80,126 @@ async function buildNavSeries(allTrades) {
   const days = dateRange(startDate, today);
   const maxRangeDays = days.length;
 
-  // Histórico de precios por ticker único
   const tickers = [...new Set(allTrades.map(t => t.ticker))];
   const histMap = {};
   await Promise.all(tickers.map(async tk => {
     histMap[tk] = await fetchDailyHistory(tk, maxRangeDays);
   }));
 
-  // Para cada día, sumar valor de posiciones vivas (forward-fill precio)
+  // Coste de entrada de cada trade (flujo de caja que "entra" en cartera ese día)
+  // y coste recuperado al salir (flujo que "sale"), para poder neutralizarlos del TWR.
   const lastKnownPrice = {};
   const nav = days.map(day => {
-    let total = 0;
+    let total = 0, cashInToday = 0, cashOutToday = 0;
     allTrades.forEach(t => {
-      const isOpen = !t.exitDate || t.exitDate >= day;
+      const cost = t.cost || (t.shares && t.entry ? t.shares*t.entry : 0);
+      if (t.entryDate === day) cashInToday += cost;
+      if (t.exitDate === day) {
+        // El valor de salida real (a precio de cierre) se trata como cashOut
+        const hist = histMap[t.ticker];
+        const exitPrice = hist?.[day] ?? lastKnownPrice[t.ticker] ?? t.entry;
+        const shares = t.shares || (t.cost && t.entry ? t.cost/t.entry : 0);
+        const exitValue = t.direction === 'bajista'
+          ? (t.entry*shares) + (shares*(t.entry-exitPrice))
+          : shares*exitPrice;
+        cashOutToday += exitValue;
+      }
+
       const isActive = t.entryDate <= day && (t.exitDate ? day <= t.exitDate : true);
       if (!isActive) return;
       const hist = histMap[t.ticker];
       let price = hist?.[day];
-      if (price == null && hist) {
-        // Forward-fill: usar el último precio conocido hasta esta fecha
-        price = lastKnownPrice[t.ticker] ?? t.entry;
-      }
+      if (price == null && hist) price = lastKnownPrice[t.ticker] ?? t.entry;
       if (price != null) lastKnownPrice[t.ticker] = price;
       const usedPrice = price ?? t.entry;
       const shares = t.shares || (t.cost && t.entry ? t.cost/t.entry : 0);
       const value = t.direction === 'bajista'
-        ? (t.entry * shares) + (shares * (t.entry - usedPrice))  // short: gana si baja
-        : shares * usedPrice;
+        ? (t.entry*shares) + (shares*(t.entry-usedPrice))
+        : shares*usedPrice;
       total += value;
     });
-    return { day, value: total };
+    return { day, value: total, cashIn: cashInToday, cashOut: cashOutToday };
   });
 
   return nav;
 }
 
-// ── Métricas sobre NAV real ──────────────────────
-function navMetrics(nav, capitalBase) {
+// ── Métricas sobre NAV real (Time-Weighted Return) ──
+// TWR neutraliza el efecto de aportar/retirar capital (abrir/cerrar posiciones)
+// trabajando por sub-períodos entre cada flujo de caja, encadenados geométricamente.
+// Es el método estándar de la industria (GIPS) para medir rendimiento de gestión
+// cuando hay entradas y salidas de capital — evita que abrir una posición nueva
+// se confunda con "ganar dinero".
+function navMetrics(nav) {
   if (!nav || nav.length < 2) return null;
-  const values = nav.map(n => n.value).filter(v => v > 0);
-  if (values.length < 2) return null;
 
-  // Retornos diarios
-  const returns = [];
-  for (let i=1;i<values.length;i++) {
-    if (values[i-1] > 0) returns.push((values[i]-values[i-1])/values[i-1]);
+  // Sub-período: retorno = (V_fin - flujo_neto - V_inicio) / V_inicio
+  // Si el primer día ya tiene valor (cashIn ese mismo día), lo tratamos como
+  // el capital base del primer sub-período, no como "ganancia".
+  const dailyReturns = [];
+  for (let i=1; i<nav.length; i++) {
+    const prevValue = nav[i-1].value;
+    const todayValue = nav[i].value;
+    const netFlow = nav[i].cashIn - nav[i].cashOut;
+    // Base de comparación: valor anterior + lo que entró nuevo hoy (no es "retorno", es aportación)
+    const base = prevValue + netFlow;
+    if (base > 0.01) {
+      const r = (todayValue - base) / base;
+      // Filtro de sanidad: descarta saltos imposibles (>80% en un día) que indican
+      // datos de precio incompletos en vez de movimiento real de mercado
+      if (Math.abs(r) < 0.8) dailyReturns.push(r);
+    }
   }
-  if (returns.length === 0) return null;
+  if (dailyReturns.length < 2) return null;
 
-  const meanDaily = returns.reduce((s,r)=>s+r,0)/returns.length;
-  const stdDaily = Math.sqrt(returns.reduce((s,r)=>s+(r-meanDaily)**2,0)/returns.length);
+  const meanDaily = dailyReturns.reduce((s,r)=>s+r,0)/dailyReturns.length;
+  const stdDaily = Math.sqrt(dailyReturns.reduce((s,r)=>s+(r-meanDaily)**2,0)/dailyReturns.length);
 
-  // Anualización (252 días de trading)
-  const annualReturn = Math.pow(1+meanDaily, 252) - 1;
+  // TWR acumulado: cadena geométrica de los sub-períodos
+  let twrIndex = 100;
+  const twrSeries = [100];
+  dailyReturns.forEach(r => { twrIndex *= (1+r); twrSeries.push(twrIndex); });
+  const totalReturn = (twrIndex - 100) / 100;
+
+  // Anualización (252 días de trading), usando el número real de días con datos
+  const tradingDays = dailyReturns.length;
+  const annualFactor = 252 / tradingDays;
+  const annualReturn = Math.pow(1+totalReturn, annualFactor) - 1;
   const annualVol = stdDaily * Math.sqrt(252);
   const sharpe = annualVol > 0 ? annualReturn/annualVol : 0;
 
-  // Sortino: solo desviación de retornos negativos
-  const negReturns = returns.filter(r => r < 0);
+  // Sortino: solo penaliza desviación de retornos negativos
+  const negReturns = dailyReturns.filter(r => r < 0);
   const downsideDev = negReturns.length ? Math.sqrt(negReturns.reduce((s,r)=>s+r**2,0)/negReturns.length) * Math.sqrt(252) : 0;
-  const sortino = downsideDev > 0 ? annualReturn/downsideDev : 0;
+  const sortino = downsideDev > 0 ? annualReturn/downsideDev : (annualReturn > 0 ? Infinity : 0);
 
-  // Max Drawdown real con fechas
-  let peak = values[0], peakIdx = 0, maxDD = 0, ddStart = nav[0].day, ddEnd = nav[0].day, ddTrough = nav[0].day;
-  let curPeakIdx = 0;
-  values.forEach((v,i) => {
-    if (v > peak) { peak = v; curPeakIdx = i; }
+  // Max Drawdown sobre la serie TWR (ya neutralizada de flujos de caja)
+  let peak = twrSeries[0], peakIdx = 0, maxDD = 0, ddStartIdx = 0, ddTroughIdx = 0;
+  twrSeries.forEach((v,i) => {
+    if (v > peak) { peak = v; peakIdx = i; }
     const dd = peak > 0 ? (peak-v)/peak : 0;
-    if (dd > maxDD) { maxDD = dd; ddStart = nav[curPeakIdx].day; ddTrough = nav[i].day; }
+    if (dd > maxDD) { maxDD = dd; ddStartIdx = peakIdx; ddTroughIdx = i; }
   });
-  // Buscar fecha de recuperación (primera vez que vuelve a superar el peak previo al drawdown)
+  // Mapear índices de TWR (que empieza 1 día después de nav) a fechas reales
+  const dateAt = i => nav[Math.min(i, nav.length-1)]?.day || nav[nav.length-1].day;
+  const ddStart = dateAt(ddStartIdx);
+  const ddTrough = dateAt(ddTroughIdx);
+
   let recoveryDate = null;
-  const peakValueAtDD = values[nav.findIndex(n=>n.day===ddStart)];
-  for (let i = nav.findIndex(n=>n.day===ddTrough); i < values.length; i++) {
-    if (values[i] >= peakValueAtDD) { recoveryDate = nav[i].day; break; }
+  const peakValueAtDD = twrSeries[ddStartIdx];
+  for (let i=ddTroughIdx; i<twrSeries.length; i++) {
+    if (twrSeries[i] >= peakValueAtDD) { recoveryDate = dateAt(i); break; }
   }
   const ddDurationDays = recoveryDate
     ? Math.round((new Date(recoveryDate)-new Date(ddStart))/86400000)
-    : null; // null = aún no recuperado
+    : null;
 
-  // Calmar Ratio: retorno anualizado / max drawdown
-  const calmar = maxDD > 0 ? annualReturn/maxDD : 0;
-
-  const totalReturn = values[0] > 0 ? (values[values.length-1]-values[0])/values[0] : 0;
+  const calmar = maxDD > 0 ? annualReturn/maxDD : (annualReturn > 0 ? Infinity : 0);
 
   return {
-    startValue: values[0], endValue: values[values.length-1], totalReturn,
-    annualReturn, annualVol, sharpe, sortino, calmar,
+    totalReturn, annualReturn, annualVol, sharpe, sortino, calmar,
     maxDD, ddStart, ddTrough, recoveryDate, ddDurationDays,
-    returns, nDays: values.length
+    returns: dailyReturns, nDays: tradingDays, twrSeries
   };
 }
 
@@ -222,8 +253,8 @@ function navMetricsBlock(m) {
   if (!m) return `<div class="sc2-empty">Necesitas posiciones con fecha de entrada para calcular el NAV real</div>`;
   return `
     <div class="gen-metrics-grid">
-      <div class="gen-mtile"><div class="gen-mtile-lbl">Retorno Total</div><div class="gen-mtile-val" style="color:${m.totalReturn>=0?'var(--green)':'var(--red)'}">${fmtPct(m.totalReturn)}</div><div class="gen-mtile-sub">${m.nDays} días</div></div>
-      <div class="gen-mtile"><div class="gen-mtile-lbl">Retorno Anualizado</div><div class="gen-mtile-val" style="color:${m.annualReturn>=0?'var(--green)':'var(--red)'}">${fmtPct(m.annualReturn)}</div><div class="gen-mtile-sub">CAGR estimado</div></div>
+      <div class="gen-mtile"><div class="gen-mtile-lbl">Retorno TWR Total</div><div class="gen-mtile-val" style="color:${m.totalReturn>=0?'var(--green)':'var(--red)'}">${fmtPct(m.totalReturn)}</div><div class="gen-mtile-sub">${m.nDays} días · neutraliza aportaciones</div></div>
+      <div class="gen-mtile"><div class="gen-mtile-lbl">Retorno Anualizado</div><div class="gen-mtile-val" style="color:${m.annualReturn>=0?'var(--green)':'var(--red)'}">${fmtPct(m.annualReturn)}</div><div class="gen-mtile-sub">CAGR sobre TWR</div></div>
       <div class="gen-mtile"><div class="gen-mtile-lbl">Volatilidad Anualizada</div><div class="gen-mtile-val">${fmt(m.annualVol*100,1)}%</div><div class="gen-mtile-sub">desv. estándar</div></div>
       <div class="gen-mtile"><div class="gen-mtile-lbl">Sharpe Ratio</div><div class="gen-mtile-val" style="color:${m.sharpe>=1?'var(--green)':m.sharpe>=0?'var(--amber)':'var(--red)'}">${fmt(m.sharpe)}</div><div class="gen-mtile-sub">anualizado, rf=0</div></div>
       <div class="gen-mtile"><div class="gen-mtile-lbl">Sortino Ratio</div><div class="gen-mtile-val" style="color:${m.sortino>=1?'var(--green)':m.sortino>=0?'var(--amber)':'var(--red)'}">${fmt(m.sortino)}</div><div class="gen-mtile-sub">solo riesgo bajista</div></div>
@@ -234,33 +265,33 @@ function navMetricsBlock(m) {
 }
 
 // ── SVG charts ───────────────────────────────────
-function navChartSVG(nav) {
-  if (!nav || nav.length < 2) return `<div class="sc2-empty" style="padding:30px;">Sin suficientes datos para graficar</div>`;
+function twrChartSVG(twrSeries, nav) {
+  if (!twrSeries || twrSeries.length < 2) return `<div class="sc2-empty" style="padding:30px;">Sin suficientes datos para graficar</div>`;
   const w=900, h=240, pad=24;
-  const values = nav.map(n=>n.value);
-  const min = Math.min(...values), max = Math.max(...values);
+  const min = Math.min(...twrSeries, 100), max = Math.max(...twrSeries, 100);
   const range = (max-min)||1;
-  const stepX = (w-pad*2) / (values.length-1);
-  const pts = values.map((v,i) => `${pad+i*stepX},${h-pad-((v-min)/range)*(h-pad*2)}`).join(' ');
-  const last = values[values.length-1], first = values[0];
-  const lineColor = last>=first ? '#4ade80' : '#f47174';
-  // Área debajo
-  const areaPts = `${pad},${h-pad} ${pts} ${pad+(values.length-1)*stepX},${h-pad}`;
+  const stepX = (w-pad*2) / (twrSeries.length-1);
+  const pts = twrSeries.map((v,i) => `${pad+i*stepX},${h-pad-((v-min)/range)*(h-pad*2)}`).join(' ');
+  const last = twrSeries[twrSeries.length-1];
+  const lineColor = last>=100 ? '#4ade80' : '#f47174';
+  const baselineY = h-pad-((100-min)/range)*(h-pad*2);
+  const areaPts = `${pad},${h-pad} ${pts} ${pad+(twrSeries.length-1)*stepX},${h-pad}`;
   return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:${h}px;">
+    <line x1="${pad}" y1="${baselineY}" x2="${w-pad}" y2="${baselineY}" stroke="var(--border)" stroke-width="1" stroke-dasharray="4,4"/>
     <polygon points="${areaPts}" fill="${lineColor}" opacity="0.08"/>
     <polyline points="${pts}" fill="none" stroke="${lineColor}" stroke-width="2"/>
-    <circle cx="${pad+(values.length-1)*stepX}" cy="${h-pad-((last-min)/range)*(h-pad*2)}" r="4" fill="${lineColor}"/>
+    <circle cx="${pad+(twrSeries.length-1)*stepX}" cy="${h-pad-((last-min)/range)*(h-pad*2)}" r="4" fill="${lineColor}"/>
   </svg>
   <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:4px;">
-    <span>${fmtDate(nav[0].day)}</span><span>${fmtDate(nav[nav.length-1].day)}</span>
+    <span>${fmtDate(nav[0].day)}</span><span>Base 100</span><span>${fmtDate(nav[nav.length-1].day)}</span>
   </div>`;
 }
 
-function ddChartSVG(nav) {
-  if (!nav || nav.length < 2) return '';
+function ddChartSVG(twrSeries) {
+  if (!twrSeries || twrSeries.length < 2) return '';
   const w=900, h=120, pad=10;
-  let peak = nav[0].value;
-  const dds = nav.map(n => { peak = Math.max(peak, n.value); return peak>0 ? (peak-n.value)/peak : 0; });
+  let peak = twrSeries[0];
+  const dds = twrSeries.map(v => { peak = Math.max(peak, v); return peak>0 ? (peak-v)/peak : 0; });
   const max = Math.max(...dds, 0.001);
   const stepX = (w-pad*2) / (dds.length-1);
   const pts = dds.map((d,i) => `${pad+i*stepX},${pad + (d/max)*(h-pad*2)}`).join(' ');
@@ -363,7 +394,7 @@ export async function render(container, { actionsSlot }) {
     let nav = null, navM = null;
     if (allTrades.length > 0) {
       nav = await buildNavSeries(allTrades);
-      navM = navMetrics(nav, (capitalAlcista||0)+(capitalBajista||0));
+      navM = navMetrics(nav);
     }
 
     paint(positions, history, capitalAlcista, capitalBajista, satelite, corePct, pricesMap, nav, navM);
@@ -397,20 +428,20 @@ export async function render(container, { actionsSlot }) {
       ${kpiBlock(rg)}
 
       <!-- NAV REAL -->
-      <div class="gen-section-title" style="margin-top:24px;">📈 NAV Real — Marcado a Mercado</div>
+      <div class="gen-section-title" style="margin-top:24px;">📈 Rendimiento Real (Time-Weighted) — Marcado a Mercado</div>
       ${navM ? `
         ${navMetricsBlock(navM)}
         <div class="gen-compare-grid" style="margin-top:14px;">
           <div class="gen-chart-box">
-            <div class="gen-chart-title">Evolución del NAV</div>
-            ${navChartSVG(nav)}
+            <div class="gen-chart-title">Índice de Rendimiento (base 100, neutraliza aportaciones de capital)</div>
+            ${twrChartSVG(navM.twrSeries, nav)}
           </div>
           <div class="gen-chart-box">
             <div class="gen-chart-title">Drawdown a lo largo del tiempo</div>
-            ${ddChartSVG(nav)}
+            ${ddChartSVG(navM.twrSeries)}
           </div>
         </div>
-      ` : `<div class="sc2-empty">Necesitas posiciones con fecha de entrada para reconstruir el NAV real</div>`}
+      ` : `<div class="sc2-empty">Necesitas posiciones con fecha de entrada para reconstruir el rendimiento real</div>`}
 
       <!-- DISTRIBUCIÓN DE RETORNOS -->
       ${rg ? `
