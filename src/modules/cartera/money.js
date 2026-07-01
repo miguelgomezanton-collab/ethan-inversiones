@@ -159,7 +159,7 @@ export async function render(container, { actionsSlot }) {
 
         <div class="mm-grid">
           <div class="mm-field"><label>Capital Inicial (€)</label><input type="number" id="bt-capital" class="mm-input" value="${(capitalAlcista||0)+(capitalBajista||0) || 10000}"></div>
-          <div class="mm-field"><label>Riesgo % (para "Tu Sizing Real")</label><input type="number" id="bt-risk" class="mm-input" value="1.5" step="0.25"></div>
+          <div class="mm-field"><label>Riesgo % <span style="color:var(--text3);text-transform:none;">(para Kelly y Fijo 10%)</span></label><input type="number" id="bt-risk" class="mm-input" value="1.5" step="0.25" style="opacity:0.6;"></div>
           <div class="mm-field" style="grid-column:span 2;display:flex;align-items:flex-end;">
             <button class="btn btn-primary" id="bt-run-btn" style="width:100%;">▶ Ejecutar Backtest</button>
           </div>
@@ -393,7 +393,15 @@ export async function render(container, { actionsSlot }) {
     const kellyHalf = Math.max(0, kellyFull*0.5);
 
     const methods = [
-      { name:'Tu Sizing Real', desc:`Riesgo fijo ${(riskPct*100).toFixed(1)}%`, fn: () => riskPct, color:'var(--blue)' },
+      {
+        name: 'Tu Sizing Real',
+        desc: 'Coste real de cada op / capital en ese momento',
+        // Para cada operación, el sizing es el % que representó su coste real
+        // sobre el capital disponible en ese instante (compuesto desde capital0).
+        // Si la operación no tiene coste registrado, fallback a riskPct.
+        fn: (op, capital) => op.cost && capital > 0 ? Math.min(op.cost/capital, 1) : riskPct,
+        color: 'var(--blue)'
+      },
       { name:'Kelly Completo', desc:`f* = ${(kellyFull*100).toFixed(1)}%`, fn: () => Math.max(0,kellyFull), color:'var(--red)' },
       { name:'Medio Kelly',    desc:`½ × f* = ${(kellyHalf*100).toFixed(1)}%`, fn: () => kellyHalf, color:'var(--teal)' },
       { name:'Tamaño Fijo 10%',desc:'10% capital siempre', fn: () => 0.10, color:'var(--amber)' },
