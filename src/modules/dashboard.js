@@ -264,7 +264,7 @@ export async function render(container, { actionsSlot }) {
     const scoreLabel = score > 8 ? 'Expansión' : score > 4 ? 'Moderado' : score > 0 ? 'Desaceleración' : score > -4 ? 'Contracción' : 'Recesión';
 
     el.innerHTML = `
-      <div class="db-saludo" style="color:var(--text1);">${saludo} — ${today} · v16 ✓</div>
+      <div class="db-saludo" style="color:var(--text1);">${saludo} — ${today}</div>
 
       <!-- Fila 1: VL + Stats + Macro -->
       <div class="db-grid">
