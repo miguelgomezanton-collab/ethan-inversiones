@@ -92,7 +92,7 @@ function atr(H,L,C,p=14){
 
 // ── Fetch Yahoo 3 años ────────────────────────
 async function fetchHistory(ticker){
-  const url=`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=3y&events=history`;
+  const url=`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=5y&events=history`;
   for(const fn of PROXIES){
     try{
       const r=await fetch(fn(url),{signal:AbortSignal.timeout(12000)});
@@ -217,13 +217,20 @@ function runBacktest(data,config){
   const d_macd=macd(C), d_r14=rsi(C,14), d_e10=ema(C,10);
 
   // Precalcular condición M y S para cada índice
+  // Con 5 años (~60 meses) el MACD(12,26) tiene suficientes datos
   const condM=M.C.map((_,i)=>{
-    if(i<2||!m_e10[i])return false;
-    return m_macd.m[i]>0&&m_macd.m[i]>m_macd.sl[i]&&m_s89.k[i]>60&&m_r14[i]>50&&M.C[i]>m_e10[i];
+    if(i<28||!m_e10[i]||m_macd.m[i]==null)return false;
+    return m_macd.m[i]>0&&m_macd.m[i]>m_macd.sl[i]
+        && m_s89.k[i]!=null&&m_s89.k[i]>60
+        && m_r14[i]!=null&&m_r14[i]>50
+        && M.C[i]>m_e10[i];
   });
   const condS=W.C.map((_,i)=>{
-    if(i<2||!w_e20[i])return false;
-    return w_macd.m[i]>0&&w_macd.m[i]>w_macd.sl[i]&&w_s89.k[i]>50&&w_r14[i]>50&&W.C[i]>w_e20[i];
+    if(i<28||!w_e20[i]||w_macd.m[i]==null)return false;
+    return w_macd.m[i]>0&&w_macd.m[i]>w_macd.sl[i]
+        && w_s89.k[i]!=null&&w_s89.k[i]>50
+        && w_r14[i]!=null&&w_r14[i]>50
+        && W.C[i]>w_e20[i];
   });
 
   // Mapear cada día diario → índice semanal y mensual
@@ -535,7 +542,7 @@ export async function render(container,{actionsSlot}){
       const btn=document.getElementById('bt-run-btn');
       const st=document.getElementById('bt-status');
       btn.disabled=true; btn.textContent='⏳ Descargando...';
-      if(st)st.textContent=`Descargando 3 años de ${ticker}...`;
+      if(st)st.textContent=`Descargando 5 años de ${ticker}...`;
       try{
         const data=await fetchHistory(ticker);
         if(st)st.textContent='Ejecutando simulación...';
