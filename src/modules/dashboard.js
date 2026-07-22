@@ -16,7 +16,7 @@ const PROXIES = [
 
 const fmtE   = n => n != null && isFinite(n) ? (n<0?'-':'')+'€'+Math.abs(n).toLocaleString('es-ES',{minimumFractionDigits:0,maximumFractionDigits:0}) : '—';
 const fmtPct = (n,d=2) => n != null && isFinite(n) ? (n>=0?'+':'')+n.toFixed(d)+'%' : '—';
-const fmtVL  = n => n != null ? n.toFixed(4) : '—';
+const fmtVL  = n => n != null ? n.toFixed(2) : '—';
 const fmtDate = d => d ? new Date(d+'T12:00:00').toLocaleDateString('es-ES',{day:'2-digit',month:'short'}) : '—';
 
 // ── Fetch noticias via API (Google News RSS en español) ──
