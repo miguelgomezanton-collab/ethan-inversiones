@@ -48,7 +48,7 @@ Incluye 5-8 transacciones reales. type debe ser exactamente "Compra" o "Venta".`
       const data = await askClaude(
         `Busca datos actuales de short interest y ownership institucional para ${T}. Responde SOLO JSON sin markdown:
 {"shortInterest":{"shortFloat":0.025,"daysTocover":1.8,"shortVolume":120000000},"institutional":{"pctInsiders":0.026,"pctInstitutions":0.625,"topHolders":[{"name":"Vanguard Group","pct":0.085,"shares":1300000000,"change":0.002}]}}
-shortFloat es decimal (0.025 = 2.5%). Incluye top 5 institucionales reales.`, key);
+shortFloat es decimal (0.025 = 2.5%). daysTocover es número decimal. Incluye top 5 institucionales reales con datos actuales.`, key);
       return res.status(200).json({ ticker: T, ...data });
     } catch(e) { return res.status(200).json({ ticker: T, shortInterest: null, institutional: null, error: e.message }); }
   }

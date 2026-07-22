@@ -101,7 +101,7 @@ export function getCurrentPage() {
 
 function updateChrome(entry) {
   const statusEl = document.getElementById('status-module');
-  if (statusEl) statusEl.textContent = entry.crumb.replace(/›/g, '>').toUpperCase();
+  if (statusEl) statusEl.innerHTML = entry.crumb.replace(/›/g, '>').toUpperCase();
   // Reflejar en la URL para poder refrescar/compartir enlace
   if (currentPageId) {
     history.replaceState(null, '', `#${currentPageId}`);
