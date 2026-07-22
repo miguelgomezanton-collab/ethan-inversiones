@@ -195,6 +195,11 @@ registerPage('fund-analisis', {
   title: 'Análisis Fundamental',
   loader: () => import('./modules/fundamentales/analisis.js')
 });
+registerPage('smart-money', {
+  crumb: 'Smart Money <span>›</span> Insider Trading · Short Interest · Institucional',
+  title: 'Smart Money Intelligence',
+  loader: () => import('./modules/smart/smart-money.js')
+});
 
 // ── Sidebar: acordeón de grupos y subgrupos ─────
 
