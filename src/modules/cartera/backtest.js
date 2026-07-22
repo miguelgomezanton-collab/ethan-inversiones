@@ -314,7 +314,16 @@ function runBacktest(data,config){
   const avgDias=trades.length?Math.round(trades.reduce((s,t)=>s+t.dias,0)/trades.length):0;
   let peak=capitalInicial,maxDD=0;
   equityCurve.forEach(p=>{if(p.equity>peak)peak=p.equity;const dd=(peak-p.equity)/peak;if(dd>maxDD)maxDD=dd;});
-  return{trades,equityCurve,capital,capitalInicial,winRate,avgWin,avgLoss,profitFactor,totalReturn,buyHold,avgDias,maxDD,nTrades:trades.length};
+  // Debug info
+  let diasConM=0, diasConMS=0, diasConEntrada=0;
+  for(let i=50;i<n;i++){
+    const wi=dayToWi[i], mi=dayToMi[i];
+    if(mi>=2&&condM[mi-1])diasConM++;
+    if(mi>=2&&condM[mi-1]&&wi>=2&&condS[wi-1])diasConMS++;
+  }
+
+  return{trades,equityCurve,capital,capitalInicial,winRate,avgWin,avgLoss,profitFactor,totalReturn,buyHold,avgDias,maxDD,nTrades:trades.length,
+    debug:{diasConM,diasConMS,totalDias:n-50,semanas:W.dates.length,meses:M.dates.length}};
 }
 // ── SVG Equity Curve ──────────────────────────
 function equityChart(curve,capitalInicial){
@@ -385,6 +394,11 @@ export async function render(container,{actionsSlot}){
     el.innerHTML=`
       <!-- Configuración -->
       ${renderConfig(config)}
+
+      <!-- Debug info -->
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px 16px;margin-bottom:16px;font-family:var(--mono);font-size:10px;color:var(--text2);">
+        🔍 Debug: ${result.debug?.totalDias||0} días analizados · ${result.debug?.diasConM||0} con condición M ✓ · ${result.debug?.diasConMS||0} con M+S ✓ · ${result.debug?.semanas||0} semanas · ${result.debug?.meses||0} meses
+      </div>
 
       <!-- KPIs -->
       <div class="bt-strip">
