@@ -1,69 +1,58 @@
 // /api/smart-money.js — Smart Money via Claude AI + web search
+// Dos llamadas paralelas para no superar el timeout de Vercel
+
+async function askClaude(prompt, apiKey) {
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 1000,
+      tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  });
+  if (!r.ok) throw new Error(`Claude API ${r.status}`);
+  const data = await r.json();
+  const text = data.content?.find(b => b.type === 'text')?.text || '{}';
+  const clean = text.replace(/```json\n?|```\n?/g,'').trim();
+  try { return JSON.parse(clean); }
+  catch { const m = clean.match(/\{[\s\S]*\}/); return m ? JSON.parse(m[0]) : {}; }
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  const { ticker } = req.query;
+  const { ticker, section } = req.query;
   if (!ticker) return res.status(400).json({ error: 'ticker requerido' });
 
   const T = ticker.toUpperCase();
+  const key = process.env.ANTHROPIC_API_KEY;
 
-  const prompt = `Busca datos actuales de Smart Money para la acción ${T}. Necesito exactamente estos datos en JSON:
-
-1. insiders: últimas 5-8 transacciones de insider trading (Form 4 SEC) con: date (YYYY-MM-DD), insider (nombre), title (cargo), type ("Compra" o "Venta"), qty (número de acciones, integer), price (precio por acción como string "$XX.XX"), value (valor total como string "$XXM" o "$XXK")
-
-2. shortInterest: { shortFloat (decimal 0-1, ej 0.035 para 3.5%), daysTocover (número), shortVolume (integer), source: "datos más recientes disponibles" }
-
-3. institutional: { pctInsiders (decimal), pctInstitutions (decimal), topHolders: array de 5 con { name, pct (decimal), shares (integer), change (decimal positivo/negativo) } }
-
-Responde SOLO con JSON válido, sin texto adicional, sin markdown. Formato exacto:
-{"insiders":[...],"shortInterest":{...},"institutional":{...}}`;
-
-  try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 2000,
-        tools: [{ type: 'web_search_20250305', name: 'web_search' }],
-        messages: [{ role: 'user', content: prompt }],
-      }),
-      signal: AbortSignal.timeout(45000),
-    });
-
-    if (!r.ok) {
-      const err = await r.text();
-      return res.status(500).json({ error: 'API error: ' + err.slice(0,200) });
-    }
-
-    const data = await r.json();
-    const textBlock = data.content?.find(b => b.type === 'text');
-    const raw = textBlock?.text || '{}';
-
-    // Limpiar y parsear JSON
-    const clean = raw.replace(/```json\n?/g,'').replace(/```\n?/g,'').trim();
-    let parsed;
+  // El cliente puede pedir solo una sección para llamadas paralelas
+  if (section === 'insiders') {
     try {
-      parsed = JSON.parse(clean);
-    } catch {
-      // Intentar extraer JSON con regex
-      const match = clean.match(/\{[\s\S]*\}/);
-      parsed = match ? JSON.parse(match[0]) : {};
-    }
-
-    return res.status(200).json({
-      ticker: T,
-      timestamp: new Date().toISOString(),
-      insiders:     parsed.insiders     || [],
-      shortInterest: parsed.shortInterest || null,
-      institutional: parsed.institutional || null,
-      errors: [],
-    });
-
-  } catch(e) {
-    return res.status(500).json({ error: e.message });
+      const data = await askClaude(
+        `Busca las últimas transacciones de insider trading (SEC Form 4) para ${T} en los últimos 6 meses. Responde SOLO JSON sin markdown:
+{"insiders":[{"date":"YYYY-MM-DD","insider":"nombre completo","title":"cargo","type":"Compra","qty":5000,"price":"$185.50","value":"$927K"}]}
+Incluye 5-8 transacciones reales. type debe ser exactamente "Compra" o "Venta".`, key);
+      return res.status(200).json({ ticker: T, ...data });
+    } catch(e) { return res.status(200).json({ ticker: T, insiders: [], error: e.message }); }
   }
+
+  if (section === 'market') {
+    try {
+      const data = await askClaude(
+        `Busca datos actuales de short interest y ownership institucional para ${T}. Responde SOLO JSON sin markdown:
+{"shortInterest":{"shortFloat":0.025,"daysTocover":1.8,"shortVolume":120000000},"institutional":{"pctInsiders":0.026,"pctInstitutions":0.625,"topHolders":[{"name":"Vanguard Group","pct":0.085,"shares":1300000000,"change":0.002}]}}
+shortFloat es decimal (0.025 = 2.5%). Incluye top 5 institucionales reales.`, key);
+      return res.status(200).json({ ticker: T, ...data });
+    } catch(e) { return res.status(200).json({ ticker: T, shortInterest: null, institutional: null, error: e.message }); }
+  }
+
+  // Sin section — devolver estructura vacía para que el cliente llame en paralelo
+  return res.status(200).json({ ticker: T, ready: true });
 }

@@ -80,8 +80,27 @@ export async function render(container, { actionsSlot }) {
     res.innerHTML = `<div class="sm-loader"><div class="loader-ring"></div>Obteniendo datos de Smart Money para ${ticker}...</div>`;
 
     try {
-      const r = await fetch(`/api/smart-money?ticker=${ticker}`, { signal: AbortSignal.timeout(20000) });
-      const data = await r.json();
+      // Dos llamadas en paralelo para evitar timeout
+      btn.disabled = true; btn.textContent = '⏳ Buscando...';
+      if (st) st.textContent = `Consultando insiders y mercado para ${ticker} en paralelo...`;
+      res.innerHTML = `<div class="sm-loader"><div class="loader-ring"></div>Buscando datos de Smart Money para ${ticker}... (15-30s)</div>`;
+
+      const [insidersRes, marketRes] = await Promise.allSettled([
+        fetch(`/api/smart-money?ticker=${ticker}&section=insiders`, { signal: AbortSignal.timeout(55000) }).then(r => r.json()),
+        fetch(`/api/smart-money?ticker=${ticker}&section=market`,   { signal: AbortSignal.timeout(55000) }).then(r => r.json()),
+      ]);
+
+      const data = {
+        ticker,
+        insiders:      insidersRes.status === 'fulfilled' ? (insidersRes.value.insiders || []) : [],
+        shortInterest: marketRes.status === 'fulfilled'   ? (marketRes.value.shortInterest || null) : null,
+        institutional: marketRes.status === 'fulfilled'   ? (marketRes.value.institutional || null) : null,
+        errors: [
+          ...(insidersRes.status === 'rejected' ? ['Insiders: timeout'] : []),
+          ...(marketRes.status === 'rejected'   ? ['Market: timeout']   : []),
+        ],
+      };
+
       paintResults(data, ticker);
       if (st) st.textContent = '';
     } catch(e) {
