@@ -376,7 +376,7 @@ export default async function handler(req, res) {
     fetchVIX(),
     fetchCurvaEUR(),
     fred('BAMLH0A0HYM2', key, 5),
-    fred('T1YIE',        key, 60),   // Breakeven 1Y — 60 obs para cubrir meses sin datos
+    fred('EXPINF1YR',    key, 10),   // Fed Cleveland 1Y inflation expectations
     fred('T5YIE',        key, 10),   // Breakeven 5Y
     fred('T5YIFR',       key, 10),   // Breakeven 5Y forward rate (alternativa)
     yahoo('CL%3DF'),
@@ -599,17 +599,17 @@ export default async function handler(req, res) {
     hySpread: rHy.status === 'fulfilled' && rHy.value[0]
       ? { value: rHy.value[0].value, date: rHy.value[0].date } : null,
     breakeven1y: (() => {
-      // Primero T1YIE (breakeven de mercado)
+      // EXPINF1YR — Fed de Cleveland (más preciso que T1YIE)
       if (rBreakeven1y.status === 'fulfilled') {
         const valid = rBreakeven1y.value.find(o => o.value != null && !isNaN(o.value));
-        if (valid) return { value: valid.value, date: valid.date };
+        if (valid) return { value: valid.value, date: valid.date, series: 'EXPINF1YR' };
       }
-      // Fallback: MICH (Univ. Michigan 1Y inflation expectations)
+      // Fallback: MICH (Univ. Michigan)
       if (rMich?.status === 'fulfilled') {
         const valid = rMich.value.find(o => o.value != null && !isNaN(o.value));
         if (valid) return { value: valid.value, date: valid.date, series: 'MICH' };
       }
-      errs.push('T1YIE+MICH: sin datos válidos');
+      errs.push('EXPINF1YR+MICH: sin datos válidos');
       return null;
     })(),
     breakeven5y: (() => {
