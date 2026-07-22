@@ -407,11 +407,12 @@ function vlChart(serieBase100, colorPositivo = true) {
 
 // ── Metric card ───────────────────────────────
 function mc(label, value, badge, badgeClass, note) {
+  const valCol = badgeClass==='good'?'var(--green)':badgeClass==='bad'?'var(--red)':badgeClass==='warn'?'var(--amber)':'var(--text1)';
   return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px 20px;transition:background 0.15s;">
     <div style="font-family:var(--mono);font-size:10px;color:var(--text3);margin-bottom:10px;">${label}</div>
     <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:6px;">
-      <span style="font-family:var(--mono);font-size:22px;font-weight:500;">${value}</span>
-      ${badge ? `<span style="font-family:var(--mono);font-size:9px;padding:2px 7px;border-radius:3px;background:var(--${badgeClass==='good'?'green':badgeClass==='warn'?'amber':badgeClass==='bad'?'red':'text3'}22;color:var(--${badgeClass==='good'?'green':badgeClass==='warn'?'amber':badgeClass==='bad'?'red':'text3'});">${badge}</span>` : ''}
+      <span style="font-family:var(--mono);font-size:22px;font-weight:500;color:${valCol};">${value}</span>
+      ${badge ? `<span style="font-family:var(--mono);font-size:9px;padding:2px 7px;border-radius:3px;background:${valCol}22;color:${valCol};">${badge}</span>` : ''}
     </div>
     <div style="font-size:10.5px;color:var(--text3);line-height:1.55;">${note}</div>
   </div>`;
@@ -609,10 +610,10 @@ export async function render(container, { actionsSlot, savedState }) {
         </div>` : ''}
 
         <div class="fondo-metrics">
-          ${mc('YTD', fmtPct(((m?.ytd)||0)*100), null, 'neu', 'Rentabilidad acumulada desde el 1 de enero del año en curso.')}
-          ${mc('MTD', m?.mtd!=null?fmtPct(m.mtd*100):'—', null, 'neu', 'Rentabilidad del mes en curso. Requiere snapshot fin de mes anterior.')}
+          ${mc('YTD', fmtPct(((m?.ytd)||0)*100), null, (m?.ytd||0)>=0?'good':'bad', 'Rentabilidad acumulada desde el 1 de enero del año en curso.')}
+          ${mc('MTD', m?.mtd!=null?fmtPct(m.mtd*100):'—', null, m?.mtd!=null?(m.mtd>=0?'good':'bad'):'neu', 'Rentabilidad del mes en curso.')}
           ${mc('P&L Realizado', fmtE(pnlRealizado), pnlRealizado>=0?'Ganancia':'Pérdida', pnlRealizado>=0?'good':'bad', 'Suma de beneficios y pérdidas de todas las operaciones cerradas.')}
-          ${mc('P&L No Realizado', fmtE(pnlNoRealizado), pnlNoRealizado>=0?'Latente+':'Latente−', pnlNoRealizado>=0?'good':'warn', 'P&L de las posiciones abiertas a precio actual. Se actualiza al abrir Posiciones.')}
+          ${mc('P&L No Realizado', fmtE(pnlNoRealizado), pnlNoRealizado>=0?'Latente+':'Latente−', pnlNoRealizado>=0?'good':'bad', 'P&L de las posiciones abiertas a precio actual. Se actualiza al abrir Posiciones.')}
           ${mc('Valor Liquidativo', fmtVL(vlActual), null, 'neu', `Precio por participación hoy. Inicio: ${VL_INICIAL.toFixed(4)}. Sube/baja con el P&L de la cartera.`)}
           ${mc('Valor Cartera', fmtE(valorCartera), null, 'neu', `VL (${fmtVL(vlActual)}) × ${m?.participaciones?.toFixed(2)||'—'} participaciones.`)}
         </div>
