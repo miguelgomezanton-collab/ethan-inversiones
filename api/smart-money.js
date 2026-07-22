@@ -1,167 +1,117 @@
-// /api/smart-money.js — Smart Money Intelligence
-// Insider trading (SEC EDGAR Form 4) + Short Interest (FINRA) + Institutional ownership
-// GET /api/smart-money?ticker=AAPL
+// /api/smart-money.js
+// Insider Trading (SEC EDGAR) + Short Interest + Institutional (Yahoo)
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   const { ticker } = req.query;
   if (!ticker) return res.status(400).json({ error: 'ticker requerido' });
 
-  const results = {};
-  const errors = [];
+  const T = ticker.toUpperCase();
+  const results = { insiders: [], shortInterest: null, institutional: null, errors: [] };
 
-  // ── 1. INSIDER TRADING — SEC EDGAR Form 4 ──────────────────────
+  // ── 1. SHORT INTEREST + INSTITUTIONAL — Yahoo Finance ──────────
   try {
-    // Buscar CIK del ticker en SEC EDGAR
-    const searchUrl = `https://efts.sec.gov/LATEST/search-index?q=%22${ticker}%22&dateRange=custom&startdt=${getDateDaysAgo(180)}&enddt=${getDateToday()}&forms=4`;
-    const r = await fetch(searchUrl, {
-      headers: { 'User-Agent': 'ETHAN-Mercados research@ethan.com', 'Accept': 'application/json' },
+    const r = await fetch(
+      `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${T}?modules=defaultKeyStatistics,majorHoldersBreakdown,institutionOwnership`,
+      { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(10000) }
+    );
+    if (r.ok) {
+      const data = await r.json();
+      const result = data?.quoteSummary?.result?.[0];
+      const stats  = result?.defaultKeyStatistics;
+      const holders = result?.majorHoldersBreakdown;
+      const instOwn = result?.institutionOwnership;
+
+      if (stats) {
+        results.shortInterest = {
+          date:        'Yahoo Finance',
+          shortFloat:  stats.shortPercentOfFloat?.raw ?? null,
+          daysTocover: stats.shortRatio?.raw ?? null,
+          shortVolume: stats.sharesShort?.raw ?? null,
+          sharesOut:   stats.sharesOutstanding?.raw ?? null,
+        };
+      }
+      if (holders) {
+        results.institutional = {
+          pctInsiders:     holders.insidersPercentHeld?.raw ?? null,
+          pctInstitutions: holders.institutionsPercentHeld?.raw ?? null,
+          topHolders: (instOwn?.ownershipList || []).slice(0,5).map(h => ({
+            name:   h.organization,
+            pct:    h.pctHeld?.raw ?? null,
+            shares: h.position?.raw ?? null,
+            value:  h.value?.raw ?? null,
+            change: h.pctChange?.raw ?? null,
+          })),
+        };
+      }
+    }
+  } catch(e) { results.errors.push('Yahoo: ' + e.message); }
+
+  // ── 2. INSIDER TRADING — SEC EDGAR full-text search ────────────
+  try {
+    // Buscar filings Form 4 del ticker en SEC EDGAR
+    const url = `https://efts.sec.gov/LATEST/search-index?q=%22${T}%22&forms=4&dateRange=custom&startdt=${daysAgo(180)}&enddt=${today()}`;
+    const r = await fetch(url, {
+      headers: {
+        'User-Agent': 'ETHAN-Research contact@ethan.com',
+        'Accept': 'application/json',
+      },
       signal: AbortSignal.timeout(10000),
     });
     if (r.ok) {
       const data = await r.json();
       const hits = data.hits?.hits || [];
-      const insiders = hits.slice(0, 10).map(h => {
-        const src = h._source || {};
+      results.insiders = hits.slice(0, 8).map(h => {
+        const s = h._source || {};
         return {
-          date: src.period_of_report || src.file_date || '',
-          filer: src.display_names?.[0] || src.entity_name || 'Unknown',
-          type: src.form_type || 'Form 4',
-          description: src.file_date || '',
+          date:    s.period_of_report || s.file_date || '',
+          insider: s.display_names?.[0] || s.entity_name || '—',
+          title:   '—',
+          type:    '—',
+          qty:     null,
+          price:   '—',
+          value:   '—',
+          fileUrl: s.file_date ? `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&type=4&dateb=&owner=include&count=10&search_text=` : '',
         };
       });
-      results.insiders = insiders;
     }
-  } catch(e) { errors.push('Insiders: ' + e.message); results.insiders = []; }
+  } catch(e) { results.errors.push('SEC EDGAR search: ' + e.message); }
 
-  // ── 2. INSIDER TRADING — OpenInsider (más fiable) ──────────────
-  try {
-    const url = `https://openinsider.com/screener?s=${ticker}&fd=180&td=0&tc=1&isoDateFrom=&isoDateTo=&ownerName=&type=4&action=submit&submit=+Screener+`;
-    const r = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; research bot)' },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (r.ok) {
-      const html = await r.text();
-      // Parse tabla de transacciones
-      const rows = [];
-      const trRegex = /<tr[^>]*class="[^"]*(?:odd|even)[^"]*"[^>]*>([\s\S]*?)<\/tr>/gi;
-      let match;
-      while ((match = trRegex.exec(html)) !== null && rows.length < 8) {
-        const tdRegex = /<td[^>]*>([\s\S]*?)<\/td>/gi;
-        const cells = [];
-        let td;
-        while ((td = tdRegex.exec(match[1])) !== null) {
-          cells.push(td[1].replace(/<[^>]+>/g, '').trim());
-        }
-        if (cells.length >= 10) {
-          const qty = parseInt(cells[7]?.replace(/[^0-9-]/g,'')) || 0;
-          rows.push({
-            date:    cells[2] || '',
-            ticker:  cells[3] || ticker,
-            company: cells[4] || '',
-            insider: cells[5] || '',
-            title:   cells[6] || '',
-            type:    qty > 0 ? 'Compra' : 'Venta',
-            qty:     Math.abs(qty),
-            price:   cells[8] || '',
-            value:   cells[9] || '',
-          });
-        }
-      }
-      if (rows.length > 0) results.insiders = rows;
-    }
-  } catch(e) { errors.push('OpenInsider: ' + e.message); }
-
-  // ── 3. SHORT INTEREST — FINRA ──────────────────────────────────
-  try {
-    const url = `https://api.finra.org/data/group/OTCMarket/name/consolidatedShortInterest?limit=5&filters=[{"fieldName":"symbolCode","fieldValue":"${ticker}","compareType":"EQUAL"}]`;
-    const r = await fetch(url, {
-      headers: { 'Accept': 'application/json' },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (r.ok) {
-      const data = await r.json();
-      const latest = data?.[0];
-      if (latest) {
-        results.shortInterest = {
-          date:         latest.settlementDate || '',
-          shortVolume:  latest.totalShortInterest || 0,
-          avgDailyVol:  latest.averageDailyVolume || 0,
-          daysTocover:  latest.daysToCover || 0,
-          shortFloat:   latest.shortInterestRatio || 0,
-        };
-      }
-    }
-  } catch(e) { errors.push('Short Interest FINRA: ' + e.message); }
-
-  // ── 4. SHORT INTEREST — fallback via Yahoo (SI%) ───────────────
-  if (!results.shortInterest) {
+  // ── 3. INSIDER TRADING — SEC EDGAR por CIK ─────────────────────
+  if (results.insiders.length === 0) {
     try {
-      const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${ticker}?modules=defaultKeyStatistics`;
-      const r = await fetch(url, {
-        headers: { 'User-Agent': 'Mozilla/5.0' },
-        signal: AbortSignal.timeout(8000),
-      });
-      if (r.ok) {
-        const data = await r.json();
-        const stats = data?.quoteSummary?.result?.[0]?.defaultKeyStatistics;
-        if (stats) {
-          results.shortInterest = {
-            date:        'Yahoo Finance',
-            shortFloat:  stats.shortPercentOfFloat?.raw,
-            daysTocover: stats.shortRatio?.raw,
-            shortVolume: stats.sharesShort?.raw,
-            sharesOut:   stats.sharesOutstanding?.raw,
-          };
+      // Primero obtener el CIK del ticker
+      const cikRes = await fetch(
+        `https://www.sec.gov/cgi-bin/browse-edgar?company=&CIK=${T}&type=4&dateb=&owner=include&count=10&search_text=&action=getcompany&output=atom`,
+        { headers: { 'User-Agent': 'ETHAN-Research contact@ethan.com' }, signal: AbortSignal.timeout(8000) }
+      );
+      if (cikRes.ok) {
+        const xml = await cikRes.text();
+        // Extraer entradas del feed Atom
+        const entries = [];
+        const entryRegex = /<entry>([\s\S]*?)<\/entry>/g;
+        let match;
+        while ((match = entryRegex.exec(xml)) !== null && entries.length < 6) {
+          const entry = match[1];
+          const title  = (/<title>([\s\S]*?)<\/title>/.exec(entry)?.[1] || '').replace(/<[^>]+>/g,'').trim();
+          const updated= (/<updated>(.*?)<\/updated>/.exec(entry)?.[1] || '').slice(0,10);
+          const link   = (/<link[^>]+href="([^"]+)"/.exec(entry)?.[1] || '');
+          if (title && updated) entries.push({ date: updated, insider: title, type: 'Form 4', title2: '', qty: null, price: '—', value: '—', fileUrl: link });
         }
+        if (entries.length > 0) results.insiders = entries;
       }
-    } catch(e) { errors.push('Short Yahoo: ' + e.message); }
+    } catch(e) { results.errors.push('SEC CIK: ' + e.message); }
   }
 
-  // ── 5. INSTITUTIONAL OWNERSHIP — Yahoo ────────────────────────
-  try {
-    const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${ticker}?modules=institutionOwnership,majorHoldersBreakdown`;
-    const r = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0' },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (r.ok) {
-      const data = await r.json();
-      const result = data?.quoteSummary?.result?.[0];
-      const holders = result?.majorHoldersBreakdown;
-      const inst = result?.institutionOwnership?.ownershipList?.slice(0,5) || [];
-      if (holders) {
-        results.institutional = {
-          pctInsiders:     holders.insidersPercentHeld?.raw,
-          pctInstitutions: holders.institutionsPercentHeld?.raw,
-          topHolders: inst.map(h => ({
-            name:    h.organization,
-            pct:     h.pctHeld?.raw,
-            shares:  h.position?.raw,
-            value:   h.value?.raw,
-            change:  h.pctChange?.raw,
-          })),
-        };
-      }
-    }
-  } catch(e) { errors.push('Institutional: ' + e.message); }
-
   return res.status(200).json({
-    ticker: ticker.toUpperCase(),
+    ticker: T,
     timestamp: new Date().toISOString(),
-    insiders:     results.insiders     || [],
-    shortInterest: results.shortInterest || null,
-    institutional: results.institutional || null,
-    errors,
+    ...results,
   });
 }
 
-function getDateToday() {
-  return new Date().toISOString().slice(0,10);
-}
-function getDateDaysAgo(days) {
-  const d = new Date();
-  d.setDate(d.getDate() - days);
+function today() { return new Date().toISOString().slice(0,10); }
+function daysAgo(n) {
+  const d = new Date(); d.setDate(d.getDate()-n);
   return d.toISOString().slice(0,10);
 }
