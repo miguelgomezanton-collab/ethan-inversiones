@@ -119,20 +119,19 @@ async function fetchHistory(ticker){
 // ── Condiciones M+S del sistema ETHAN ─────────
 function checkCondicionMensual(M,i){
   if(i<1)return false;
-  const mm=macd(M.C),s89=stoch(M.H,M.L,M.C,89),s8=stoch(M.H,M.L,M.C,8),r14=rsi(M.C,14),e10=ema(M.C,10);
+  const mm=macd(M.C),s89=stoch(M.H,M.L,M.C,89),r14=rsi(M.C,14),e10=ema(M.C,10);
   const macdOk=mm.m[i]>0&&mm.m[i]>mm.sl[i];
-  const s89Ok=(s89.k[i]>80&&s89.k[i]>s89.d[i])||s89.k[i]>92;
-  const rsiOk=r14[i]>65;
-  const s8Ok=s8.k[i]>78;
+  const s89Ok=s89.k[i]>60; // relajado: antes >80
+  const rsiOk=r14[i]>50;   // relajado: antes >65
   const precioOk=e10[i]!=null&&M.C[i]>e10[i];
-  return macdOk&&s89Ok&&rsiOk&&s8Ok&&precioOk;
+  return macdOk&&s89Ok&&rsiOk&&precioOk;
 }
 function checkCondicionSemanal(W,i){
   if(i<1)return false;
   const wm=macd(W.C),s89=stoch(W.H,W.L,W.C,89),r14=rsi(W.C,14),e20=ema(W.C,20);
   const macdOk=wm.m[i]>0&&wm.m[i]>wm.sl[i];
-  const s89Ok=(s89.k[i]>85&&s89.k[i]>s89.d[i])||s89.k[i]>92;
-  const rsiOk=r14[i]>67;
+  const s89Ok=s89.k[i]>50; // relajado: antes >85
+  const rsiOk=r14[i]>50;   // relajado: antes >67
   const precioOk=e20[i]!=null&&W.C[i]>e20[i];
   return macdOk&&s89Ok&&rsiOk&&precioOk;
 }
@@ -212,39 +211,70 @@ function runBacktest(data,config){
   const M=resampleMonthly(ts,O,H,L,C,V);
   const atrD=atr(H,L,C,14);
 
-  // Precalcular condiciones M+S para cada día
-  // Mapear día → índice semanal y mensual más reciente
+  // Precalcular todos los indicadores UNA SOLA VEZ
+  const m_macd=macd(M.C), m_s89=stoch(M.H,M.L,M.C,89), m_r14=rsi(M.C,14), m_e10=ema(M.C,10);
+  const w_macd=macd(W.C), w_s89=stoch(W.H,W.L,W.C,89), w_r14=rsi(W.C,14), w_e20=ema(W.C,20), w_r5=rsi(W.C,5), w_e5=ema(W.C,5);
+  const d_macd=macd(C), d_r14=rsi(C,14), d_e10=ema(C,10);
+
+  // Precalcular condición M y S para cada índice
+  const condM=M.C.map((_,i)=>{
+    if(i<2||!m_e10[i])return false;
+    return m_macd.m[i]>0&&m_macd.m[i]>m_macd.sl[i]&&m_s89.k[i]>60&&m_r14[i]>50&&M.C[i]>m_e10[i];
+  });
+  const condS=W.C.map((_,i)=>{
+    if(i<2||!w_e20[i])return false;
+    return w_macd.m[i]>0&&w_macd.m[i]>w_macd.sl[i]&&w_s89.k[i]>50&&w_r14[i]>50&&W.C[i]>w_e20[i];
+  });
+
+  // Mapear cada día diario → índice semanal y mensual
+  const dayToWi=new Array(n).fill(0);
+  const dayToMi=new Array(n).fill(0);
+  let lastWi=0, lastMi=0;
+  for(let i=0;i<n;i++){
+    const date=new Date(ts[i]*1000).toISOString().slice(0,10);
+    const monthStr=date.slice(0,7);
+    // Semanal: avanzar hasta que el lastDate de la semana >= date actual
+    while(lastWi<W.dates.length-1){
+      const ld=W.lastDates?W.lastDates[lastWi]:W.dates[lastWi];
+      if(ld>=date)break;
+      lastWi++;
+    }
+    dayToWi[i]=lastWi;
+    // Mensual: avanzar hasta que el mes >= mes actual
+    while(lastMi<M.dates.length-1&&M.dates[lastMi]<monthStr)lastMi++;
+    dayToMi[i]=lastMi;
+  }
+
   const trades=[];
-  let inTrade=false;
-  let entry={};
-  let equityCurve=[{date:new Date(ts[0]*1000).toISOString().slice(0,10),equity:capitalInicial}];
+  let inTrade=false, entry={};
   let capital=capitalInicial;
-  let prevWinRate=0.5; // inicial
+  let equityCurve=[{date:new Date(ts[0]*1000).toISOString().slice(0,10),equity:capitalInicial}];
+  let prevWinRate=0.5;
 
   for(let i=50;i<n;i++){
     const date=new Date(ts[i]*1000).toISOString().slice(0,10);
     const precio=C[i];
-    if(!precio)continue;
-
-    // Encontrar índice semanal y mensual correspondiente
-    const dateStr=date;
-    const wi=W.dates.findIndex((d,idx)=>W.lastDates[idx]>=dateStr||idx===W.dates.length-1);
-    const wIdx=Math.max(0,Math.min(wi,W.C.length-1));
-    const monthStr=date.slice(0,7);
-    const mi=M.dates.findIndex(d=>d>=monthStr);
-    const mIdx=Math.max(0,mi<0?M.C.length-1:mi);
+    if(!precio||isNaN(precio))continue;
+    const wi=dayToWi[i];
+    const mi=dayToMi[i];
 
     if(!inTrade){
-      // Comprobar condiciones M+S
-      const mensualOk=mIdx>=2&&checkCondicionMensual(M,mIdx-1);
-      const semanalOk=wIdx>=2&&checkCondicionSemanal(W,wIdx-1);
-
+      const mensualOk=mi>=2&&condM[mi-1];
+      const semanalOk=wi>=2&&condS[wi-1];
       if(mensualOk&&semanalOk){
-        // Comprobar señal de entrada
         let entrar=false;
-        if(entradaTF==='diario'&&i>0)entrar=checkEntradaDiario(data,i,W,wIdx);
-        else if(entradaTF==='semanal'&&wIdx>0)entrar=checkEntradaSemanal(W,wIdx);
-
+        if(entradaTF==='diario'&&i>1){
+          const sig1=d_macd.m[i]>0&&d_macd.m[i]>d_macd.sl[i]&&d_macd.m[i-1]<=d_macd.sl[i-1]&&d_r14[i]>59;
+          const sig2=w_e5[wi]!=null&&W.C[wi]>w_e5[wi]*0.995&&W.C[wi]<w_e5[wi]*1.02&&w_r14[wi]>50;
+          const sig3=w_s89.k[wi]!=null&&w_s89.k[wi]>85;
+          const sig4=w_r5[wi]!=null&&w_r5[wi]<40;
+          entrar=sig1||sig2||sig3||sig4;
+        } else if(entradaTF==='semanal'&&wi>1){
+          const sig2=w_e5[wi]!=null&&W.C[wi]>w_e5[wi]*0.995&&W.C[wi]<w_e5[wi]*1.02&&w_r14[wi]>50;
+          const sig3=w_s89.k[wi]!=null&&w_s89.k[wi]>85;
+          const sig4=w_r5[wi]!=null&&w_r5[wi]<40;
+          entrar=sig2||sig3||sig4;
+        }
         if(entrar){
           const shares=calcShares(capital,precio,config,atrD[i],prevWinRate);
           if(shares>0&&shares*precio<=capital){
@@ -254,37 +284,25 @@ function runBacktest(data,config){
         }
       }
     } else {
-      // Comprobar salida
       let salir=false;
-      if(salidaTF==='diario')salir=checkSalidaDiario(data,i);
-      else if(salidaTF==='semanal'&&wIdx>0)salir=checkSalidaSemanal(W,wIdx);
-
-      // También salir si rompe condiciones M+S
-      const mensualOk=mIdx>=1&&checkCondicionMensual(M,mIdx-1);
-      const semanalOk=wIdx>=1&&checkCondicionSemanal(W,wIdx-1);
-      if(!mensualOk||!semanalOk)salir=true;
-
+      if(salidaTF==='diario')salir=d_e10[i]!=null&&precio<d_e10[i];
+      else if(salidaTF==='semanal')salir=w_e20[wi]!=null&&W.C[wi]<w_e20[wi];
+      if(mi>=1&&!condM[mi])salir=true;
+      if(wi>=1&&!condS[wi])salir=true;
       if(salir||i===n-1){
         const pnlPct=(precio-entry.precio)/entry.precio*100;
         const pnlAbs=(precio-entry.precio)*entry.shares;
         const dias=Math.round((new Date(date)-new Date(entry.date))/86400000);
         capital+=pnlAbs;
-        trades.push({
-          entryDate:entry.date,exitDate:date,
-          entryPrice:entry.precio,exitPrice:precio,
-          shares:entry.shares,coste:entry.coste,
-          pnlPct,pnlAbs,dias,
-        });
-        prevWinRate=trades.filter(t=>t.pnlPct>0).length/trades.length;
+        trades.push({entryDate:entry.date,exitDate:date,entryPrice:entry.precio,exitPrice:precio,shares:entry.shares,coste:entry.coste,pnlPct,pnlAbs,dias});
+        prevWinRate=trades.filter(t=>t.pnlPct>0).length/Math.max(trades.length,1);
         inTrade=false;
         equityCurve.push({date,equity:capital});
       }
     }
-    // Marcar a mercado si en trade
-    if(inTrade) equityCurve.push({date,equity:capital+(precio-entry.precio)*entry.shares});
+    if(inTrade)equityCurve.push({date,equity:capital+(precio-entry.precio)*entry.shares});
   }
 
-  // Métricas
   const wins=trades.filter(t=>t.pnlPct>0);
   const losses=trades.filter(t=>t.pnlPct<=0);
   const winRate=trades.length?wins.length/trades.length:0;
@@ -294,20 +312,10 @@ function runBacktest(data,config){
   const totalReturn=(capital-capitalInicial)/capitalInicial;
   const buyHold=(C[n-1]-C[50])/C[50];
   const avgDias=trades.length?Math.round(trades.reduce((s,t)=>s+t.dias,0)/trades.length):0;
-
-  // Max Drawdown sobre equity curve
   let peak=capitalInicial,maxDD=0;
-  equityCurve.forEach(p=>{
-    if(p.equity>peak)peak=p.equity;
-    const dd=(peak-p.equity)/peak;
-    if(dd>maxDD)maxDD=dd;
-  });
-
-  return{trades,equityCurve,capital,capitalInicial,
-    winRate,avgWin,avgLoss,profitFactor,totalReturn,buyHold,avgDias,maxDD,
-    nTrades:trades.length};
+  equityCurve.forEach(p=>{if(p.equity>peak)peak=p.equity;const dd=(peak-p.equity)/peak;if(dd>maxDD)maxDD=dd;});
+  return{trades,equityCurve,capital,capitalInicial,winRate,avgWin,avgLoss,profitFactor,totalReturn,buyHold,avgDias,maxDD,nTrades:trades.length};
 }
-
 // ── SVG Equity Curve ──────────────────────────
 function equityChart(curve,capitalInicial){
   if(!curve||curve.length<2)return '';
