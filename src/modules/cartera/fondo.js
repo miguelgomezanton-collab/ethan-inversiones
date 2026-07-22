@@ -374,6 +374,7 @@ async function calcMetricas(fondo, vlActual, history = [], positions = [], capit
     hasHistory,
     serieBase100,
     nPuntos: serieFinal.length,
+    dailyReturns,
   };
 }
 
@@ -661,6 +662,118 @@ export async function render(container, { actionsSlot, savedState }) {
           ${m?.alpha!=null ? mc('Alpha (Jensen)', (m.alpha*100).toFixed(2)+'%', m.alpha>0?'Positivo':'Negativo', m.alpha>0?'good':'bad', 'Retorno del fondo no explicado por el mercado. Alpha>0 = generas valor sobre el benchmark.') : mc('Alpha', 'N/A', null, 'neu', 'Requiere Beta calculada.')}
           ${m?.correlation!=null ? mc('Correlación', m.correlation.toFixed(2), m.correlation>0.8?'Alta':m.correlation>0.5?'Media':'Baja', m.correlation>0.8?'warn':m.correlation>0.5?'neu':'good', 'Correlación entre retornos diarios del fondo y el SP500. <1 = diversificación real.') : mc('Correlación', 'N/A', null, 'neu', 'Requiere Beta calculada.')}
         </div>
+
+        ${(() => {
+          // ── VaR y Monte Carlo ────────────────────
+          if (!m?.dailyReturns || m.dailyReturns.length < 20) return `
+            <div class="fondo-section">VaR & Monte Carlo</div>
+            <div style="background:var(--surface2);border-radius:8px;padding:14px 16px;font-size:11px;color:var(--text3);font-family:var(--mono);">
+              Se necesitan al menos 20 días de retornos para calcular VaR y Monte Carlo. Importa el histórico de precios.
+            </div>`;
+
+          const rets = m.dailyReturns;
+          const sorted = [...rets].sort((a,b)=>a-b);
+          const n = sorted.length;
+          // VaR histórico 95% y 99%
+          const var95 = sorted[Math.floor(n*0.05)];
+          const var99 = sorted[Math.floor(n*0.01)];
+          const var95Eur = var95 * valorCartera;
+          const var99Eur = var99 * valorCartera;
+          // CVaR (Expected Shortfall) 95%
+          const tail95 = sorted.slice(0, Math.floor(n*0.05));
+          const cvar95 = tail95.length ? tail95.reduce((a,b)=>a+b,0)/tail95.length : var95;
+          const cvar95Eur = cvar95 * valorCartera;
+
+          // Monte Carlo — 500 simulaciones, 252 días
+          const mean = rets.reduce((a,b)=>a+b,0)/n;
+          const std = Math.sqrt(rets.reduce((a,r)=>a+(r-mean)**2,0)/n);
+          const SIMS = 500, DAYS = 252;
+          const finals = [];
+          for (let s=0; s<SIMS; s++) {
+            let v = 1;
+            for (let d=0; d<DAYS; d++) {
+              // Box-Muller para normal
+              const u1 = Math.random(), u2 = Math.random();
+              const z = Math.sqrt(-2*Math.log(u1)) * Math.cos(2*Math.PI*u2);
+              v *= (1 + mean + std*z);
+            }
+            finals.push(v);
+          }
+          finals.sort((a,b)=>a-b);
+          const p10 = finals[Math.floor(SIMS*0.10)];
+          const p50 = finals[Math.floor(SIMS*0.50)];
+          const p90 = finals[Math.floor(SIMS*0.90)];
+          const pWorst = finals[Math.floor(SIMS*0.05)];
+
+          // SVG Monte Carlo — histograma simple
+          const bins = 30;
+          const minF = finals[0], maxF = finals[finals.length-1];
+          const binSize = (maxF-minF)/bins;
+          const hist = new Array(bins).fill(0);
+          finals.forEach(v => {
+            const b = Math.min(bins-1, Math.floor((v-minF)/binSize));
+            hist[b]++;
+          });
+          const maxH = Math.max(...hist);
+          const W=820, H=120;
+          const bw = W/bins;
+          const bars = hist.map((h,i) => {
+            const x = i*bw;
+            const bh = (h/maxH)*H;
+            const val = minF + i*binSize;
+            const col = val < 1 ? '#f47174' : val > 1 ? '#40d9c0' : '#fbbf24';
+            return `<rect x="${x.toFixed(1)}" y="${(H-bh).toFixed(1)}" width="${(bw-1).toFixed(1)}" height="${bh.toFixed(1)}" fill="${col}" opacity="0.7"/>`;
+          }).join('');
+          const base1X = ((1-minF)/(maxF-minF)*W).toFixed(1);
+          const p10X  = ((p10-minF)/(maxF-minF)*W).toFixed(1);
+          const p90X  = ((p90-minF)/(maxF-minF)*W).toFixed(1);
+
+          return `
+          <div class="fondo-section">Value at Risk (VaR histórico)</div>
+          <div class="fondo-metrics" style="margin-bottom:8px;">
+            ${mc('VaR 95% (1 día)', fmtPct(var95*100), 'Hist. 95%', 'bad', `Con 95% de confianza, no perderás más de ${fmtE(Math.abs(var95Eur))} en un día.`)}
+            ${mc('VaR 99% (1 día)', fmtPct(var99*100), 'Hist. 99%', 'bad', `Con 99% de confianza, no perderás más de ${fmtE(Math.abs(var99Eur))} en un día.`)}
+            ${mc('CVaR 95%', fmtPct(cvar95*100), 'Expected Shortfall', 'bad', `Pérdida media esperada en el peor 5% de los días. También llamado Expected Shortfall.`)}
+            ${mc('VaR 95% mensual', fmtPct(var95*Math.sqrt(21)*100), 'Escalado √21', 'warn', `VaR diario escalado a 21 días hábiles por la raíz del tiempo.`)}
+          </div>
+          <div style="background:var(--surface2);border-radius:6px;padding:10px 14px;font-size:10px;color:var(--text3);margin-bottom:16px;font-family:var(--mono);">
+            Basado en ${n} retornos diarios históricos reales del VL · Método histórico (no asume distribución normal)
+          </div>
+
+          <div class="fondo-section">Monte Carlo — Proyección 12 meses</div>
+          <div class="fondo-metrics" style="margin-bottom:12px;">
+            ${mc('Escenario Optimista (P90)', fmtPct((p90-1)*100), '+'+fmtE((p90-1)*valorCartera), 'good', `El 10% de las simulaciones superan este resultado. Valor cartera: ${fmtE(p90*valorCartera)}`)}
+            ${mc('Escenario Base (P50)', fmtPct((p50-1)*100), fmtE((p50-1)*valorCartera), (p50-1)>=0?'good':'bad', `Mediana de 500 simulaciones. Valor cartera esperado: ${fmtE(p50*valorCartera)}`)}
+            ${mc('Escenario Pesimista (P10)', fmtPct((p10-1)*100), fmtE((p10-1)*valorCartera), 'bad', `El 90% de las simulaciones superan este resultado. Valor cartera: ${fmtE(p10*valorCartera)}`)}
+            ${mc('Tail Risk (P5)', fmtPct((pWorst-1)*100), fmtE((pWorst-1)*valorCartera), 'bad', `El peor 5% de escenarios. Pérdida máxima esperada en escenario de estrés a 12 meses.`)}
+          </div>
+
+          <!-- Histograma Monte Carlo -->
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:16px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+              <div style="font-size:12px;font-weight:600;">Distribución de resultados — ${SIMS} simulaciones · ${DAYS} días</div>
+              <div style="font-size:10px;color:var(--text3);font-family:var(--mono);">μ=${fmtPct(mean*252*100)} · σ=${fmtPct(std*Math.sqrt(252)*100)} anualizado</div>
+            </div>
+            <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;display:block;">
+              ${bars}
+              <line x1="${base1X}" y1="0" x2="${base1X}" y2="${H}" stroke="var(--text3)" stroke-width="1.5" stroke-dasharray="4,4"/>
+              <text x="${parseFloat(base1X)+4}" y="14" font-family="IBM Plex Mono" font-size="9" fill="var(--text3)">Base 100</text>
+              <line x1="${p10X}" y1="0" x2="${p10X}" y2="${H}" stroke="#f47174" stroke-width="1.5" stroke-dasharray="3,3"/>
+              <text x="${parseFloat(p10X)+4}" y="28" font-family="IBM Plex Mono" font-size="9" fill="#f47174">P10</text>
+              <line x1="${p90X}" y1="0" x2="${p90X}" y2="${H}" stroke="#40d9c0" stroke-width="1.5" stroke-dasharray="3,3"/>
+              <text x="${parseFloat(p90X)+4}" y="28" font-family="IBM Plex Mono" font-size="9" fill="#40d9c0">P90</text>
+            </svg>
+            <div style="display:flex;gap:20px;margin-top:10px;font-size:10px;font-family:var(--mono);color:var(--text3);">
+              <span style="color:#f47174;">■ Pérdida</span>
+              <span style="color:#fbbf24;">■ Neutral</span>
+              <span style="color:#40d9c0;">■ Ganancia</span>
+              <span style="margin-left:auto;">Retorno anual esperado: <strong style="color:${(p50-1)>=0?'var(--green)':'var(--red)'};">${fmtPct((p50-1)*100)}</strong></span>
+            </div>
+          </div>
+          <div style="background:var(--surface2);border-radius:6px;padding:10px 14px;font-size:10px;color:var(--text3);font-family:var(--mono);">
+            ⚠ Monte Carlo asume distribución normal de retornos con media y desviación histórica. Los resultados son ilustrativos — los mercados tienen colas más gruesas de lo que el modelo predice.
+          </div>`;
+        })()}
       </div>
 
       <!-- ══ TAB TRADING ══ -->
