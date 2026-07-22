@@ -376,7 +376,7 @@ export default async function handler(req, res) {
     fetchVIX(),
     fetchCurvaEUR(),
     fred('BAMLH0A0HYM2', key, 5),
-    fred('T1YIE',        key, 10),   // Breakeven 1Y — más obs por si hay huecos recientes
+    fred('T1YIE',        key, 30),   // Breakeven 1Y — más obs por si hay huecos recientes
     fred('T5YIE',        key, 10),   // Breakeven 5Y
     fred('T5YIFR',       key, 10),   // Breakeven 5Y forward rate (alternativa)
     yahoo('CL%3DF'),
