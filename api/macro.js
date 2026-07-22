@@ -364,7 +364,7 @@ export default async function handler(req, res) {
     rFg, rVix, rCurvaEUR,
     rHy, rBreakeven1y, rBreakeven5y, rBreakeven5yAlt,
     rWti, rBrent, rM2v, rWresbal,
-    rLeiFreд, rTotll, rGdp,
+    rLeiFreд, rTotll, rGdp, rMich,
   ] = await Promise.allSettled([
     fred('DGS10',        key, 5),
     fred('DGS2',         key, 5),
@@ -376,7 +376,7 @@ export default async function handler(req, res) {
     fetchVIX(),
     fetchCurvaEUR(),
     fred('BAMLH0A0HYM2', key, 5),
-    fred('T1YIE',        key, 30),   // Breakeven 1Y — más obs por si hay huecos recientes
+    fred('T1YIE',        key, 60),   // Breakeven 1Y — 60 obs para cubrir meses sin datos
     fred('T5YIE',        key, 10),   // Breakeven 5Y
     fred('T5YIFR',       key, 10),   // Breakeven 5Y forward rate (alternativa)
     yahoo('CL%3DF'),
@@ -386,6 +386,7 @@ export default async function handler(req, res) {
     fred('USSLIND',      key, 14),
     fred('TOTLL',        key, 14),
     fred('GDP',          key, 6),
+    fred('MICH',         key, 10),   // Univ. Michigan 1Y inflation expectations (fallback)
   ]);
 
   // M2 Global en paralelo pero con timeout propio para no bloquear el resto
@@ -598,11 +599,17 @@ export default async function handler(req, res) {
     hySpread: rHy.status === 'fulfilled' && rHy.value[0]
       ? { value: rHy.value[0].value, date: rHy.value[0].date } : null,
     breakeven1y: (() => {
+      // Primero T1YIE (breakeven de mercado)
       if (rBreakeven1y.status === 'fulfilled') {
         const valid = rBreakeven1y.value.find(o => o.value != null && !isNaN(o.value));
         if (valid) return { value: valid.value, date: valid.date };
       }
-      errs.push('T1YIE: sin datos válidos');
+      // Fallback: MICH (Univ. Michigan 1Y inflation expectations)
+      if (rMich?.status === 'fulfilled') {
+        const valid = rMich.value.find(o => o.value != null && !isNaN(o.value));
+        if (valid) return { value: valid.value, date: valid.date, series: 'MICH' };
+      }
+      errs.push('T1YIE+MICH: sin datos válidos');
       return null;
     })(),
     breakeven5y: (() => {
