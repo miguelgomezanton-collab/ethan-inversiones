@@ -279,14 +279,18 @@ async function calcMetricas(fondo, vlActual, history = [], positions = [], capit
   const drawdownActual = peak > 0 ? (vlActual - peak) / peak : 0;
   const calmar = maxDD > 0 ? annReturn / maxDD : null;
 
-  // Retornos diarios para Sharpe, Sortino, Volatilidad
+  // Retornos diarios para Sharpe, Sortino, Volatilidad, Beta
   const dailyReturns = [];
+  const dailyDates = [];
   for (let i = 1; i < serieFinal.length; i++) {
     const prev = serieFinal[i-1][1], cur = serieFinal[i][1];
-    if (prev > 0 && cur > 0) dailyReturns.push((cur - prev) / prev);
+    if (prev > 0 && cur > 0) {
+      dailyReturns.push((cur - prev) / prev);
+      dailyDates.push(serieFinal[i][0]);
+    }
   }
 
-  let sharpe = null, sortino = null, annVol = null;
+  let sharpe = null, sortino = null, annVol = null, beta = null, alpha = null, correlation = null;
   if (dailyReturns.length >= 10) {
     const mean = dailyReturns.reduce((a, b) => a + b, 0) / dailyReturns.length;
     const variance = dailyReturns.reduce((a, r) => a + (r - mean) ** 2, 0) / dailyReturns.length;
@@ -296,6 +300,38 @@ async function calcMetricas(fondo, vlActual, history = [], positions = [], capit
     if (downR.length > 0) {
       const downVol = Math.sqrt(downR.reduce((a, r) => a + r * r, 0) / downR.length * 252);
       sortino = downVol > 0 ? annReturn / downVol : null;
+    }
+
+    // Beta vs SPY — leer histórico de SPY de Firestore
+    const spyHist = await UserData.get('ethan_px_hist_SPY') || {};
+    const spyReturns = [];
+    const fondoReturnsSPY = [];
+    dailyDates.forEach((date, i) => {
+      // Buscar el día anterior en la serie
+      const prevDate = serieFinal[i]?.[0];
+      if (!prevDate) return;
+      const spyCur = spyHist[date];
+      const spyPrev = spyHist[prevDate];
+      if (spyCur && spyPrev && spyPrev > 0) {
+        spyReturns.push((spyCur - spyPrev) / spyPrev);
+        fondoReturnsSPY.push(dailyReturns[i]);
+      }
+    });
+
+    if (spyReturns.length >= 10) {
+      const meanF = fondoReturnsSPY.reduce((a,b)=>a+b,0)/fondoReturnsSPY.length;
+      const meanS = spyReturns.reduce((a,b)=>a+b,0)/spyReturns.length;
+      const cov = fondoReturnsSPY.reduce((a,r,i)=>a+(r-meanF)*(spyReturns[i]-meanS),0)/fondoReturnsSPY.length;
+      const varSPY = spyReturns.reduce((a,r)=>a+(r-meanS)**2,0)/spyReturns.length;
+      beta = varSPY > 0 ? cov / varSPY : null;
+      // Alpha de Jensen = retorno anualizado fondo - (rf + beta*(retorno SPY - rf))
+      const spyAnnReturn = Math.pow(1 + meanS, 252) - 1;
+      const rf = 0.05; // tasa libre de riesgo ~5%
+      alpha = beta != null ? annReturn - (rf + beta * (spyAnnReturn - rf)) : null;
+      // Correlación
+      const stdF = Math.sqrt(fondoReturnsSPY.reduce((a,r)=>a+(r-meanF)**2,0)/fondoReturnsSPY.length);
+      const stdS = Math.sqrt(varSPY);
+      correlation = stdF > 0 && stdS > 0 ? cov / (stdF * stdS) : null;
     }
   }
 
@@ -323,7 +359,7 @@ async function calcMetricas(fondo, vlActual, history = [], positions = [], capit
     participaciones,
     maxHistoricoVL: peak,
     drawdownActual, ddDate, maxDD, calmar,
-    sharpe, sortino, annVol,
+    sharpe, sortino, annVol, beta, alpha, correlation,
     ytd, mtd,
     hasHistory,
     serieBase100,
@@ -568,6 +604,13 @@ export async function render(container, { actionsSlot, savedState }) {
           ${mc('Calmar Ratio', m?.calmar!=null?m.calmar.toFixed(2):'N/A', m?.calmar!=null?(m.calmar>=1?'Bueno':'Vigilar'):null, m?.calmar!=null?(m.calmar>=1?'good':'warn'):'neu', 'CAGR / Máx. Drawdown histórico. >1 = el retorno compensa el peor dolor sufrido.')}
           ${m?.annVol!=null ? mc('Volatilidad Anual.', (m.annVol*100).toFixed(1)+'%', m.annVol<0.15?'Contenida':m.annVol<0.25?'Moderada':'Alta', m.annVol<0.15?'good':m.annVol<0.25?'warn':'bad', 'Desviación estándar retornos diarios del VL × √252. Referencia: SP500 ~15-20%/año.') : mc('Volatilidad Anual.', 'N/A', null, 'neu', 'Importa el histórico de precios para calcular.')}
           ${mc('Días activo', m?.nDays!=null?m.nDays+'d':'—', null, 'neu', `Desde el ${fmtDate(m?.startDate)} · ${m?.tradingDays||0} sesiones · ${m?.nPuntos||0} puntos en la serie VL.`)}
+        </div>
+
+        <div class="fondo-section">Beta vs SPY</div>
+        <div class="fondo-metrics">
+          ${m?.beta!=null ? mc('Beta', m.beta.toFixed(2), m.beta<0.8?'Defensivo':m.beta<1.2?'Mercado':'Agresivo', m.beta<0.8?'good':m.beta<1.2?'neu':'warn', `Sensibilidad del fondo vs SP500. Beta=1 = se mueve igual que el mercado. Calculada con ${m?.nPuntos||0} sesiones.`) : `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px 20px;"><div style="font-family:var(--mono);font-size:10px;color:var(--text3);margin-bottom:10px;">BETA VS SPY</div><div style="font-family:var(--mono);font-size:22px;font-weight:500;margin-bottom:6px;">N/A</div><div style="font-size:10.5px;color:var(--text3);line-height:1.55;">Importa el histórico de SPY para calcular. <button class="btn btn-primary" id="fondo-import-spy" style="font-size:9px;padding:4px 10px;margin-left:8px;">📥 Importar SPY</button></div></div>`}
+          ${m?.alpha!=null ? mc('Alpha (Jensen)', (m.alpha*100).toFixed(2)+'%', m.alpha>0?'Positivo':'Negativo', m.alpha>0?'good':'bad', 'Retorno del fondo no explicado por el mercado. Alpha>0 = generas valor sobre el benchmark.') : mc('Alpha', 'N/A', null, 'neu', 'Requiere Beta calculada.')}
+          ${m?.correlation!=null ? mc('Correlación', m.correlation.toFixed(2), m.correlation>0.8?'Alta':m.correlation>0.5?'Media':'Baja', m.correlation>0.8?'warn':m.correlation>0.5?'neu':'good', 'Correlación entre retornos diarios del fondo y el SP500. <1 = diversificación real.') : mc('Correlación', 'N/A', null, 'neu', 'Requiere Beta calculada.')}
         </div>
       </div>
 
@@ -824,7 +867,20 @@ export async function render(container, { actionsSlot, savedState }) {
     document.getElementById('mov-importe')?.addEventListener('input', previewMov);
     document.getElementById('mov-tipo')?.addEventListener('change', previewMov);
 
-    // Eliminar movimiento
+    // Importar SPY para Beta
+    document.getElementById('fondo-import-spy')?.addEventListener('click', async () => {
+      const btn = document.getElementById('fondo-import-spy');
+      btn.disabled = true; btn.textContent = '⏳ Importando SPY...';
+      try {
+        const days = await fetchYahooHistory('SPY', fondo?.movimientos?.[0]?.date || '2024-01-01', new Date().toISOString().slice(0,10));
+        await saveHistoryToFirestore('SPY', days, 'active');
+        btn.textContent = `✓ ${days.length} días importados`;
+        setTimeout(() => load(), 2000);
+      } catch(e) {
+        btn.textContent = '⚠ Error: ' + e.message.slice(0,30);
+        btn.disabled = false;
+      }
+    });
     el.querySelectorAll('.fondo-del-mov').forEach(btn => {
       btn.addEventListener('click', async () => {
         const idx = parseInt(btn.dataset.idx);
