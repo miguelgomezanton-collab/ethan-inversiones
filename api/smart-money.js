@@ -1,5 +1,5 @@
 // /api/smart-money.js
-// Insider Trading (SEC EDGAR) + Short Interest + Institutional (Yahoo)
+// Insider Trading (SEC EDGAR Form 4 con detalle) + Short Interest + Institutional (Yahoo)
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -11,24 +11,23 @@ export default async function handler(req, res) {
 
   // ── 1. SHORT INTEREST + INSTITUTIONAL — Yahoo Finance ──────────
   try {
+    const modules = 'defaultKeyStatistics,majorHoldersBreakdown,institutionOwnership';
     const r = await fetch(
-      `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${T}?modules=defaultKeyStatistics,majorHoldersBreakdown,institutionOwnership`,
-      { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(10000) }
+      `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${T}?modules=${modules}`,
+      { headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' }, signal: AbortSignal.timeout(12000) }
     );
     if (r.ok) {
       const data = await r.json();
       const result = data?.quoteSummary?.result?.[0];
-      const stats  = result?.defaultKeyStatistics;
+      const stats   = result?.defaultKeyStatistics;
       const holders = result?.majorHoldersBreakdown;
       const instOwn = result?.institutionOwnership;
-
       if (stats) {
         results.shortInterest = {
-          date:        'Yahoo Finance',
           shortFloat:  stats.shortPercentOfFloat?.raw ?? null,
           daysTocover: stats.shortRatio?.raw ?? null,
           shortVolume: stats.sharesShort?.raw ?? null,
-          sharesOut:   stats.sharesOutstanding?.raw ?? null,
+          source: 'Yahoo Finance',
         };
       }
       if (holders) {
@@ -44,74 +43,103 @@ export default async function handler(req, res) {
           })),
         };
       }
+    } else {
+      results.errors.push(`Yahoo HTTP ${r.status}`);
     }
   } catch(e) { results.errors.push('Yahoo: ' + e.message); }
 
-  // ── 2. INSIDER TRADING — SEC EDGAR full-text search ────────────
+  // ── 2. INSIDER TRADING — SEC EDGAR + detalle de cada filing ────
   try {
-    // Buscar filings Form 4 del ticker en SEC EDGAR
-    const url = `https://efts.sec.gov/LATEST/search-index?q=%22${T}%22&forms=4&dateRange=custom&startdt=${daysAgo(180)}&enddt=${today()}`;
-    const r = await fetch(url, {
-      headers: {
-        'User-Agent': 'ETHAN-Research contact@ethan.com',
-        'Accept': 'application/json',
-      },
+    // Obtener lista de Form 4 recientes via SEC EDGAR RSS
+    const rssUrl = `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&company=&CIK=${T}&type=4&dateb=&owner=include&count=10&search_text=&output=atom`;
+    const r = await fetch(rssUrl, {
+      headers: { 'User-Agent': 'ETHAN-Research contact@ethan.com', 'Accept': 'application/atom+xml' },
       signal: AbortSignal.timeout(10000),
     });
-    if (r.ok) {
-      const data = await r.json();
-      const hits = data.hits?.hits || [];
-      results.insiders = hits.slice(0, 8).map(h => {
-        const s = h._source || {};
-        return {
-          date:    s.period_of_report || s.file_date || '',
-          insider: s.display_names?.[0] || s.entity_name || '—',
-          title:   '—',
-          type:    '—',
-          qty:     null,
-          price:   '—',
-          value:   '—',
-          fileUrl: s.file_date ? `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&type=4&dateb=&owner=include&count=10&search_text=` : '',
-        };
-      });
-    }
-  } catch(e) { results.errors.push('SEC EDGAR search: ' + e.message); }
 
-  // ── 3. INSIDER TRADING — SEC EDGAR por CIK ─────────────────────
-  if (results.insiders.length === 0) {
-    try {
-      // Primero obtener el CIK del ticker
-      const cikRes = await fetch(
-        `https://www.sec.gov/cgi-bin/browse-edgar?company=&CIK=${T}&type=4&dateb=&owner=include&count=10&search_text=&action=getcompany&output=atom`,
-        { headers: { 'User-Agent': 'ETHAN-Research contact@ethan.com' }, signal: AbortSignal.timeout(8000) }
-      );
-      if (cikRes.ok) {
-        const xml = await cikRes.text();
-        // Extraer entradas del feed Atom
-        const entries = [];
-        const entryRegex = /<entry>([\s\S]*?)<\/entry>/g;
-        let match;
-        while ((match = entryRegex.exec(xml)) !== null && entries.length < 6) {
-          const entry = match[1];
-          const title  = (/<title>([\s\S]*?)<\/title>/.exec(entry)?.[1] || '').replace(/<[^>]+>/g,'').trim();
-          const updated= (/<updated>(.*?)<\/updated>/.exec(entry)?.[1] || '').slice(0,10);
-          const link   = (/<link[^>]+href="([^"]+)"/.exec(entry)?.[1] || '');
-          if (title && updated) entries.push({ date: updated, insider: title, type: 'Form 4', title2: '', qty: null, price: '—', value: '—', fileUrl: link });
-        }
-        if (entries.length > 0) results.insiders = entries;
+    if (!r.ok) throw new Error(`SEC RSS HTTP ${r.status}`);
+    const xml = await r.text();
+
+    // Extraer accession numbers de los filings
+    const filingLinks = [];
+    const linkRegex = /<accession-number>(.*?)<\/accession-number>|href="([^"]+\/Archives\/[^"]+\.txt)"/g;
+
+    // Método alternativo: extraer URLs de los índices de filing
+    const indexRegex = /href="(\/Archives\/edgar\/data\/\d+\/\d+\/-index\.htm)"/g;
+    let m;
+    while ((m = indexRegex.exec(xml)) !== null && filingLinks.length < 6) {
+      filingLinks.push('https://www.sec.gov' + m[1]);
+    }
+
+    // Si no encontramos índices, extraer de los links de la entrada
+    if (filingLinks.length === 0) {
+      const linkRegex2 = /<link[^>]+href="(https:\/\/www\.sec\.gov\/Archives\/[^"]+)"/g;
+      while ((m = linkRegex2.exec(xml)) !== null && filingLinks.length < 6) {
+        filingLinks.push(m[1]);
       }
-    } catch(e) { results.errors.push('SEC CIK: ' + e.message); }
-  }
+    }
+
+    // Parsear cada filing para obtener tipo y cantidad
+    const insiderPromises = filingLinks.slice(0, 5).map(async (link) => {
+      try {
+        const fr = await fetch(link, {
+          headers: { 'User-Agent': 'ETHAN-Research contact@ethan.com' },
+          signal: AbortSignal.timeout(6000),
+        });
+        if (!fr.ok) return null;
+        const html = await fr.text();
+
+        // Extraer datos básicos del Form 4
+        const dateMatch = html.match(/Period of Report[:\s<>\/td]*(\d{4}-\d{2}-\d{2})/i);
+        const nameMatch = html.match(/Reporting Owner[:\s\S]{0,200}?<td[^>]*>([^<]{3,50})<\/td>/i) ||
+                         html.match(/<reportingOwnerId>[\s\S]*?<rptOwnerName>(.*?)<\/rptOwnerName>/i);
+        const titleMatch= html.match(/Officer Title[:\s<>\/td]*<td[^>]*>([^<]{2,50})<\/td>/i) ||
+                         html.match(/<officerTitle>(.*?)<\/officerTitle>/i);
+
+        // Detectar tipo de transacción
+        const isBuy  = /P\b|Purchase|Acquisition/i.test(html);
+        const isSell = /S\b|Sale|Disposition/i.test(html) && !isBuy;
+
+        // Cantidad y precio
+        const qtyMatch   = html.match(/(\d[\d,]+)\s*<\/td>[\s\S]{0,100}?(?:Common Stock|Ordinary Share)/i);
+        const priceMatch = html.match(/\$\s*([\d.]+)/);
+
+        return {
+          date:    dateMatch?.[1] || '',
+          insider: nameMatch?.[1]?.trim() || '—',
+          title:   titleMatch?.[1]?.trim() || '—',
+          type:    isBuy ? 'Compra' : isSell ? 'Venta' : '—',
+          qty:     qtyMatch ? parseInt(qtyMatch[1].replace(/,/g,'')) : null,
+          price:   priceMatch ? '$'+priceMatch[1] : '—',
+          value:   '—',
+        };
+      } catch { return null; }
+    });
+
+    const parsed = (await Promise.all(insiderPromises)).filter(Boolean);
+
+    // Fallback: usar datos del RSS si no pudimos parsear los filings
+    if (parsed.length === 0) {
+      const entryRegex = /<entry>([\s\S]*?)<\/entry>/g;
+      while ((m = entryRegex.exec(xml)) !== null && results.insiders.length < 8) {
+        const entry = m[1];
+        const title   = (/<title>([\s\S]*?)<\/title>/.exec(entry)?.[1]||'').replace(/<[^>]+>/g,'').trim();
+        const updated = (/<updated>(.*?)<\/updated>/.exec(entry)?.[1]||'').slice(0,10);
+        // Limpiar CIK del nombre
+        const cleanName = title.replace(/\s*\(CIK.*?\)/g,'').trim();
+        if (cleanName && updated) {
+          results.insiders.push({ date: updated, insider: cleanName, title: '—', type: '—', qty: null, price: '—', value: '—' });
+        }
+      }
+    } else {
+      results.insiders = parsed.filter(p => p.date);
+    }
+
+  } catch(e) { results.errors.push('SEC: ' + e.message); }
 
   return res.status(200).json({
     ticker: T,
     timestamp: new Date().toISOString(),
     ...results,
   });
-}
-
-function today() { return new Date().toISOString().slice(0,10); }
-function daysAgo(n) {
-  const d = new Date(); d.setDate(d.getDate()-n);
-  return d.toISOString().slice(0,10);
 }
