@@ -290,7 +290,7 @@ async function calcMetricas(fondo, vlActual, history = [], positions = [], capit
     }
   }
 
-  let sharpe = null, sortino = null, annVol = null, beta = null, alpha = null, correlation = null;
+  let sharpe = null, sortino = null, annVol = null, beta = null, alpha = null, correlation = null, spyStats = null;
   if (dailyReturns.length >= 10) {
     const mean = dailyReturns.reduce((a, b) => a + b, 0) / dailyReturns.length;
     const variance = dailyReturns.reduce((a, r) => a + (r - mean) ** 2, 0) / dailyReturns.length;
@@ -324,14 +324,23 @@ async function calcMetricas(fondo, vlActual, history = [], positions = [], capit
       const cov = fondoReturnsSPY.reduce((a,r,i)=>a+(r-meanF)*(spyReturns[i]-meanS),0)/fondoReturnsSPY.length;
       const varSPY = spyReturns.reduce((a,r)=>a+(r-meanS)**2,0)/spyReturns.length;
       beta = varSPY > 0 ? cov / varSPY : null;
-      // Alpha de Jensen = retorno anualizado fondo - (rf + beta*(retorno SPY - rf))
       const spyAnnReturn = Math.pow(1 + meanS, 252) - 1;
-      const rf = 0.05; // tasa libre de riesgo ~5%
+      const rf = 0.05;
       alpha = beta != null ? annReturn - (rf + beta * (spyAnnReturn - rf)) : null;
-      // Correlación
       const stdF = Math.sqrt(fondoReturnsSPY.reduce((a,r)=>a+(r-meanF)**2,0)/fondoReturnsSPY.length);
       const stdS = Math.sqrt(varSPY);
       correlation = stdF > 0 && stdS > 0 ? cov / (stdF * stdS) : null;
+      // Métricas SPY para comparativa en cotización
+      spyStats = {
+        volAnual: Math.sqrt(varSPY * 252),
+        twrTotal: spyReturns.reduce((acc, r) => acc * (1 + r), 1) - 1,
+        twrAnual: spyAnnReturn,
+      };
+      // YTD SPY
+      const spyDatesYear = Object.keys(spyHist).filter(d => d.startsWith(today.slice(0,4))).sort();
+      if (spyDatesYear.length >= 2) {
+        spyStats.ytd = (spyHist[spyDatesYear[spyDatesYear.length-1]] - spyHist[spyDatesYear[0]]) / spyHist[spyDatesYear[0]];
+      }
     }
   }
 
@@ -360,6 +369,7 @@ async function calcMetricas(fondo, vlActual, history = [], positions = [], capit
     maxHistoricoVL: peak,
     drawdownActual, ddDate, maxDD, calmar,
     sharpe, sortino, annVol, beta, alpha, correlation,
+    spyStats,
     ytd, mtd,
     hasHistory,
     serieBase100,
@@ -560,6 +570,44 @@ export async function render(container, { actionsSlot, savedState }) {
 
         <!-- Métricas detalladas -->
         <div class="fondo-section">Rentabilidad</div>
+
+        ${m?.spyStats ? `
+        <!-- Comparativa Fondo vs SPY -->
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:16px;">
+          <table style="width:100%;border-collapse:collapse;font-size:12px;">
+            <thead><tr style="background:var(--surface2);">
+              <th style="padding:10px 16px;text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);border-bottom:1px solid var(--border);">Métrica</th>
+              <th style="padding:10px 16px;text-align:right;font-size:9px;text-transform:uppercase;letter-spacing:0.1em;color:var(--teal);border-bottom:1px solid var(--border);">Fondo ETHAN</th>
+              <th style="padding:10px 16px;text-align:right;font-size:9px;text-transform:uppercase;letter-spacing:0.1em;color:var(--blue);border-bottom:1px solid var(--border);">SPY</th>
+              <th style="padding:10px 16px;text-align:right;font-size:9px;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);border-bottom:1px solid var(--border);">Diferencia</th>
+            </tr></thead>
+            <tbody>
+              ${[
+                ['TWR (período)', m.totalReturn*100, m.spyStats.twrTotal*100, '%'],
+                ['YTD', m.ytd!=null?m.ytd*100:null, m.spyStats.ytd!=null?m.spyStats.ytd*100:null, '%'],
+                ['Volatilidad anual', m.annVol!=null?m.annVol*100:null, m.spyStats.volAnual*100, '%'],
+              ].map(([label, fondo, spy, unit]) => {
+                if (fondo == null || spy == null) return '';
+                const diff = fondo - spy;
+                const diffCol = diff >= 0 ? 'var(--green)' : 'var(--red)';
+                const fmt = v => v != null ? (v >= 0 ? '+' : '') + v.toFixed(2) + unit : '—';
+                const fondoCol = label === 'Volatilidad anual'
+                  ? (fondo < spy ? 'var(--green)' : 'var(--red)')
+                  : (fondo >= spy ? 'var(--green)' : 'var(--red)');
+                return `<tr>
+                  <td style="padding:10px 16px;border-bottom:1px solid var(--border);color:var(--text2);">${label}</td>
+                  <td style="padding:10px 16px;border-bottom:1px solid var(--border);text-align:right;font-family:var(--mono);font-weight:700;color:${fondoCol};">${fmt(fondo)}</td>
+                  <td style="padding:10px 16px;border-bottom:1px solid var(--border);text-align:right;font-family:var(--mono);color:var(--text2);">${fmt(spy)}</td>
+                  <td style="padding:10px 16px;border-bottom:1px solid var(--border);text-align:right;font-family:var(--mono);font-weight:700;color:${diffCol};">${fmt(diff)}</td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>` : m?.beta == null ? `
+        <div style="font-size:10px;color:var(--text3);background:var(--surface2);border-radius:6px;padding:10px 14px;margin-bottom:16px;font-family:var(--mono);">
+          Importa el histórico de SPY en la pestaña Riesgo para ver la comparativa con el benchmark
+        </div>` : ''}
+
         <div class="fondo-metrics">
           ${mc('YTD', fmtPct(((m?.ytd)||0)*100), null, 'neu', 'Rentabilidad acumulada desde el 1 de enero del año en curso.')}
           ${mc('MTD', m?.mtd!=null?fmtPct(m.mtd*100):'—', null, 'neu', 'Rentabilidad del mes en curso. Requiere snapshot fin de mes anterior.')}
