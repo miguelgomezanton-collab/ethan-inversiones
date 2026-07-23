@@ -7,7 +7,7 @@ async function getLatestVideos(n = 5) {
   // Intentar con handle primero, luego con channel ID
   const urls = [
     'https://www.youtube.com/feeds/videos.xml?user=JoseLuisCavatv',
-    'https://www.youtube.com/feeds/videos.xml?channel_id=UCjTfnOFcGW3n3M0WKXpZS0Q',
+    'https://www.youtube.com/feeds/videos.xml?channel_id=UC6cpU68F1BiwwXoAC3sgcGQ',
   ];
 
   // Intentar obtener el channel ID real via la página del canal
