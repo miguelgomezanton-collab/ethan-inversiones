@@ -1,64 +1,116 @@
-// /api/smart-money.js — Smart Money via Claude AI + web search
+// /api/smart-money.js — Smart Money Intelligence
+// Yahoo Finance (crumb+cookies) + SEC EDGAR Form 4
 
-async function askClaude(prompt, apiKey) {
-  const r = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 1500,
-      messages: [{ role: 'user', content: prompt }],
-    }),
+const YF_BASE = 'https://query1.finance.yahoo.com/v10/finance/quoteSummary';
+const BASE_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Accept': '*/*',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Origin': 'https://finance.yahoo.com',
+  'Referer': 'https://finance.yahoo.com/',
+};
+
+async function getYahooCrumb() {
+  const homeRes = await fetch('https://finance.yahoo.com', {
+    headers: { ...BASE_HEADERS, 'Accept': 'text/html' },
+    redirect: 'follow',
   });
-  if (!r.ok) {
-    const errText = await r.text();
-    throw new Error(`Claude API ${r.status}: ${errText.slice(0,300)}`);
-  }
+  const cookie = homeRes.headers.get('set-cookie') || '';
+  const crumbRes = await fetch('https://query1.finance.yahoo.com/v1/test/getcrumb', {
+    headers: { ...BASE_HEADERS, 'Cookie': cookie },
+  });
+  if (!crumbRes.ok) throw new Error(`Crumb HTTP ${crumbRes.status}`);
+  const crumb = await crumbRes.text();
+  return { crumb, cookie };
+}
+
+async function fetchYahooModules(ticker, modules, crumb, cookie) {
+  const url = `${YF_BASE}/${ticker}?modules=${modules.join(',')}&crumb=${encodeURIComponent(crumb)}`;
+  const r = await fetch(url, {
+    headers: { ...BASE_HEADERS, 'Cookie': cookie },
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!r.ok) throw new Error(`Yahoo HTTP ${r.status}`);
   const data = await r.json();
-  const text = data.content?.find(b => b.type === 'text')?.text || '{}';
-  const clean = text.replace(/```json\n?|```\n?/g,'').trim();
-  try { return JSON.parse(clean); }
-  catch {
-    const m = clean.match(/\{[\s\S]*\}/);
-    if (m) try { return JSON.parse(m[0]); } catch {}
-    return {};
-  }
+  const result = data?.quoteSummary?.result?.[0];
+  if (!result) throw new Error('Sin datos de Yahoo');
+  return result;
 }
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   const { ticker, section } = req.query;
   if (!ticker) return res.status(400).json({ error: 'ticker requerido' });
-
   const T = ticker.toUpperCase();
-  const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) return res.status(500).json({ error: 'ANTHROPIC_API_KEY no configurada' });
 
-  try {
-    if (section === 'insiders') {
-      const data = await askClaude(
-        `Busca en SEC EDGAR Form 4 las últimas transacciones de insider trading para ${T} en los últimos 6 meses.
-Responde SOLO JSON sin markdown ni texto extra:
-{"insiders":[{"date":"YYYY-MM-DD","insider":"nombre","title":"cargo","type":"Compra","qty":5000,"price":"$185.50","value":"$927K"}]}
-type debe ser exactamente "Compra" o "Venta". Incluye 5-8 transacciones reales.`, key);
-      return res.status(200).json({ ticker: T, insiders: data.insiders || [] });
+  // ── Insiders — SEC EDGAR ──────────────────────────────────────
+  if (section === 'insiders') {
+    try {
+      const url = `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&company=&CIK=${T}&type=4&dateb=&owner=include&count=12&search_text=&output=atom`;
+      const r = await fetch(url, {
+        headers: { 'User-Agent': 'ETHAN-Research contact@ethan.com', 'Accept': 'application/atom+xml' },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!r.ok) throw new Error(`SEC HTTP ${r.status}`);
+      const xml = await r.text();
+
+      const insiders = [];
+      const entryRegex = /<entry>([\s\S]*?)<\/entry>/g;
+      let m;
+      while ((m = entryRegex.exec(xml)) !== null && insiders.length < 8) {
+        const entry = m[1];
+        const title   = (/<title>([\s\S]*?)<\/title>/.exec(entry)?.[1] || '').replace(/<[^>]+>/g,'').trim();
+        const updated = (/<updated>(.*?)<\/updated>/.exec(entry)?.[1] || '').slice(0,10);
+        const link    = (/<link[^>]+href="([^"]+)"/.exec(entry)?.[1] || '');
+        // Limpiar CIK del nombre
+        const name = title.replace(/\s*\(CIK\s*\d+\)/gi,'').trim();
+        if (name && updated) {
+          insiders.push({ date: updated, insider: name, title: '—', type: '—', qty: null, price: '—', value: '—', fileUrl: link });
+        }
+      }
+      return res.status(200).json({ ticker: T, insiders });
+    } catch(e) {
+      return res.status(200).json({ ticker: T, insiders: [], error: e.message });
     }
-
-    if (section === 'market') {
-      const data = await askClaude(
-        `Busca datos actuales de short interest y ownership institucional para ${T}.
-Responde SOLO JSON sin markdown ni texto extra:
-{"shortInterest":{"shortFloat":0.025,"daysTocover":1.8,"shortVolume":120000000},"institutional":{"pctInsiders":0.026,"pctInstitutions":0.625,"topHolders":[{"name":"Vanguard","pct":0.085,"shares":1300000000,"change":0.002}]}}
-shortFloat decimal (0.025=2.5%), daysTocover número. Top 5 institucionales reales.`, key);
-      return res.status(200).json({ ticker: T, shortInterest: data.shortInterest || null, institutional: data.institutional || null });
-    }
-
-    return res.status(200).json({ ticker: T, ready: true });
-  } catch(e) {
-    return res.status(200).json({ ticker: T, error: e.message, insiders: [], shortInterest: null, institutional: null });
   }
+
+  // ── Short Interest + Institutional — Yahoo Finance ────────────
+  if (section === 'market') {
+    try {
+      const { crumb, cookie } = await getYahooCrumb();
+      const data = await fetchYahooModules(T,
+        ['defaultKeyStatistics', 'majorHoldersBreakdown', 'institutionOwnership'],
+        crumb, cookie
+      );
+
+      const stats   = data.defaultKeyStatistics;
+      const holders = data.majorHoldersBreakdown;
+      const instOwn = data.institutionOwnership;
+
+      return res.status(200).json({
+        ticker: T,
+        shortInterest: stats ? {
+          shortFloat:  stats.shortPercentOfFloat?.raw ?? null,
+          daysTocover: stats.shortRatio?.raw ?? null,
+          shortVolume: stats.sharesShort?.raw ?? null,
+          source: 'Yahoo Finance',
+        } : null,
+        institutional: holders ? {
+          pctInsiders:     holders.insidersPercentHeld?.raw ?? null,
+          pctInstitutions: holders.institutionsPercentHeld?.raw ?? null,
+          topHolders: (instOwn?.ownershipList || []).slice(0,5).map(h => ({
+            name:   h.organization,
+            pct:    h.pctHeld?.raw ?? null,
+            shares: h.position?.raw ?? null,
+            value:  h.value?.raw ?? null,
+            change: h.pctChange?.raw ?? null,
+          })),
+        } : null,
+      });
+    } catch(e) {
+      return res.status(200).json({ ticker: T, shortInterest: null, institutional: null, error: e.message });
+    }
+  }
+
+  return res.status(200).json({ ticker: T, ready: true });
 }

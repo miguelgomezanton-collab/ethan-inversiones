@@ -19,7 +19,24 @@ const fmtPct = (n,d=2) => n != null && isFinite(n) ? (n>=0?'+':'')+n.toFixed(d)+
 const fmtVL  = n => n != null ? n.toFixed(2) : '—';
 const fmtDate = d => d ? new Date(d+'T12:00:00').toLocaleDateString('es-ES',{day:'2-digit',month:'short'}) : '—';
 
-// ── Fetch noticias via API (Google News RSS en español) ──
+// ── Análisis de sentimiento por palabras clave ──
+const POSITIVE_WORDS = ['beat','beats','surge','surges','soars','rises','gains','record','growth','profit','strong','upgrade','buy','outperform','bullish','rally','high','exceed','better','positive','boost','jump','up','increase','revenue beat','earnings beat','raised guidance','buyback','dividend'];
+const NEGATIVE_WORDS = ['miss','misses','falls','drops','plunges','decline','loss','weak','downgrade','sell','underperform','bearish','cut','lower','layoff','layoffs','restructure','lawsuit','fine','penalty','warning','below','disappoints','disappointing','recall','investigation','probe','debt','bankruptcy','crash','tumbles','slumps','concerns','risk','negative'];
+
+function analyzeSentiment(headlines) {
+  if (!headlines || !headlines.length) return { score: 0, label: 'neutral', emoji: '⚪', color: 'var(--text3)' };
+  let pos = 0, neg = 0;
+  headlines.forEach(h => {
+    const text = (h.title || h || '').toLowerCase();
+    POSITIVE_WORDS.forEach(w => { if (text.includes(w)) pos++; });
+    NEGATIVE_WORDS.forEach(w => { if (text.includes(w)) neg++; });
+  });
+  const total = pos + neg;
+  const score = total > 0 ? (pos - neg) / total : 0;
+  if (score > 0.2)  return { score, label: 'Positivo', emoji: '🟢', color: 'var(--green)' };
+  if (score < -0.2) return { score, label: 'Negativo', emoji: '🔴', color: 'var(--red)' };
+  return { score, label: 'Neutral', emoji: '🟡', color: 'var(--amber)' };
+}
 async function fetchNoticias() {
   try {
     const r = await fetch('/api/noticias', { signal: AbortSignal.timeout(10000) });
@@ -250,9 +267,16 @@ export async function render(container, { actionsSlot }) {
 
     // Noticias generales y por ticker — ambas en paralelo
     const tickers = positions.map(p => p.ticker).join(',');
-    const [noticiasProm, noticiasPosProm] = [
+    const watchlistTickers = [...new Set([
+      ...(watchlistAlc || []).map(w => w.ticker),
+      ...(watchlistBaj || []).map(w => w.ticker),
+    ])].slice(0, 5).join(','); // máx 5 de watchlist para no saturar
+
+    const [noticiasProm, noticiasPosProm, noticiasWatchProm] = [
       fetchNoticias(),
       tickers ? fetch(`/api/noticias?tickers=${tickers}`, { signal: AbortSignal.timeout(12000) })
+                 .then(r => r.json()).catch(() => ({ results: {} })) : Promise.resolve({ results: {} }),
+      watchlistTickers ? fetch(`/api/noticias?tickers=${watchlistTickers}`, { signal: AbortSignal.timeout(12000) })
                  .then(r => r.json()).catch(() => ({ results: {} })) : Promise.resolve({ results: {} }),
     ];
 
@@ -351,7 +375,7 @@ export async function render(container, { actionsSlot }) {
             const tocaStop = stop && (dir==='bajista' ? cur >= stop : cur <= stop);
             return `<div class="db-pos-row">
               <div>
-                <div class="db-pos-ticker">${p.ticker} ${tocaStop?'⚠️':''}</div>
+                <div class="db-pos-ticker">${p.ticker} ${tocaStop?'⚠️':''} <span id="sent-${p.ticker}" style="font-size:11px;" title="Sentimiento noticias">⚪</span></div>
                 <div class="db-pos-name">${p.name||''} · ${dir}</div>
               </div>
               <div style="text-align:right;">
@@ -387,7 +411,14 @@ export async function render(container, { actionsSlot }) {
         <div id="db-noticias-content"><div class="db-empty">Cargando noticias...</div></div>
       </div>
 
-      <!-- Fila 4: Noticias por posición -->
+      <!-- Fila 4: Sentimiento Watchlist -->
+      ${watchlistAlc?.length || watchlistBaj?.length ? `
+      <div class="db-card" style="margin-bottom:14px;" id="db-sent-watch-card">
+        <div class="db-card-title">Sentimiento · Watchlist</div>
+        <div id="db-sent-watch-content"><div class="db-empty">Cargando...</div></div>
+      </div>` : ''}
+
+      <!-- Fila 5: Noticias por posición -->
       ${positions.length ? `
       <div class="db-card" id="db-noticias-pos-card">
         <div class="db-card-title">Noticias de tus posiciones · ${positions.map(p=>p.ticker).join(', ')}</div>
@@ -421,6 +452,32 @@ export async function render(container, { actionsSlot }) {
       </div>`;
     });
 
+    // Sentimiento watchlist
+    noticiasWatchProm.then(data => {
+      const nc = document.getElementById('db-sent-watch-content');
+      if (!nc) return;
+      const results = data.results || {};
+      const tks = Object.keys(results).filter(t => results[t]?.length > 0);
+      if (!tks.length) { nc.innerHTML = '<div class="db-empty">Sin noticias para la watchlist</div>'; return; }
+      nc.innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:8px;">
+        ${tks.map(ticker => {
+          const news = results[ticker] || [];
+          const sent = analyzeSentiment(news);
+          const isAlc = (watchlistAlc||[]).some(w=>w.ticker===ticker);
+          return `<div style="display:flex;align-items:center;gap:6px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 12px;cursor:pointer;" 
+                       title="${sent.label} · ${news.length} noticias recientes">
+            <span style="font-family:var(--mono);font-size:11px;font-weight:700;">${ticker}</span>
+            <span style="font-size:9px;color:${isAlc?'var(--green)':'var(--red)'};font-family:var(--mono);">${isAlc?'▲':'▼'}</span>
+            <span style="font-size:14px;" title="${sent.label}">${sent.emoji}</span>
+            <span style="font-size:9px;color:${sent.color};font-family:var(--mono);">${sent.label}</span>
+          </div>`;
+        }).join('')}
+      </div>
+      <div style="font-size:10px;color:var(--text3);margin-top:10px;font-family:var(--mono);">
+        🟢 Positivo · 🟡 Neutral · 🔴 Negativo · ▲ Alcista · ▼ Bajista
+      </div>`;
+    });
+
     // Noticias por posición
     noticiasPosProm.then(data => {
       const nc = document.getElementById('db-noticias-pos-content');
@@ -430,12 +487,28 @@ export async function render(container, { actionsSlot }) {
       if (!tks.length) { nc.innerHTML = '<div class="db-empty">Sin noticias</div>'; return; }
       const hasNews = tks.some(t => results[t]?.length > 0);
       if (!hasNews) { nc.innerHTML = '<div class="db-empty">No se encontraron noticias para tus posiciones</div>'; return; }
+
+      // Actualizar semáforos de sentimiento en las posiciones
+      tks.forEach(ticker => {
+        const news = results[ticker] || [];
+        const sent = analyzeSentiment(news);
+        const sentEl = document.getElementById(`sent-${ticker}`);
+        if (sentEl) {
+          sentEl.textContent = sent.emoji;
+          sentEl.title = `Sentimiento: ${sent.label} (${news.length} noticias)`;
+        }
+      });
+
       nc.innerHTML = `<div style="display:grid;grid-template-columns:repeat(${Math.min(tks.length,3)},1fr);gap:0 24px;">
         ${tks.map(ticker => {
           const news = results[ticker] || [];
           if (!news.length) return '';
+          const sent = analyzeSentiment(news);
           return `<div>
-            <div style="font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:0.1em;color:var(--teal);margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border);">${ticker}</div>
+            <div style="font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:0.1em;color:var(--teal);margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
+              <span>${ticker}</span>
+              <span style="color:${sent.color};" title="${sent.label}">${sent.emoji} ${sent.label}</span>
+            </div>
             ${news.map(n => `<div class="db-noticia">
               <a href="${n.link}" target="_blank" rel="noopener">${n.title}</a>
               <div class="db-noticia-meta">${n.date ? new Date(n.date).toLocaleDateString('es-ES',{day:'2-digit',month:'short'}) : ''}</div>
