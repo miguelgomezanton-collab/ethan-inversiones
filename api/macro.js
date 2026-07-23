@@ -200,8 +200,111 @@ async function fetchVIX() {
   };
 }
 
-// ── CNN Fear & Greed — cálculo sintético desde VIX + datos de mercado ──
+// ── CNN Fear & Greed — CNN directo + macromicro via worker + VIX sintético ──
 async function fetchFearGreed() {
+  // 1. Intentar CNN directo
+  for (const url of [FG_URL, FG_ALT]) {
+    try {
+      const r = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'application/json',
+          'Referer': 'https://www.cnn.com/',
+          'Origin': 'https://www.cnn.com',
+        },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!r.ok) continue;
+      const d = await r.json();
+      if (d?.now?.score != null) {
+        return { value: Math.round(d.now.score), label: d.now.valueText,
+          previousClose: d.previousClose?.score != null ? Math.round(d.previousClose.score) : null,
+          previousWeek:  d.previousWeek?.score  != null ? Math.round(d.previousWeek.score)  : null,
+          previousMonth: d.previousMonth?.score != null ? Math.round(d.previousMonth.score) : null,
+          source: 'CNN' };
+      }
+      const fg = d?.fear_and_greed;
+      if (fg?.score != null) {
+        return { value: Math.round(fg.score), label: fg.rating,
+          previousClose: fg.previous_close  != null ? Math.round(fg.previous_close)  : null,
+          previousWeek:  fg.previous_1_week  != null ? Math.round(fg.previous_1_week)  : null,
+          previousMonth: fg.previous_1_month != null ? Math.round(fg.previous_1_month) : null,
+          source: 'CNN' };
+      }
+    } catch {}
+  }
+
+  // 2. Macromicro via worker (HTML scraping)
+  try {
+    const mmUrl = 'https://en.macromicro.me/collections/34/us-stock-relative/50108/cnn-fear-and-greed';
+    const workerUrl = `https://soft-field-156f.miguel-gomez-anton.workers.dev/?url=${encodeURIComponent(mmUrl)}`;
+    const r = await fetch(workerUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'text/html' },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (r.ok) {
+      const html = await r.text();
+      // Buscar el valor del Fear & Greed en el HTML
+      // macromicro suele tener el dato en un JSON inline o en atributos data-
+      const patterns = [
+        /"value"\s*:\s*(\d+\.?\d*)/,
+        /fear.and.greed[^:]*:\s*(\d+)/i,
+        /currentValue[^:]*:\s*(\d+\.?\d*)/,
+        /"score"\s*:\s*(\d+\.?\d*)/,
+        /data-value="(\d+\.?\d*)"/,
+        /class="[^"]*value[^"]*"[^>]*>(\d+)/,
+      ];
+      for (const p of patterns) {
+        const m = html.match(p);
+        if (m) {
+          const value = Math.round(parseFloat(m[1]));
+          if (value >= 0 && value <= 100) {
+            const label = value >= 75 ? 'Extreme Greed' : value >= 55 ? 'Greed' :
+                          value >= 45 ? 'Neutral' : value >= 25 ? 'Fear' : 'Extreme Fear';
+            return { value, label, source: 'MacroMicro/CNN' };
+          }
+        }
+      }
+    }
+  } catch {}
+
+  // 3. Fallback sintético desde VIX
+  try {
+    const vixUrl = 'https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?interval=1d&range=5d';
+    const proxies = [
+      u => `https://soft-field-156f.miguel-gomez-anton.workers.dev/?url=${encodeURIComponent(u)}`,
+      u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+    ];
+    for (const fn of proxies) {
+      try {
+        const r = await fetch(fn(vixUrl), { signal: AbortSignal.timeout(6000) });
+        if (!r.ok) continue;
+        const j = JSON.parse(await r.text());
+        const closes = j?.chart?.result?.[0]?.indicators?.quote?.[0]?.close;
+        if (!closes?.length) continue;
+        const vix = closes[closes.length - 1];
+        const prevVix = closes[closes.length - 2] || vix;
+        if (!vix) continue;
+        const calcScore = v => {
+          let s;
+          if (v < 12)      s = Math.round(85 + (12-v)*1.25);
+          else if (v < 16) s = Math.round(60 + (16-v)*6.25);
+          else if (v < 20) s = Math.round(40 + (20-v)*5);
+          else if (v < 28) s = Math.round(20 + (28-v)*2.5);
+          else             s = Math.max(0, Math.round(20-(v-28)*1.5));
+          return Math.max(0, Math.min(100, s));
+        };
+        const score = calcScore(vix);
+        const label = score >= 75 ? 'Extreme Greed' : score >= 55 ? 'Greed' :
+                      score >= 45 ? 'Neutral' : score >= 25 ? 'Fear' : 'Extreme Fear';
+        return { value: score, label, previousClose: calcScore(prevVix),
+          vix: vix.toFixed(1), source: 'VIX sintético' };
+      } catch {}
+    }
+  } catch {}
+
+  throw new Error('Fear & Greed: sin datos disponibles');
+}
   // Intentar CNN primero (por si funciona desde Vercel)
   for (const url of [FG_URL, FG_ALT]) {
     try {
