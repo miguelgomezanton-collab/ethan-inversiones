@@ -239,11 +239,8 @@ function setupSidebarToggle() {
     btn.textContent = collapsed ? '▷' : '◁';
   };
   btn.addEventListener('click', toggle);
-  document.getElementById('toggle-sidebar-btn').addEventListener('click', toggle);
-  document.getElementById('h-brand-home')?.addEventListener('click', (e) => {
-    // Solo navegar si no se hizo click en el botón E de sidebar
-    if (e.target.id !== 'toggle-sidebar-btn') navigateTo('dashboard');
-  });
+  document.getElementById('toggle-sidebar-btn')?.addEventListener('click', toggle);
+  document.getElementById('h-brand-home')?.addEventListener('click', () => navigateTo('dashboard'));
 }
 
 // ── Reloj ────────────────────────────────────────
