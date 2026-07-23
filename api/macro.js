@@ -526,7 +526,7 @@ export default async function handler(req, res) {
     rFg, rVix, rCurvaEUR,
     rHy, rBreakeven1y, rBreakeven5y, rBreakeven5yAlt,
     rWti, rBrent, rM2v, rWresbal,
-    rLeiFreд, rTotll, rGdp, rMich,
+    rLeiFreD, rTotll, rGdp, rMich,
   ] = await Promise.allSettled([
     fred('DGS10',        key, 5),
     fred('DGS2',         key, 5),
@@ -605,14 +605,14 @@ export default async function handler(req, res) {
   if (man.lei != null) {
     ind.lei = { label: 'LEI USA', value: man.lei, date: null,
       score: scLEI(man.lei), weight: 1, manual: true };
-  } else if (rLeiFreд.status === 'fulfilled' && rLeiFreд.value.length >= 2) {
-    const obs = rLeiFreд.value; // ya ordenado desc
+  } else if (rLeiFreD.status === 'fulfilled' && rLeiFreD.value.length >= 2) {
+    const obs = rLeiFreD.value; // ya ordenado desc
     const latest = obs[0].value, prev = obs[1].value;
     const mom = prev > 0 ? +(((latest - prev) / prev) * 100).toFixed(2) : null;
     ind.lei = { label: 'LEI USA (FRED USSLIND)', value: mom, rawValue: latest,
       date: obs[0].date, score: mom != null ? scLEI(mom) : null, weight: 1, auto: true };
   } else {
-    errs.push('USSLIND: ' + rLeiFreд.reason?.message);
+    errs.push('USSLIND: ' + rLeiFreD.reason?.message);
     ind.lei = { label: 'LEI USA', value: man.lei ?? null, date: null,
       score: man.lei != null ? scLEI(man.lei) : null, weight: 1, manual: man.lei != null };
   }
