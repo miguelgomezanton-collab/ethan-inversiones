@@ -86,18 +86,23 @@ export async function render(container, { actionsSlot }) {
       res.innerHTML = `<div class="sm-loader"><div class="loader-ring"></div>Buscando datos de Smart Money para ${ticker}... (15-30s)</div>`;
 
       const [insidersRes, marketRes] = await Promise.allSettled([
-        fetch(`/api/smart-money?ticker=${ticker}&section=insiders`, { signal: AbortSignal.timeout(55000) }).then(r => r.json()),
-        fetch(`/api/smart-money?ticker=${ticker}&section=market`,   { signal: AbortSignal.timeout(55000) }).then(r => r.json()),
+        fetch(`/api/smart-money?ticker=${ticker}&section=insiders`, { signal: AbortSignal.timeout(58000) }).then(r => r.json()),
+        fetch(`/api/smart-money?ticker=${ticker}&section=market`,   { signal: AbortSignal.timeout(58000) }).then(r => r.json()),
       ]);
+
+      const insidersData = insidersRes.status === 'fulfilled' ? insidersRes.value : {};
+      const marketData   = marketRes.status === 'fulfilled'   ? marketRes.value   : {};
 
       const data = {
         ticker,
-        insiders:      insidersRes.status === 'fulfilled' ? (insidersRes.value.insiders || []) : [],
-        shortInterest: marketRes.status === 'fulfilled'   ? (marketRes.value.shortInterest || null) : null,
-        institutional: marketRes.status === 'fulfilled'   ? (marketRes.value.institutional || null) : null,
+        insiders:      insidersData.insiders      || [],
+        shortInterest: marketData.shortInterest   || null,
+        institutional: marketData.institutional   || null,
         errors: [
-          ...(insidersRes.status === 'rejected' ? ['Insiders: timeout'] : []),
-          ...(marketRes.status === 'rejected'   ? ['Market: timeout']   : []),
+          ...(insidersData.error ? ['Insiders: ' + insidersData.error.slice(0,60)] : []),
+          ...(marketData.error   ? ['Market: '   + marketData.error.slice(0,60)]   : []),
+          ...(insidersRes.status === 'rejected' ? ['Insiders timeout'] : []),
+          ...(marketRes.status   === 'rejected' ? ['Market timeout']   : []),
         ],
       };
 
