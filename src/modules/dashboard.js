@@ -488,14 +488,21 @@ export async function render(container, { actionsSlot }) {
       const hasNews = tks.some(t => results[t]?.length > 0);
       if (!hasNews) { nc.innerHTML = '<div class="db-empty">No se encontraron noticias para tus posiciones</div>'; return; }
 
-      // Actualizar semáforos de sentimiento en las posiciones
+      // Actualizar semáforos — siempre, aunque estén vacíos
       tks.forEach(ticker => {
         const news = results[ticker] || [];
-        const sent = analyzeSentiment(news);
+        const sent = news.length ? analyzeSentiment(news) : { emoji: '⚪', label: 'Sin datos', color: 'var(--text3)' };
         const sentEl = document.getElementById(`sent-${ticker}`);
         if (sentEl) {
           sentEl.textContent = sent.emoji;
-          sentEl.title = `Sentimiento: ${sent.label} (${news.length} noticias)`;
+          sentEl.title = `Sentimiento: ${sent.label}${news.length ? ` (${news.length} noticias)` : ' — sin noticias recientes'}`;
+        }
+      });
+      // También actualizar los que no tienen noticias con ⚪
+      positions.forEach(p => {
+        if (!tks.includes(p.ticker)) {
+          const sentEl = document.getElementById(`sent-${p.ticker}`);
+          if (sentEl) { sentEl.textContent = '⚪'; sentEl.title = 'Sin noticias recientes'; }
         }
       });
 
