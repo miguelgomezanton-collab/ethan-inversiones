@@ -200,6 +200,11 @@ registerPage('smart-money', {
   title: 'Smart Money Intelligence',
   loader: () => import('./modules/smart/smart-money.js')
 });
+registerPage('cava', {
+  crumb: 'José Luis Cava <span>›</span> Análisis Diario',
+  title: 'Cava · Análisis Técnico Diario',
+  loader: () => import('./modules/cava/cava.js')
+});
 
 // ── Sidebar: acordeón de grupos y subgrupos ─────
 
