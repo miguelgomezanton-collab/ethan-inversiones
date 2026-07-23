@@ -4,13 +4,36 @@
 const CHANNEL_ID = 'UCjTfnOFcGW3n3M0WKXpZS0Q';
 
 async function getLatestVideos(n = 5) {
-  const url = `https://www.youtube.com/feeds/videos.xml?channel_id=${CHANNEL_ID}`;
-  const r = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/xml' },
-    signal: AbortSignal.timeout(10000),
-  });
-  if (!r.ok) throw new Error(`YouTube RSS: ${r.status}`);
-  const xml = await r.text();
+  // Intentar con handle primero, luego con channel ID
+  const urls = [
+    'https://www.youtube.com/feeds/videos.xml?user=JoseLuisCavatv',
+    'https://www.youtube.com/feeds/videos.xml?channel_id=UCjTfnOFcGW3n3M0WKXpZS0Q',
+  ];
+
+  // Intentar obtener el channel ID real via la página del canal
+  try {
+    const worker = `https://soft-field-156f.miguel-gomez-anton.workers.dev/?url=${encodeURIComponent('https://www.youtube.com/@JoseLuisCavatv')}`;
+    const pr = await fetch(worker, { signal: AbortSignal.timeout(8000) });
+    if (pr.ok) {
+      const html = await pr.text();
+      const channelMatch = html.match(/"channelId":"(UC[^"]+)"/);
+      if (channelMatch) {
+        urls.unshift(`https://www.youtube.com/feeds/videos.xml?channel_id=${channelMatch[1]}`);
+      }
+    }
+  } catch {}
+
+  let xml = null;
+  for (const url of urls) {
+    try {
+      const r = await fetch(url, {
+        headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/xml' },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (r.ok) { xml = await r.text(); break; }
+    } catch {}
+  }
+  if (!xml) throw new Error('YouTube RSS: no se pudo obtener el feed del canal');
   const videos = [];
   const entryRegex = /<entry>([\s\S]*?)<\/entry>/g;
   let m;
