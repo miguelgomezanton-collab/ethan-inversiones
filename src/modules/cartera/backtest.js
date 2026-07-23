@@ -491,6 +491,30 @@ export async function render(container, { actionsSlot }) {
             infoRatio > 0 ? '🟡 IR entre 0 y 0.5 — alpha positivo pero con alta variabilidad. Sigue acumulando operaciones.' :
             '🔴 IR negativo — el sistema no está generando alpha sobre el benchmark. Revisar el edge.'}
         </div>`}
+
+        <!-- Explicación didáctica -->
+        <div style="background:var(--surface2);border-radius:8px;padding:14px 16px;margin-top:14px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;">
+          <div>
+            <div style="font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:0.1em;color:var(--teal);margin-bottom:6px;">¿Qué es el Ratio de Información?</div>
+            <div style="font-size:11px;color:var(--text2);line-height:1.6;">Mide si tu alpha es <strong style="color:var(--text1);">consistente o aleatorio</strong>. Es el estándar de la industria para evaluar si un sistema de trading tiene edge real. IR = Alpha medio / Tracking Error.</div>
+          </div>
+          <div>
+            <div style="font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:0.1em;color:var(--teal);margin-bottom:6px;">¿Qué significa cada métrica?</div>
+            <div style="font-size:11px;color:var(--text2);line-height:1.6;">
+              <strong style="color:var(--text1);">Alpha medio/op</strong> — cuánto superas al benchmark por operación. Positivo = bates al mercado.<br>
+              <strong style="color:var(--text1);">Tracking Error</strong> — dispersión de ese alpha. Alto = inconsistente, bajo = fiable.
+            </div>
+          </div>
+          <div>
+            <div style="font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:0.1em;color:var(--teal);margin-bottom:6px;">¿Cómo interpretar el IR?</div>
+            <div style="font-size:11px;color:var(--text2);line-height:1.6;">
+              <span style="color:var(--green);">IR &gt; 0.5</span> → Sistema robusto, edge real<br>
+              <span style="color:var(--amber);">IR 0–0.5</span> → Alpha positivo pero variable<br>
+              <span style="color:var(--red);">IR &lt; 0</span> → Sin edge, revisar el sistema<br>
+              <span style="color:var(--text3);">Benchmark</span> → 0.3%/op ≈ 15% anual SPY
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Historial de operaciones reales -->
