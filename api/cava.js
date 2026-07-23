@@ -13,7 +13,7 @@ async function getLatestVideos(n = 5) {
   // Intentar obtener el channel ID real via la página del canal
   try {
     const worker = `https://soft-field-156f.miguel-gomez-anton.workers.dev/?url=${encodeURIComponent('https://www.youtube.com/@JoseLuisCavatv')}`;
-    const pr = await fetch(worker, { signal: AbortSignal.timeout(8000) });
+    const pr = await fetch(worker, { signal: (() => { const c = new AbortController(); setTimeout(() => c.abort(), 8000); return c.signal; })() });
     if (pr.ok) {
       const html = await pr.text();
       const channelMatch = html.match(/"channelId":"(UC[^"]+)"/);
@@ -28,7 +28,7 @@ async function getLatestVideos(n = 5) {
     try {
       const r = await fetch(url, {
         headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/xml' },
-        signal: AbortSignal.timeout(10000),
+        signal: (() => { const c = new AbortController(); setTimeout(() => c.abort(), 10000); return c.signal; })(),
       });
       if (r.ok) { xml = await r.text(); break; }
     } catch {}
@@ -60,7 +60,7 @@ async function getTranscript(videoId) {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
       },
-      signal: AbortSignal.timeout(10000),
+      signal: (() => { const c = new AbortController(); setTimeout(() => c.abort(), 10000); return c.signal; })(),
     });
     if (!r.ok) return null;
     const html = await r.text();
@@ -77,7 +77,7 @@ async function getTranscript(videoId) {
     if (!track?.baseUrl) return null;
 
     // Descargar los subtítulos
-    const sr = await fetch(track.baseUrl, { signal: AbortSignal.timeout(8000) });
+    const sr = await fetch(track.baseUrl, { signal: (() => { const c = new AbortController(); setTimeout(() => c.abort(), 8000); return c.signal; })() });
     if (!sr.ok) return null;
     const xml = await sr.text();
 
@@ -120,7 +120,7 @@ Responde SOLO con JSON sin markdown:
 
 Tips concretos: niveles de precio, sectores, tendencias, señales técnicas.` }],
     }),
-    signal: AbortSignal.timeout(30000),
+    signal: (() => { const c = new AbortController(); setTimeout(() => c.abort(), 30000); return c.signal; })(),
   });
   if (!r.ok) throw new Error(`Claude: ${r.status}`);
   const data = await r.json();
