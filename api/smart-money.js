@@ -1,5 +1,4 @@
 // /api/smart-money.js — Smart Money via Claude AI + web search
-export const config = { maxDuration: 60 };
 
 async function askClaude(prompt, apiKey) {
   const r = await fetch('https://api.anthropic.com/v1/messages', {
