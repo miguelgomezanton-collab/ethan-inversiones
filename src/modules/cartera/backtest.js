@@ -394,8 +394,167 @@ export async function render(container, { actionsSlot }) {
   actionsSlot.innerHTML = '';
   container.innerHTML = `<div class="bt-wrap" id="bt-wrap"></div>`;
 
+  let activeTab = 'backtesting';
   let entrySystem = 'sma5w';
   let exitSystem  = 'sma10w';
+
+  // ── Cartera Real vs Sistema ──────────────────────
+  async function renderCarteraReal() {
+    const el = document.getElementById('bt-real-content');
+    if (!el) return;
+    el.innerHTML = `<div class="empty"><div class="loader-ring"></div><div class="empty-title">Analizando cartera real...</div></div>`;
+
+    const { UserData } = await import('../../userdata.js');
+    const [history, positions] = await Promise.all([
+      UserData.get('ethan_positions_history').then(v => v || []),
+      UserData.get('ethan_positions').then(v => v || []),
+    ]);
+
+    const allOps = [
+      ...history.map(h => ({ ...h, estado: 'cerrada' })),
+      ...positions.map(p => ({ ...p, estado: 'abierta', pnlPct: null, pnlAbs: null })),
+    ].sort((a,b) => (a.entryDateISO||a.entryDate||'').localeCompare(b.entryDateISO||b.entryDate||''));
+
+    if (!allOps.length) {
+      el.innerHTML = '<div class="empty"><div class="empty-icon">📊</div><div class="empty-title">Sin operaciones en cartera</div></div>';
+      return;
+    }
+
+    // ── Ratio de Información ─────────────────────
+    const closedOps = history.filter(h => h.pnlPct != null);
+    const nOps = closedOps.length;
+    const avgReturn = nOps ? closedOps.reduce((s,h)=>s+(h.pnlPct||0),0)/nOps : 0;
+    // SPY benchmark: aproximamos ~15% anual → ~0.3% por operación media de 15 días
+    const benchmarkPerOp = 0.3;
+    const alphaPerOp = closedOps.map(h => (h.pnlPct||0) - benchmarkPerOp);
+    const avgAlpha = alphaPerOp.length ? alphaPerOp.reduce((a,b)=>a+b,0)/alphaPerOp.length : 0;
+    const trackingError = alphaPerOp.length > 1
+      ? Math.sqrt(alphaPerOp.reduce((s,a)=>s+(a-avgAlpha)**2,0)/(alphaPerOp.length-1))
+      : null;
+    const infoRatio = trackingError ? avgAlpha / trackingError : null;
+    const irColor = infoRatio == null ? 'var(--text3)' : infoRatio > 0.5 ? 'var(--green)' : infoRatio > 0 ? 'var(--amber)' : 'var(--red)';
+    const irLabel = infoRatio == null ? '—' : infoRatio > 0.5 ? 'Sistema robusto' : infoRatio > 0 ? 'Alpha positivo' : 'Alpha negativo';
+
+    // ── Stats reales ─────────────────────────────
+    const wins = closedOps.filter(h => (h.pnlPct||0) > 0);
+    const losses = closedOps.filter(h => (h.pnlPct||0) <= 0);
+    const winRate = nOps ? wins.length/nOps : 0;
+    const avgWin = wins.length ? wins.reduce((s,h)=>s+(h.pnlPct||0),0)/wins.length : 0;
+    const avgLoss = losses.length ? Math.abs(losses.reduce((s,h)=>s+(h.pnlPct||0),0)/losses.length) : 0;
+    const totalPnl = closedOps.reduce((s,h)=>s+(h.pnlAbs||0),0);
+
+    el.innerHTML = `
+      <!-- Ratio de Información -->
+      <div class="bt-config" style="margin-bottom:16px;">
+        <div style="font-size:13px;font-weight:700;margin-bottom:16px;">📐 Ratio de Información</div>
+        <div class="bt-strip" style="margin-bottom:12px;">
+          <div class="bt-strip-cell">
+            <div class="bt-strip-lbl">Ratio de Información</div>
+            <div class="bt-strip-val" style="color:${irColor};">${infoRatio!=null?infoRatio.toFixed(2):'N/A'}</div>
+            <div class="bt-strip-sub">${irLabel}</div>
+          </div>
+          <div class="bt-strip-cell">
+            <div class="bt-strip-lbl">Alpha medio/op</div>
+            <div class="bt-strip-val" style="color:${avgAlpha>=0?'var(--green)':'var(--red)'};">${avgAlpha>=0?'+':''}${avgAlpha.toFixed(2)}%</div>
+            <div class="bt-strip-sub">vs benchmark ~0.3%/op</div>
+          </div>
+          <div class="bt-strip-cell">
+            <div class="bt-strip-lbl">Tracking Error</div>
+            <div class="bt-strip-val">${trackingError!=null?trackingError.toFixed(2)+'%':'—'}</div>
+            <div class="bt-strip-sub">dispersión del alpha</div>
+          </div>
+          <div class="bt-strip-cell">
+            <div class="bt-strip-lbl">Operaciones</div>
+            <div class="bt-strip-val">${nOps}</div>
+            <div class="bt-strip-sub">${nOps < 30 ? '⚠ <30 — muestra pequeña' : '✓ Muestra suficiente'}</div>
+          </div>
+          <div class="bt-strip-cell">
+            <div class="bt-strip-lbl">Win Rate real</div>
+            <div class="bt-strip-val" style="color:${winRate>=0.5?'var(--green)':'var(--red)'};">${(winRate*100).toFixed(0)}%</div>
+            <div class="bt-strip-sub">${wins.length}G / ${losses.length}P</div>
+          </div>
+          <div class="bt-strip-cell">
+            <div class="bt-strip-lbl">P&L Total</div>
+            <div class="bt-strip-val" style="color:${totalPnl>=0?'var(--green)':'var(--red)'};">${fmtE(totalPnl)}</div>
+            <div class="bt-strip-sub">realizado</div>
+          </div>
+        </div>
+        ${nOps < 30 ? `<div style="background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.2);border-radius:6px;padding:10px 14px;font-size:11px;color:var(--amber);font-family:var(--mono);">
+          ⚠ Con ${nOps} operaciones el Ratio de Información no es estadísticamente significativo. Se necesitan mínimo 30 operaciones para una conclusión fiable.
+          ${nOps > 0 ? ` Faltan ${30-nOps} operaciones.` : ''}
+        </div>` : `<div style="font-size:11px;color:var(--text2);font-family:var(--mono);">
+          ${infoRatio > 0.5 ? '✅ IR > 0.5 — tu alpha es consistente y estadísticamente significativo. Tu sistema genera valor real.' :
+            infoRatio > 0 ? '🟡 IR entre 0 y 0.5 — alpha positivo pero con alta variabilidad. Sigue acumulando operaciones.' :
+            '🔴 IR negativo — el sistema no está generando alpha sobre el benchmark. Revisar el edge.'}
+        </div>`}
+      </div>
+
+      <!-- Historial de operaciones reales -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;">
+        <div style="padding:14px 18px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;">
+          Historial de operaciones reales · ${nOps} cerradas · ${positions.length} abiertas
+        </div>
+        <table class="bt-table">
+          <thead><tr>
+            <th>#</th><th>Ticker</th><th>Entrada</th><th>Salida</th>
+            <th>Días</th><th>P&L %</th><th>P&L €</th>
+            <th class="r">Alpha vs bench</th><th>Estado</th>
+          </tr></thead>
+          <tbody>
+            ${allOps.map((op, i) => {
+              const dias = op.entryDateISO && op.exitDateISO
+                ? Math.round((new Date(op.exitDateISO)-new Date(op.entryDateISO))/86400000) : null;
+              const pnlPct = op.pnlPct ?? null;
+              const alpha = pnlPct != null ? pnlPct - benchmarkPerOp : null;
+              const col = pnlPct != null ? (pnlPct>=0?'var(--green)':'var(--red)') : 'var(--text2)';
+              const alphaCol = alpha != null ? (alpha>0?'var(--green)':'var(--red)') : 'var(--text3)';
+              return `<tr>
+                <td style="color:var(--text3);">${i+1}</td>
+                <td style="font-weight:700;">${op.ticker||'—'}</td>
+                <td style="font-family:var(--mono);font-size:10px;color:var(--text2);">${op.entryDateISO||op.entryDate||'—'}</td>
+                <td style="font-family:var(--mono);font-size:10px;color:var(--text2);">${op.exitDateISO||'—'}</td>
+                <td>${dias!=null?dias+'d':'—'}</td>
+                <td style="color:${col};font-weight:700;">${pnlPct!=null?(pnlPct>=0?'+':'')+pnlPct.toFixed(2)+'%':'—'}</td>
+                <td style="color:${col};font-weight:700;font-family:var(--mono);">${op.pnlAbs!=null?fmtE(op.pnlAbs):'—'}</td>
+                <td style="text-align:right;color:${alphaCol};font-family:var(--mono);">${alpha!=null?(alpha>=0?'+':'')+alpha.toFixed(2)+'%':'—'}</td>
+                <td><span style="font-size:9px;padding:2px 8px;border-radius:3px;background:${op.estado==='cerrada'?'rgba(74,222,128,0.1)':'rgba(95,168,224,0.1)'};color:${op.estado==='cerrada'?'var(--green)':'var(--blue)'};">${op.estado==='cerrada'?'Cerrada':'Abierta'}</span></td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  // ── Tabs ────────────────────────────────────────
+  function renderTabs() {
+    return `<div style="display:flex;gap:2px;border-bottom:1px solid var(--border);margin-bottom:20px;">
+      <button class="fondo-tab ${activeTab==='backtesting'?'active':''}" data-tab="backtesting">📊 Backtesting</button>
+      <button class="fondo-tab ${activeTab==='cartera-real'?'active':''}" data-tab="cartera-real">🎯 Cartera Real vs Sistema</button>
+    </div>`;
+  }
+
+  function attachTabListeners() {
+    document.querySelectorAll('.fondo-tab[data-tab]').forEach(tab => {
+      tab.addEventListener('click', () => {
+        activeTab = tab.dataset.tab;
+        renderMain();
+      });
+    });
+  }
+
+  async function renderMain() {
+    const el = document.getElementById('bt-wrap');
+    if (activeTab === 'backtesting') {
+      el.innerHTML = renderTabs() + renderConfig();
+      attachTabListeners();
+      attachListeners();
+    } else {
+      el.innerHTML = renderTabs() + '<div id="bt-real-content"></div>';
+      attachTabListeners();
+      await renderCarteraReal();
+    }
+  }
 
   function renderConfig() {
     const entries = [
@@ -527,7 +686,7 @@ export async function render(container, { actionsSlot }) {
       }).join('');
     }).join('');
 
-    el.innerHTML = renderConfig() + `
+    el.innerHTML = renderTabs() + renderConfig() + `
       <!-- Mejor combinación -->
       <div class="bt-best">
         <div style="font-size:28px;">★</div>
@@ -596,7 +755,7 @@ export async function render(container, { actionsSlot }) {
       </div>`;
 
     attachListeners();
-
+    attachTabListeners();
     // Clicks en combo grid para re-ejecutar con esa combinación
     document.querySelectorAll('.bt-combo-cell').forEach(cell => {
       cell.addEventListener('click', () => {
@@ -608,7 +767,8 @@ export async function render(container, { actionsSlot }) {
     });
   }
 
-  document.getElementById('bt-wrap').innerHTML = renderConfig();
+  document.getElementById('bt-wrap').innerHTML = renderTabs() + renderConfig();
+  attachTabListeners();
   attachListeners();
 
   return { destroy() { document.getElementById('bt-css')?.remove(); } };
