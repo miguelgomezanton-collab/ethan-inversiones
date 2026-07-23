@@ -14,7 +14,10 @@ async function askClaude(prompt, apiKey) {
       messages: [{ role: 'user', content: prompt }],
     }),
   });
-  if (!r.ok) throw new Error(`Claude API ${r.status}: ${await r.text()}`);
+  if (!r.ok) {
+    const errText = await r.text();
+    throw new Error(`Claude API ${r.status}: ${errText.slice(0,300)}`);
+  }
   const data = await r.json();
   const text = data.content?.find(b => b.type === 'text')?.text || '{}';
   const clean = text.replace(/```json\n?|```\n?/g,'').trim();
