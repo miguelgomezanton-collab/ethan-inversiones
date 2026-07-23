@@ -352,6 +352,10 @@ const EXIT_NAMES = {
 };
 
 const CSS = `
+.bt-tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);margin-bottom:20px;}
+.bt-tab{padding:9px 18px;background:transparent;border:none;color:var(--text2);cursor:pointer;font-size:11px;font-weight:600;letter-spacing:0.03em;border-bottom:2px solid transparent;font-family:var(--sans);}
+.bt-tab:hover{color:var(--text1);}
+.bt-tab.active{color:var(--teal);border-bottom-color:var(--teal);}
 .bt-wrap{font-family:var(--sans);}
 .bt-config{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px 22px;margin-bottom:16px;}
 .bt-entry-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:2px;background:var(--border);border-radius:6px;overflow:hidden;margin-bottom:14px;}
@@ -491,8 +495,9 @@ export async function render(container, { actionsSlot }) {
 
       <!-- Historial de operaciones reales -->
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;">
-        <div style="padding:14px 18px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;">
-          Historial de operaciones reales · ${nOps} cerradas · ${positions.length} abiertas
+        <div style="padding:14px 18px;border-bottom:1px solid var(--border);">
+          <div style="font-size:13px;font-weight:600;">Historial de operaciones reales · ${nOps} cerradas · ${positions.length} abiertas</div>
+          <div style="font-size:11px;color:var(--text2);margin-top:4px;">Alpha = P&L real − benchmark estimado (0.3%/op ≈ 15% anual / ~50 ops). Positivo = batiste al mercado en esa operación.</div>
         </div>
         <table class="bt-table">
           <thead><tr>
@@ -528,14 +533,14 @@ export async function render(container, { actionsSlot }) {
 
   // ── Tabs ────────────────────────────────────────
   function renderTabs() {
-    return `<div style="display:flex;gap:2px;border-bottom:1px solid var(--border);margin-bottom:20px;">
-      <button class="fondo-tab ${activeTab==='backtesting'?'active':''}" data-tab="backtesting">📊 Backtesting</button>
-      <button class="fondo-tab ${activeTab==='cartera-real'?'active':''}" data-tab="cartera-real">🎯 Cartera Real vs Sistema</button>
+    return `<div class="bt-tabs">
+      <button class="bt-tab ${activeTab==='backtesting'?'active':''}" data-tab="backtesting">📊 Backtesting</button>
+      <button class="bt-tab ${activeTab==='cartera-real'?'active':''}" data-tab="cartera-real">🎯 Cartera Real · Ratio de Información</button>
     </div>`;
   }
 
   function attachTabListeners() {
-    document.querySelectorAll('.fondo-tab[data-tab]').forEach(tab => {
+    document.querySelectorAll('.bt-tab[data-tab]').forEach(tab => {
       tab.addEventListener('click', () => {
         activeTab = tab.dataset.tab;
         renderMain();
