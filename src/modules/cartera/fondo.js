@@ -494,6 +494,9 @@ export async function render(container, { actionsSlot, savedState }) {
     const twr = m?.totalReturn || 0;
     const twrCol = twr >= 0 ? 'var(--green)' : 'var(--red)';
 
+    // Guardar datos para el informe mensual
+    window._ethanReportData = { m, positions, history, fondo, vlActual, valorCartera, pnlRealizado, pnlNoRealizado };
+
     el.innerHTML = `
       <div class="fondo-tabs">
         <button class="fondo-tab ${activeTab==='cotizacion'?'active':''}" data-tab="cotizacion">📈 Cotización</button>
@@ -1082,7 +1085,8 @@ export async function render(container, { actionsSlot, savedState }) {
 
   document.getElementById('fondo-refresh')?.addEventListener('click', load);
   document.getElementById('fondo-report-btn')?.addEventListener('click', () => {
-    generateReport({ m, positions, history, fondo, vlActual, valorCartera, pnlRealizado, pnlNoRealizado });
+    // Las variables se leen del estado guardado
+    generateReport(window._ethanReportData || {});
   });
 
   document.getElementById('fondo-backfill-btn')?.addEventListener('click', async () => {
