@@ -456,6 +456,7 @@ export async function render(container, { actionsSlot, savedState }) {
 
   actionsSlot.innerHTML = `
     <button class="btn" id="fondo-backfill-btn" title="Descarga el histórico de precios de todas las posiciones">📥 Importar histórico</button>
+    <button class="btn btn-primary" id="fondo-report-btn">📄 Informe mensual</button>
     <button class="btn btn-primary" id="fondo-refresh">↻ Actualizar</button>
   `;
   container.innerHTML = `<div id="fondo-wrap"><div class="empty"><div class="loader-ring"></div><div class="empty-title">Cargando fondo...</div></div></div>`;
@@ -1080,6 +1081,9 @@ export async function render(container, { actionsSlot, savedState }) {
   }
 
   document.getElementById('fondo-refresh')?.addEventListener('click', load);
+  document.getElementById('fondo-report-btn')?.addEventListener('click', () => {
+    generateReport({ m, positions, history, fondo, vlActual, valorCartera, pnlRealizado, pnlNoRealizado });
+  });
 
   document.getElementById('fondo-backfill-btn')?.addEventListener('click', async () => {
     const btn = document.getElementById('fondo-backfill-btn');
@@ -1132,4 +1136,354 @@ export async function render(container, { actionsSlot, savedState }) {
   });
   load();
   return { destroy() { document.getElementById('fondo-css')?.remove(); } };
+}
+
+// ── Generador de informe mensual ──────────────────────────────────────────
+function generateReport({ m, positions, history, fondo, vlActual, valorCartera, pnlRealizado, pnlNoRealizado }) {
+  const now   = new Date();
+  const mes   = now.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
+  const mesNum = now.toLocaleDateString('es-ES', { month: 'long' });
+  const anyo  = now.getFullYear();
+  const fmtP  = (n, d=1) => n != null && isFinite(n) ? (n >= 0 ? '+' : '') + n.toFixed(d) + '%' : '—';
+  const fmtE2 = n => n != null ? (n >= 0 ? '+€' : '−€') + Math.abs(n).toLocaleString('es-ES', { minimumFractionDigits: 0, maximumFractionDigits: 0 }) : '—';
+  const fmtV  = n => n != null ? n.toFixed(2) : '—';
+
+  // Operaciones del mes actual
+  const thisMonth = `${anyo}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  const opsMonth  = (history || []).filter(h => (h.exitDateISO || '').startsWith(thisMonth));
+  const wins      = opsMonth.filter(h => (h.pnlPct || 0) > 0);
+  const losses    = opsMonth.filter(h => (h.pnlPct || 0) <= 0);
+  const pnlMes    = opsMonth.reduce((s, h) => s + (h.pnlAbs || 0), 0);
+
+  const html = `<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>ETHAN · Informe ${mes}</title>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400;1,600&family=Montserrat:wght@300;400;500;600&family=IBM+Plex+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#040e0e;--surface:#0b1f1f;--surface2:#0f2828;--border:#1a3c3c;--teal:#40d9c0;--teal-dim:rgba(64,217,192,0.08);--green:#4ade80;--red:#f47174;--amber:#fbbf24;--blue:#5fa8e0;--text1:#eaf6f4;--text2:#7aada6;--text3:#3d6460;--serif:'Cormorant Garamond',serif;--sans:'Montserrat',sans-serif;--mono:'IBM Plex Mono',monospace;}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:var(--bg);color:var(--text1);font-family:var(--sans);font-size:13px;}
+.page{max-width:860px;margin:0 auto;}
+.cover{min-height:100vh;display:flex;flex-direction:column;justify-content:space-between;padding:60px;border-bottom:1px solid var(--border);position:relative;overflow:hidden;}
+.cover::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 70% 50% at 100% 0%,rgba(64,217,192,0.08),transparent 60%),radial-gradient(ellipse 50% 70% at 0% 100%,rgba(64,217,192,0.05),transparent 50%);pointer-events:none;}
+.cover-top{position:relative;z-index:1;}
+.cover-eyebrow{font-family:var(--mono);font-size:10px;letter-spacing:0.25em;text-transform:uppercase;color:var(--text3);margin-bottom:16px;margin-top:60px;}
+.cover-title{font-family:var(--serif);font-size:72px;font-weight:300;font-style:italic;line-height:0.95;color:var(--text1);}
+.cover-title em{color:var(--teal);}
+.cover-subtitle{font-family:var(--serif);font-size:24px;font-weight:300;color:var(--text2);margin-top:16px;}
+.cover-bottom{position:relative;z-index:1;display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border);border:1px solid var(--border);}
+.cover-stat{background:var(--surface);padding:20px 22px;}
+.cover-stat-lbl{font-family:var(--mono);font-size:9px;letter-spacing:0.15em;text-transform:uppercase;color:var(--text3);margin-bottom:8px;}
+.cover-stat-val{font-family:var(--serif);font-size:32px;font-weight:600;font-style:italic;line-height:1;}
+.cover-stat-sub{font-family:var(--mono);font-size:9px;color:var(--text2);margin-top:5px;}
+.section{padding:48px 60px;border-bottom:1px solid var(--border);}
+.section-header{display:flex;align-items:baseline;gap:16px;margin-bottom:28px;padding-bottom:14px;border-bottom:1px solid var(--border);}
+.section-num{font-family:var(--mono);font-size:10px;color:var(--teal);letter-spacing:0.15em;}
+.section-title{font-family:var(--serif);font-size:28px;font-weight:400;font-style:italic;}
+.section-rule{flex:1;height:1px;background:var(--border);}
+.metrics-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--border);border:1px solid var(--border);border-radius:4px;overflow:hidden;margin-bottom:20px;}
+.metric-cell{background:var(--surface);padding:18px 20px;}
+.metric-lbl{font-family:var(--mono);font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text2);margin-bottom:8px;}
+.metric-val{font-family:var(--serif);font-size:34px;font-weight:600;font-style:italic;line-height:1;}
+.metric-sub{font-family:var(--mono);font-size:9px;color:var(--text2);margin-top:5px;}
+.compare-table{width:100%;border-collapse:collapse;margin-bottom:20px;}
+.compare-table th{padding:10px 16px;text-align:left;font-family:var(--mono);font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text2);border-bottom:1px solid var(--border);background:var(--surface2);}
+.compare-table th.r{text-align:right;}
+.compare-table td{padding:12px 16px;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:12px;}
+.compare-table td.r{text-align:right;}
+.compare-table td.label{font-family:var(--sans);font-size:12px;color:var(--text1);}
+.compare-table tbody tr:last-child td{border-bottom:none;}
+.ops-table{width:100%;border-collapse:collapse;}
+.ops-table th{padding:9px 12px;text-align:left;font-family:var(--mono);font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text2);border-bottom:1px solid var(--border);background:var(--surface2);}
+.ops-table th.r{text-align:right;}
+.ops-table td{padding:11px 12px;border-bottom:1px solid var(--border);font-size:11px;}
+.ops-table td.r{text-align:right;font-family:var(--mono);}
+.ops-table tbody tr:last-child td{border-bottom:none;}
+.pos-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--border);border:1px solid var(--border);border-radius:4px;overflow:hidden;margin-bottom:20px;}
+.pos-cell{background:var(--surface);padding:14px 16px;display:flex;justify-content:space-between;align-items:center;}
+.pos-ticker{font-weight:700;font-size:14px;}
+.pos-name{font-size:10px;color:var(--text2);margin-top:3px;}
+.pos-pnl{font-family:var(--serif);font-size:22px;font-style:italic;font-weight:600;}
+.pos-weight{font-family:var(--mono);font-size:9px;color:var(--text2);margin-top:3px;}
+.insight{border-left:3px solid var(--teal);background:var(--teal-dim);padding:14px 18px;border-radius:0 4px 4px 0;margin-top:18px;}
+.insight-title{font-family:var(--mono);font-size:9px;letter-spacing:0.15em;text-transform:uppercase;color:var(--teal);margin-bottom:7px;}
+.insight-text{font-size:12px;color:var(--text1);line-height:1.7;}
+.tag{display:inline-block;padding:2px 8px;border-radius:3px;font-family:var(--mono);font-size:9px;font-weight:700;}
+.tag-green{background:rgba(74,222,128,0.12);color:var(--green);}
+.tag-red{background:rgba(244,113,116,0.12);color:var(--red);}
+.tag-blue{background:rgba(95,168,224,0.12);color:var(--blue);}
+.risk-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-bottom:20px;}
+.risk-card{background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:16px 18px;}
+.risk-card-lbl{font-family:var(--mono);font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text2);margin-bottom:7px;}
+.risk-card-val{font-family:var(--serif);font-size:26px;font-style:italic;font-weight:600;line-height:1;margin-bottom:4px;}
+.risk-card-desc{font-size:10px;color:var(--text2);line-height:1.5;margin-top:5px;}
+.macro-row{display:flex;align-items:center;gap:24px;padding:16px 20px;background:var(--surface);border:1px solid var(--border);border-radius:4px;margin-bottom:16px;}
+.macro-score{font-family:var(--serif);font-size:56px;font-weight:600;font-style:italic;line-height:1;flex-shrink:0;}
+.macro-label{font-family:var(--serif);font-size:20px;font-style:italic;margin-bottom:4px;}
+.macro-desc{font-size:11px;color:var(--text2);line-height:1.6;}
+.macro-inds{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border);border:1px solid var(--border);border-radius:4px;overflow:hidden;}
+.macro-ind{background:var(--surface2);padding:12px 14px;}
+.macro-ind-lbl{font-family:var(--mono);font-size:9px;color:var(--text3);margin-bottom:5px;}
+.macro-ind-val{font-family:var(--mono);font-size:13px;font-weight:500;}
+.exec-summary{font-family:var(--serif);font-size:17px;font-weight:300;line-height:1.8;border-left:3px solid var(--teal);padding-left:22px;margin-bottom:22px;}
+.exec-summary em{color:var(--teal);font-style:italic;}
+.footer{padding:28px 60px;display:flex;justify-content:space-between;align-items:center;}
+.footer-left{font-family:var(--serif);font-size:13px;font-style:italic;color:var(--text3);}
+.footer-right{font-family:var(--mono);font-size:9px;color:var(--text3);text-align:right;line-height:1.6;}
+@media print{body{background:#040e0e!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}.cover{min-height:100vh;page-break-after:always;}.section{page-break-inside:avoid;}}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- PORTADA -->
+  <div class="cover">
+    <div class="cover-top">
+      <img src="/LOGO ETHAN MERCADOS.png" alt="ETHAN Mercados" style="height:34px;width:auto;margin-bottom:0;">
+      <div class="cover-eyebrow">Informe mensual de gestión · Período</div>
+      <div class="cover-title">${mesNum}<br><em>${anyo}</em></div>
+      <div class="cover-subtitle">Fondo ETHAN · Resumen ejecutivo y métricas de rendimiento</div>
+    </div>
+    <div class="cover-bottom">
+      <div class="cover-stat">
+        <div class="cover-stat-lbl">VL cierre</div>
+        <div class="cover-stat-val" style="color:var(--teal);">${fmtV(vlActual)}</div>
+        <div class="cover-stat-sub">Base 100 · inicio fondo</div>
+      </div>
+      <div class="cover-stat">
+        <div class="cover-stat-lbl">Rentabilidad mes</div>
+        <div class="cover-stat-val" style="color:${(m?.mtd||0)>=0?'var(--green)':'var(--red)'};">${fmtP((m?.mtd||0)*100)}</div>
+        <div class="cover-stat-sub">vs benchmark</div>
+      </div>
+      <div class="cover-stat">
+        <div class="cover-stat-lbl">Rentabilidad YTD</div>
+        <div class="cover-stat-val" style="color:${(m?.ytd||0)>=0?'var(--green)':'var(--red)'};">${fmtP((m?.ytd||0)*100)}</div>
+        <div class="cover-stat-sub">acumulado año</div>
+      </div>
+      <div class="cover-stat">
+        <div class="cover-stat-lbl">Valor cartera</div>
+        <div class="cover-stat-val" style="color:var(--teal);">€${Math.round(valorCartera||0).toLocaleString('es-ES')}</div>
+        <div class="cover-stat-sub">${positions.length} posiciones abiertas</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 01. RESUMEN EJECUTIVO -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-num">01</span>
+      <span class="section-title">Resumen Ejecutivo</span>
+      <div class="section-rule"></div>
+    </div>
+    <p class="exec-summary">
+      ${mesNum} ${anyo} cerró con un VL de <em>${fmtV(vlActual)}</em> y una rentabilidad acumulada desde inicio del 
+      <em>${fmtP((m?.totalReturn||0)*100)}</em>. 
+      ${opsMonth.length ? `Durante el mes se ejecutaron <em>${opsMonth.length} operaciones</em> — ${wins.length} ganadoras y ${losses.length} perdedoras — con un P&L realizado de <em>${fmtE2(pnlMes)}</em>.` : 'No se ejecutaron operaciones durante el mes.'}
+      El P&L no realizado en posiciones abiertas es de <em>${fmtE2(pnlNoRealizado)}</em>.
+    </p>
+    <div class="insight">
+      <div class="insight-title">Métricas clave del período</div>
+      <div class="insight-text">
+        Sharpe: <strong>${m?.sharpe?.toFixed(2)||'—'}</strong> · 
+        Sortino: <strong>${m?.sortino?.toFixed(2)||'—'}</strong> · 
+        Volatilidad anual: <strong>${m?.annVol?((m.annVol*100).toFixed(1)+'%'):'—'}</strong> · 
+        Max Drawdown: <strong style="color:var(--red);">${m?.maxDD?('-'+(m.maxDD*100).toFixed(1)+'%'):'—'}</strong> · 
+        Beta vs SPY: <strong>${m?.beta?.toFixed(2)||'—'}</strong>
+      </div>
+    </div>
+  </div>
+
+  <!-- 02. RENTABILIDAD -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-num">02</span>
+      <span class="section-title">Rentabilidad</span>
+      <div class="section-rule"></div>
+    </div>
+    <div class="metrics-grid">
+      <div class="metric-cell">
+        <div class="metric-lbl">TWR Total</div>
+        <div class="metric-val" style="color:${(m?.totalReturn||0)>=0?'var(--green)':'var(--red)'};">${fmtP((m?.totalReturn||0)*100)}</div>
+        <div class="metric-sub">desde inicio del fondo</div>
+      </div>
+      <div class="metric-cell">
+        <div class="metric-lbl">YTD ${anyo}</div>
+        <div class="metric-val" style="color:${(m?.ytd||0)>=0?'var(--green)':'var(--red)'};">${fmtP((m?.ytd||0)*100)}</div>
+        <div class="metric-sub">acumulado año en curso</div>
+      </div>
+      <div class="metric-cell">
+        <div class="metric-lbl">MTD ${mesNum}</div>
+        <div class="metric-val" style="color:${(m?.mtd||0)>=0?'var(--green)':'var(--red)'};">${fmtP((m?.mtd||0)*100)}</div>
+        <div class="metric-sub">rentabilidad del mes</div>
+      </div>
+      <div class="metric-cell">
+        <div class="metric-lbl">P&L Realizado</div>
+        <div class="metric-val" style="color:${(pnlRealizado||0)>=0?'var(--green)':'var(--red)'};">${fmtE2(pnlRealizado)}</div>
+        <div class="metric-sub">operaciones cerradas</div>
+      </div>
+      <div class="metric-cell">
+        <div class="metric-lbl">P&L No Realizado</div>
+        <div class="metric-val" style="color:${(pnlNoRealizado||0)>=0?'var(--green)':'var(--red)'};">${fmtE2(pnlNoRealizado)}</div>
+        <div class="metric-sub">posiciones abiertas</div>
+      </div>
+      <div class="metric-cell">
+        <div class="metric-lbl">Valor Liquidativo</div>
+        <div class="metric-val" style="color:var(--teal);">${fmtV(vlActual)}</div>
+        <div class="metric-sub">${m?.participaciones?.toFixed(2)||'—'} participaciones</div>
+      </div>
+    </div>
+    ${m?.spyStats ? `
+    <table class="compare-table">
+      <thead><tr><th>Métrica</th><th class="r">Fondo ETHAN</th><th class="r">SPY</th><th class="r">Diferencia</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="label">TWR período</td>
+          <td class="r" style="color:${(m.totalReturn||0)>=(m.spyStats.twrTotal||0)?'var(--green)':'var(--red)'};">${fmtP((m.totalReturn||0)*100)}</td>
+          <td class="r" style="color:var(--text2);">${fmtP((m.spyStats.twrTotal||0)*100)}</td>
+          <td class="r" style="color:${(m.totalReturn||0)>=(m.spyStats.twrTotal||0)?'var(--green)':'var(--red)'};">${fmtP(((m.totalReturn||0)-(m.spyStats.twrTotal||0))*100)}</td>
+        </tr>
+        <tr>
+          <td class="label">Volatilidad anual</td>
+          <td class="r" style="color:${(m.annVol||0)<=(m.spyStats.volAnual||1)?'var(--green)':'var(--red)'};">${m.annVol?((m.annVol*100).toFixed(1)+'%'):'—'}</td>
+          <td class="r" style="color:var(--text2);">${m.spyStats.volAnual?((m.spyStats.volAnual*100).toFixed(1)+'%'):'—'}</td>
+          <td class="r" style="color:${(m.annVol||0)<=(m.spyStats.volAnual||1)?'var(--green)':'var(--red)'};">${m.annVol&&m.spyStats.volAnual?(fmtP(((m.annVol-m.spyStats.volAnual)*100))):'—'}</td>
+        </tr>
+      </tbody>
+    </table>` : ''}
+  </div>
+
+  <!-- 03. RIESGO -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-num">03</span>
+      <span class="section-title">Métricas de Riesgo</span>
+      <div class="section-rule"></div>
+    </div>
+    <div class="risk-grid">
+      <div class="risk-card">
+        <div class="risk-card-lbl">Sharpe Ratio</div>
+        <div class="risk-card-val" style="color:${(m?.sharpe||0)>=1?'var(--green)':(m?.sharpe||0)>=0?'var(--amber)':'var(--red)'};">${m?.sharpe?.toFixed(2)||'—'}</div>
+        <div class="risk-card-desc">Retorno ajustado por riesgo total. >1 = nivel profesional.</div>
+      </div>
+      <div class="risk-card">
+        <div class="risk-card-lbl">Sortino Ratio</div>
+        <div class="risk-card-val" style="color:${(m?.sortino||0)>=1?'var(--green)':(m?.sortino||0)>=0?'var(--amber)':'var(--red)'};">${m?.sortino?.toFixed(2)||'—'}</div>
+        <div class="risk-card-desc">Penaliza solo la volatilidad negativa. >2 = excelente.</div>
+      </div>
+      <div class="risk-card">
+        <div class="risk-card-lbl">Max Drawdown</div>
+        <div class="risk-card-val" style="color:var(--red);">${m?.maxDD?('-'+(m.maxDD*100).toFixed(1)+'%'):'—'}</div>
+        <div class="risk-card-desc">Caída máxima desde máximos históricos del VL.</div>
+      </div>
+      <div class="risk-card">
+        <div class="risk-card-lbl">Beta vs SPY</div>
+        <div class="risk-card-val" style="color:var(--teal);">${m?.beta?.toFixed(2)||'—'}</div>
+        <div class="risk-card-desc">Sensibilidad vs mercado. <1 = más defensivo que el SP500.</div>
+      </div>
+      <div class="risk-card">
+        <div class="risk-card-lbl">Alpha Jensen</div>
+        <div class="risk-card-val" style="color:${(m?.alpha||0)>=0?'var(--green)':'var(--red)'};">${m?.alpha?fmtP((m.alpha*100),2):'—'}</div>
+        <div class="risk-card-desc">Retorno no explicado por el mercado. Positivo = valor añadido real.</div>
+      </div>
+      <div class="risk-card">
+        <div class="risk-card-lbl">Calmar Ratio</div>
+        <div class="risk-card-val" style="color:${(m?.calmar||0)>=0.5?'var(--green)':'var(--amber)'};">${m?.calmar?.toFixed(2)||'—'}</div>
+        <div class="risk-card-desc">TWR / Max Drawdown. Retorno por unidad de drawdown sufrido.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 04. OPERACIONES -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-num">04</span>
+      <span class="section-title">Operaciones del Mes</span>
+      <div class="section-rule"></div>
+    </div>
+    ${opsMonth.length ? `
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border);border:1px solid var(--border);border-radius:4px;overflow:hidden;margin-bottom:20px;">
+      <div style="background:var(--surface);padding:14px 16px;">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--text2);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.1em;">Operaciones</div>
+        <div style="font-family:var(--serif);font-size:28px;font-style:italic;font-weight:600;">${opsMonth.length}</div>
+        <div style="font-family:var(--mono);font-size:9px;color:var(--text2);margin-top:4px;">${wins.length}G · ${losses.length}P</div>
+      </div>
+      <div style="background:var(--surface);padding:14px 16px;">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--text2);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.1em;">Win Rate mes</div>
+        <div style="font-family:var(--serif);font-size:28px;font-style:italic;font-weight:600;color:${wins.length/opsMonth.length>=0.5?'var(--green)':'var(--red)'};">${opsMonth.length>0?((wins.length/opsMonth.length*100).toFixed(0)+'%'):'—'}</div>
+        <div style="font-family:var(--mono);font-size:9px;color:var(--text2);margin-top:4px;">del mes</div>
+      </div>
+      <div style="background:var(--surface);padding:14px 16px;">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--text2);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.1em;">P&L realizado</div>
+        <div style="font-family:var(--serif);font-size:28px;font-style:italic;font-weight:600;color:${pnlMes>=0?'var(--green)':'var(--red)'};">${fmtE2(pnlMes)}</div>
+        <div style="font-family:var(--mono);font-size:9px;color:var(--text2);margin-top:4px;">neto del mes</div>
+      </div>
+      <div style="background:var(--surface);padding:14px 16px;">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--text2);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.1em;">Días medio</div>
+        <div style="font-family:var(--serif);font-size:28px;font-style:italic;font-weight:600;">${opsMonth.length>0?Math.round(opsMonth.reduce((s,h)=>{const d=h.exitDateISO&&h.entryDateISO?Math.round((new Date(h.exitDateISO)-new Date(h.entryDateISO))/86400000):0;return s+d;},0)/opsMonth.length)+'d':'—'}</div>
+        <div style="font-family:var(--mono);font-size:9px;color:var(--text2);margin-top:4px;">duración media</div>
+      </div>
+    </div>
+    <table class="ops-table">
+      <thead><tr><th>Ticker</th><th>Entrada</th><th>Salida</th><th class="r">P.Entrada</th><th class="r">P.Salida</th><th class="r">P&L %</th><th class="r">P&L €</th></tr></thead>
+      <tbody>
+        ${opsMonth.map(op => `<tr>
+          <td><div style="font-weight:700;font-size:13px;">${op.ticker||'—'}</div></td>
+          <td style="font-family:var(--mono);font-size:10px;color:var(--text2);">${op.entryDateISO?.slice(0,10)||'—'}</td>
+          <td style="font-family:var(--mono);font-size:10px;color:var(--text2);">${op.exitDateISO?.slice(0,10)||'—'}</td>
+          <td class="r">$${op.entry?.toFixed(2)||'—'}</td>
+          <td class="r">$${op.exit?.toFixed(2)||'—'}</td>
+          <td class="r" style="color:${(op.pnlPct||0)>=0?'var(--green)':'var(--red)'};font-weight:700;">${fmtP(op.pnlPct||0)}</td>
+          <td class="r" style="color:${(op.pnlAbs||0)>=0?'var(--green)':'var(--red)'};font-weight:700;">${fmtE2(op.pnlAbs)}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>` : `<div style="text-align:center;padding:32px;color:var(--text2);font-family:var(--mono);">Sin operaciones cerradas en ${mesNum} ${anyo}</div>`}
+  </div>
+
+  <!-- 05. POSICIONES ABIERTAS -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-num">05</span>
+      <span class="section-title">Posiciones Abiertas al Cierre</span>
+      <div class="section-rule"></div>
+    </div>
+    ${positions.length ? `
+    <div class="pos-grid">
+      ${positions.map(p => {
+        const cur = p.currentPrice || p.entry;
+        const dir = p.direction || 'alcista';
+        const pnlPct = cur && p.entry ? (dir==='bajista'?(p.entry-cur)/p.entry:(cur-p.entry)/p.entry)*100 : 0;
+        const col = pnlPct >= 0 ? 'var(--green)' : 'var(--red)';
+        const weight = valorCartera > 0 ? ((p.shares||1)*(cur||p.entry||0)/valorCartera*100).toFixed(1) : '—';
+        return `<div class="pos-cell">
+          <div>
+            <div class="pos-ticker" style="color:var(--text1);">${p.ticker}</div>
+            <div class="pos-name">${p.name||''}</div>
+          </div>
+          <div style="text-align:right;">
+            <div class="pos-pnl" style="color:${col};">${fmtP(pnlPct)}</div>
+            <div class="pos-weight">Peso: ${weight}% · Stop: ${p.entryStop||p.stopManual||'—'}</div>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>` : `<div style="text-align:center;padding:32px;color:var(--text2);font-family:var(--mono);">Sin posiciones abiertas</div>`}
+  </div>
+
+  <!-- PIE -->
+  <div class="footer">
+    <div class="footer-left">ETHAN Mercados · Informe ${mes}</div>
+    <div class="footer-right">
+      Documento de uso privado · No constituye asesoramiento financiero<br>
+      Generado el ${now.toLocaleDateString('es-ES',{day:'numeric',month:'long',year:'numeric'})} · Plataforma ETHAN v3.0
+    </div>
+  </div>
+</div>
+</body>
+</html>`;
+
+  const win = window.open('', '_blank');
+  win.document.write(html);
+  win.document.close();
+  win.document.title = `ETHAN · Informe ${mes}`;
 }
