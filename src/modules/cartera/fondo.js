@@ -355,9 +355,13 @@ async function calcMetricas(fondo, vlActual, history = [], positions = [], capit
   const thisMonth = today.slice(0, 7);
   const serieThisYear = serieFinal.filter(([d]) => d.slice(0,4) === thisYear);
   const serieThisMonth = serieFinal.filter(([d]) => d.slice(0,7) === thisMonth);
-  const ytd = serieThisYear.length >= 2
-    ? (serieThisYear[serieThisYear.length-1][1] - serieThisYear[0][1]) / serieThisYear[0][1]
-    : totalReturn;
+  // Si el fondo empezó este año, YTD = TWR total (mismo período)
+  const fondoStartYear = startDate?.slice(0,4);
+  const ytd = fondoStartYear === thisYear
+    ? totalReturn
+    : serieThisYear.length >= 2
+      ? (serieThisYear[serieThisYear.length-1][1] - serieThisYear[0][1]) / serieThisYear[0][1]
+      : totalReturn;
   const mtd = serieThisMonth.length >= 2
     ? (serieThisMonth[serieThisMonth.length-1][1] - serieThisMonth[0][1]) / serieThisMonth[0][1]
     : null;
