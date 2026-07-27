@@ -20,21 +20,33 @@ const PROXIES = [
 ];
 
 async function fetchData(ticker) {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1y&events=history`;
+  const TICKER = (ticker === '3GOL' ? '3GOL.MI' : ticker);
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${TICKER}?interval=1d&range=6mo&events=history`;
   for (const fn of PROXIES) {
     try {
-      const r = await fetch(fn(url), { signal: AbortSignal.timeout(8000) });
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), 8000);
+      const r = await fetch(fn(url), { signal: ctrl.signal });
+      clearTimeout(tid);
       if (!r.ok) continue;
       const text = await r.text();
       let j; try { j = JSON.parse(text); } catch { continue; }
       const res = j?.chart?.result?.[0]; if (!res) continue;
       const q = res.indicators?.quote?.[0]; if (!q) continue;
       const meta = res.meta || {};
+      const adj = res.indicators.adjclose?.[0]?.adjclose || q.close;
+      // Filtrar índices con cierre válido
+      const valid = res.timestamp.map((_,i) => i).filter(i =>
+        adj[i] != null && !isNaN(adj[i]) && q.high[i] != null && q.low[i] != null
+      );
+      if (!valid.length) continue;
       return {
-        timestamps: res.timestamp,
-        opens:  q.open, highs: q.high,
-        lows:   q.low,  closes: q.close,
-        volumes: q.volume,
+        timestamps: valid.map(i => res.timestamp[i]),
+        opens:   valid.map(i => q.open[i]),
+        highs:   valid.map(i => q.high[i]),
+        lows:    valid.map(i => q.low[i]),
+        closes:  valid.map(i => adj[i]),
+        volumes: valid.map(i => q.volume[i]),
         name: meta.shortName || meta.longName || ticker,
         currency: meta.currency || 'USD'
       };
