@@ -3,7 +3,7 @@
 
 const CHANNEL_ID = 'UCjTfnOFcGW3n3M0WKXpZS0Q';
 
-async function getLatestVideos(n = 5) {
+async function getLatestVideos(n = 8) {
   // Intentar con handle primero, luego con channel ID
   const urls = [
     'https://www.youtube.com/feeds/videos.xml?user=JoseLuisCavatv',
@@ -99,7 +99,7 @@ async function getTranscript(videoId) {
 async function summarize(title, transcript, apiKey) {
   const content = transcript
     ? `Título: ${title}\n\nTranscripción:\n${transcript}`
-    : `Título del vídeo de José Luis Cava: "${title}"\n\nNo hay transcripción disponible. Basa el análisis solo en el título.`;
+    : `Título del vídeo de José Luis Cava: "${title}"\n\nNo hay transcripción. Basándote SOLO en el título, genera tips de trading concretos y específicos sobre el activo o tema que menciona. Si menciona un activo concreto (oro, China, tipos, inflación...) genera tips accionables sobre ese activo.`;
 
   const r = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -111,14 +111,12 @@ async function summarize(title, transcript, apiKey) {
     body: JSON.stringify({
       model: 'claude-sonnet-4-6',
       max_tokens: 600,
-      messages: [{ role: 'user', content: `Eres un asistente de trading. Analiza este contenido de José Luis Cava y extrae 5 tips o puntos clave de su análisis.
-
-${content}
+      messages: [{ role: 'user', content: `Eres un asistente de trading especializado en el estilo de José Luis Cava — análisis técnico, macro y especulación. ${content}
 
 Responde SOLO con JSON sin markdown:
-{"tips":["tip 1","tip 2","tip 3","tip 4","tip 5"],"resumen":"Una frase resumen del análisis"}
+{"tips":["tip 1 concreto y accionable","tip 2","tip 3","tip 4","tip 5"],"resumen":"Una frase resumen del análisis"}
 
-Tips concretos: niveles de precio, sectores, tendencias, señales técnicas.` }],
+Los tips deben ser MUY concretos: niveles de precio, activos específicos, señales técnicas, sectores. Evita generalidades.` }],
     }),
     signal: (() => { const c = new AbortController(); setTimeout(() => c.abort(), 30000); return c.signal; })(),
   });
@@ -141,7 +139,7 @@ export default async function handler(req, res) {
     if (!videos.length) return res.status(200).json({ videos: [], error: 'Sin vídeos' });
 
     const results = await Promise.all(videos.map(async (v, i) => {
-      if (i >= 3) return { ...v, tips: [], resumen: '', hasTranscript: false };
+      if (i >= 5) return { ...v, tips: [], resumen: '', hasTranscript: false };
       const transcript = await getTranscript(v.id);
       if (!apiKey) return { ...v, tips: [], resumen: '', hasTranscript: !!transcript };
       const summary = await summarize(v.title, transcript, apiKey).catch(() => ({ tips: [], resumen: '' }));
