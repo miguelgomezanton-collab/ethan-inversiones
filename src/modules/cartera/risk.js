@@ -31,7 +31,7 @@ async function fetchPrice(ticker) {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=5d`;
   for (const fn of PROXIES) {
     try {
-      const r = await fetch(fn(url), { signal: AbortSignal.timeout(6000) });
+      const r = await fetch(fn(url), { signal: (() => { const c = new AbortController(); setTimeout(() => c.abort(), 6000); return c.signal; })() });
       if (!r.ok) continue;
       const j = JSON.parse(await r.text());
       return j?.chart?.result?.[0]?.meta?.regularMarketPrice || null;

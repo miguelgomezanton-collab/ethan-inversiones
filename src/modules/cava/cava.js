@@ -65,7 +65,7 @@ export async function render(container, { actionsSlot }) {
       </div>`;
 
     try {
-      const r = await fetch('/api/cava', { signal: AbortSignal.timeout(60000) });
+      const r = await fetch('/api/cava', { signal: (() => { const c = new AbortController(); setTimeout(() => c.abort(), 60000); return c.signal; })() });
       const data = await r.json();
       if (data.error && !data.videos?.length) throw new Error(data.error);
       paintVideos(data.videos || []);

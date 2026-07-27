@@ -284,7 +284,7 @@ async function fetchTickerPrice(yf) {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${yf}?interval=1d&range=2d`;
   for (const fn of TAPE_PROXIES) {
     try {
-      const r = await fetch(fn(url), { signal: AbortSignal.timeout(5000) });
+      const r = await fetch(fn(url), { signal: (() => { const c = new AbortController(); setTimeout(() => c.abort(), 5000); return c.signal; })() });
       const j = await r.json();
       const meta = j.chart?.result?.[0]?.meta;
       if (!meta) continue;

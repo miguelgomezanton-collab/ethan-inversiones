@@ -25,7 +25,7 @@ async function fetchYahooHistory(ticker, dateFrom, dateTo) {
 
   for (const fn of PROXIES) {
     try {
-      const r = await fetch(fn(url), { signal: AbortSignal.timeout(12000) });
+      const r = await fetch(fn(url), { signal: (() => { const c = new AbortController(); setTimeout(() => c.abort(), 12000); return c.signal; })() });
       if (!r.ok) continue;
       const j = JSON.parse(await r.text());
       const res = j?.chart?.result?.[0]; if (!res) continue;

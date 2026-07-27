@@ -208,7 +208,7 @@ async function fetchSPYReturn(startDate) {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/SPY?interval=1d&range=${range}`;
   for (const fn of PROXIES) {
     try {
-      const r = await fetch(fn(url), { signal: AbortSignal.timeout(6000) });
+      const r = await fetch(fn(url), { signal: (() => { const c = new AbortController(); setTimeout(() => c.abort(), 6000); return c.signal; })() });
       if (!r.ok) continue;
       const j = JSON.parse(await r.text());
       const res = j?.chart?.result?.[0];

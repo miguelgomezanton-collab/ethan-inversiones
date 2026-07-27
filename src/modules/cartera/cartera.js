@@ -237,7 +237,7 @@ export async function render(container, { actionsSlot }) {
         let found = false;
         for (const fn of PROXIES) {
           try {
-            const r = await fetch(fn(url), { signal: AbortSignal.timeout(6000) });
+            const r = await fetch(fn(url), { signal: (() => { const c = new AbortController(); setTimeout(() => c.abort(), 6000); return c.signal; })() });
             if (!r.ok) continue;
             const j = JSON.parse(await r.text());
             const meta = j?.chart?.result?.[0]?.meta;
@@ -650,7 +650,7 @@ export async function render(container, { actionsSlot }) {
 
     for (const fn of PROXIES) {
       try {
-        const r = await fetch(fn(url), { signal: AbortSignal.timeout(10000) });
+        const r = await fetch(fn(url), { signal: (() => { const c = new AbortController(); setTimeout(() => c.abort(), 10000); return c.signal; })() });
         if (!r.ok) continue;
         const j = JSON.parse(await r.text());
         const res = j?.chart?.result?.[0]; if (!res) continue;

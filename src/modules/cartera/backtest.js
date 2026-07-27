@@ -92,7 +92,7 @@ async function fetchData(ticker) {
   let lastErr;
   for (const fn of PROXIES) {
     try {
-      const r = await fetch(fn(yUrl), { signal: AbortSignal.timeout(15000) });
+      const r = await fetch(fn(yUrl), { signal: (() => { const c = new AbortController(); setTimeout(() => c.abort(), 15000); return c.signal; })() });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const j = JSON.parse(await r.text());
       if (j.chart?.error) throw new Error(j.chart.error.description);

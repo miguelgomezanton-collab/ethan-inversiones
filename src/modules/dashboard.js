@@ -39,7 +39,7 @@ function analyzeSentiment(headlines) {
 }
 async function fetchNoticias() {
   try {
-    const r = await fetch('/api/noticias', { signal: AbortSignal.timeout(10000) });
+    const r = await fetch('/api/noticias', { signal: (() => { const c = new AbortController(); setTimeout(() => c.abort(), 10000); return c.signal; })() });
     if (!r.ok) return [];
     const data = await r.json();
     return data.items || [];
@@ -274,9 +274,9 @@ export async function render(container, { actionsSlot }) {
 
     const [noticiasProm, noticiasPosProm, noticiasWatchProm] = [
       fetchNoticias(),
-      tickers ? fetch(`/api/noticias?tickers=${tickers}`, { signal: AbortSignal.timeout(12000) })
+      tickers ? fetch(`/api/noticias?tickers=${tickers}`, { signal: (() => { const c = new AbortController(); setTimeout(() => c.abort(), 12000); return c.signal; })() })
                  .then(r => r.json()).catch(() => ({ results: {} })) : Promise.resolve({ results: {} }),
-      watchlistTickers ? fetch(`/api/noticias?tickers=${watchlistTickers}`, { signal: AbortSignal.timeout(12000) })
+      watchlistTickers ? fetch(`/api/noticias?tickers=${watchlistTickers}`, { signal: (() => { const c = new AbortController(); setTimeout(() => c.abort(), 12000); return c.signal; })() })
                  .then(r => r.json()).catch(() => ({ results: {} })) : Promise.resolve({ results: {} }),
     ];
 

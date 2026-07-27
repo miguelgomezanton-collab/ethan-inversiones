@@ -128,7 +128,7 @@ async function fetchData(ticker) {
   ];
   for (const fn of proxies) {
     try {
-      const r = await fetch(fn(yUrl), { signal: AbortSignal.timeout(7000) });
+      const r = await fetch(fn(yUrl), { signal: (() => { const c = new AbortController(); setTimeout(() => c.abort(), 7000); return c.signal; })() });
       if (!r.ok) continue;
       const text = await r.text();
       let j;

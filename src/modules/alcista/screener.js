@@ -40,7 +40,7 @@ const PROXIES = [
 async function fetchWithProxy(url) {
   for (const fn of PROXIES) {
     try {
-      const r = await fetch(fn(url), { signal: AbortSignal.timeout(7000) });
+      const r = await fetch(fn(url), { signal: (() => { const c = new AbortController(); setTimeout(() => c.abort(), 7000); return c.signal; })() });
       if (!r.ok) continue;
       const text = await r.text();
       try { return JSON.parse(text); } catch { continue; }

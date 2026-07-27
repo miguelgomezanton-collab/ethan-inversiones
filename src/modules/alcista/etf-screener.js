@@ -22,7 +22,7 @@ const PROXIES = [
 async function fetchJSON(url) {
   for (const fn of PROXIES) {
     try {
-      const r = await fetch(fn(url), { signal: AbortSignal.timeout(8000) });
+      const r = await fetch(fn(url), { signal: (() => { const c = new AbortController(); setTimeout(() => c.abort(), 8000); return c.signal; })() });
       if (!r.ok) continue;
       const text = await r.text();
       return JSON.parse(text);

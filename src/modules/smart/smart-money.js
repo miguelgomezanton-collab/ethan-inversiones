@@ -86,8 +86,8 @@ export async function render(container, { actionsSlot }) {
       res.innerHTML = `<div class="sm-loader"><div class="loader-ring"></div>Buscando datos de Smart Money para ${ticker}... (15-30s)</div>`;
 
       const [insidersRes, marketRes] = await Promise.allSettled([
-        fetch(`/api/smart-money?ticker=${ticker}&section=insiders`, { signal: AbortSignal.timeout(58000) }).then(r => r.json()),
-        fetch(`/api/smart-money?ticker=${ticker}&section=market`,   { signal: AbortSignal.timeout(58000) }).then(r => r.json()),
+        fetch(`/api/smart-money?ticker=${ticker}&section=insiders`, { signal: (() => { const c = new AbortController(); setTimeout(() => c.abort(), 58000); return c.signal; })() }).then(r => r.json()),
+        fetch(`/api/smart-money?ticker=${ticker}&section=market`,   { signal: (() => { const c = new AbortController(); setTimeout(() => c.abort(), 58000); return c.signal; })() }).then(r => r.json()),
       ]);
 
       const insidersData = insidersRes.status === 'fulfilled' ? insidersRes.value : {};
