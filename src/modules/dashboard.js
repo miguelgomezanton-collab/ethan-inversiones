@@ -19,6 +19,68 @@ const fmtPct = (n,d=2) => n != null && isFinite(n) ? (n>=0?'+':'')+n.toFixed(d)+
 const fmtVL  = n => n != null ? n.toFixed(2) : '—';
 const fmtDate = d => d ? new Date(d+'T12:00:00').toLocaleDateString('es-ES',{day:'2-digit',month:'short'}) : '—';
 
+// ── Earnings Calendar ────────────────────────────────────────
+async function fetchEarnings(tickers) {
+  if (!tickers?.length) return [];
+  const results = [];
+  await Promise.all(tickers.map(async ticker => {
+    try {
+      const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${ticker}?modules=calendarEvents`;
+      const proxies = [
+        u => `https://soft-field-156f.miguel-gomez-anton.workers.dev/?url=${encodeURIComponent(u)}`,
+        u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+        u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+      ];
+      for (const fn of proxies) {
+        try {
+          const ctrl = new AbortController();
+          const tid = setTimeout(() => ctrl.abort(), 8000);
+          const r = await fetch(fn(url), { signal: ctrl.signal });
+          clearTimeout(tid);
+          if (!r.ok) continue;
+          const data = await r.json();
+          const cal = data?.quoteSummary?.result?.[0]?.calendarEvents;
+          const earningsDate = cal?.earnings?.earningsDate?.[0]?.raw;
+          if (earningsDate) {
+            const date = new Date(earningsDate * 1000);
+            const today = new Date();
+            const daysUntil = Math.round((date - today) / 86400000);
+            results.push({ ticker, date, daysUntil });
+            break;
+          }
+        } catch {}
+      }
+    } catch {}
+  }));
+  return results
+    .filter(e => e.daysUntil >= -1 && e.daysUntil <= 90)
+    .sort((a, b) => a.daysUntil - b.daysUntil);
+}
+
+function paintEarnings(earnings) {
+  const el = document.getElementById('db-earnings-content');
+  if (!el) return;
+  if (!earnings?.length) {
+    el.innerHTML = '<div class="db-empty">Sin earnings próximos en los próximos 90 días</div>';
+    return;
+  }
+  const fmtDate = d => d.toLocaleDateString('es-ES', { weekday:'short', day:'numeric', month:'short' });
+  const urgencyColor = days => days <= 3 ? 'var(--red)' : days <= 14 ? 'var(--amber)' : 'var(--text2)';
+  const urgencyBg = days => days <= 3 ? 'rgba(244,113,116,0.08)' : days <= 14 ? 'rgba(251,191,36,0.08)' : 'var(--surface2)';
+
+  el.innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:8px;">
+    ${earnings.map(e => `
+      <div style="background:${urgencyBg(e.daysUntil)};border:1px solid ${e.daysUntil<=3?'rgba(244,113,116,0.3)':e.daysUntil<=14?'rgba(251,191,36,0.3)':'var(--border)'};border-radius:6px;padding:8px 12px;display:flex;align-items:center;gap:10px;">
+        <div style="font-weight:700;font-family:var(--mono);font-size:12px;color:var(--text1);">${e.ticker}</div>
+        <div style="font-size:10px;color:${urgencyColor(e.daysUntil)};font-family:var(--mono);">
+          ${e.daysUntil === 0 ? '🔴 HOY' : e.daysUntil === 1 ? '🟠 MAÑANA' : e.daysUntil <= 3 ? `🔴 en ${e.daysUntil}d` : e.daysUntil <= 14 ? `🟡 en ${e.daysUntil}d` : `📅 en ${e.daysUntil}d`}
+        </div>
+        <div style="font-size:10px;color:var(--text3);font-family:var(--mono);">${fmtDate(e.date)}</div>
+      </div>`).join('')}
+  </div>
+  <div style="font-size:10px;color:var(--text3);font-family:var(--mono);margin-top:8px;">Posiciones abiertas + watchlist alcista · 🔴 &lt;3d · 🟡 &lt;14d</div>`;
+}
+
 // ── Análisis de sentimiento por palabras clave ──
 const POSITIVE_WORDS = ['beat','beats','surge','surges','soars','rises','gains','record','growth','profit','strong','upgrade','buy','outperform','bullish','rally','high','exceed','better','positive','boost','jump','up','increase','revenue beat','earnings beat','raised guidance','buyback','dividend'];
 const NEGATIVE_WORDS = ['miss','misses','falls','drops','plunges','decline','loss','weak','downgrade','sell','underperform','bearish','cut','lower','layoff','layoffs','restructure','lawsuit','fine','penalty','warning','below','disappoints','disappointing','recall','investigation','probe','debt','bankruptcy','crash','tumbles','slumps','concerns','risk','negative'];
@@ -267,10 +329,14 @@ export async function render(container, { actionsSlot }) {
 
     // Noticias generales y por ticker — ambas en paralelo
     const tickers = positions.map(p => p.ticker).join(',');
+    const allTickers = [...new Set([
+      ...positions.map(p => p.ticker),
+      ...(watchlistAlc || []).map(w => w.ticker).slice(0, 5),
+    ])];
     const watchlistTickers = [...new Set([
       ...(watchlistAlc || []).map(w => w.ticker),
       ...(watchlistBaj || []).map(w => w.ticker),
-    ])].slice(0, 5).join(','); // máx 5 de watchlist para no saturar
+    ])].slice(0, 5).join(',');
 
     const [noticiasProm, noticiasPosProm, noticiasWatchProm] = [
       fetchNoticias(),
@@ -279,6 +345,12 @@ export async function render(container, { actionsSlot }) {
       watchlistTickers ? fetch(`/api/noticias?tickers=${watchlistTickers}`, { signal: (() => { const c = new AbortController(); setTimeout(() => c.abort(), 12000); return c.signal; })() })
                  .then(r => r.json()).catch(() => ({ results: {} })) : Promise.resolve({ results: {} }),
     ];
+
+    // Earnings Calendar — en paralelo sin bloquear
+    fetchEarnings(allTickers).then(earnings => paintEarnings(earnings)).catch(() => {
+      const el = document.getElementById('db-earnings-content');
+      if (el) el.innerHTML = '<div class="db-empty">Sin datos de earnings disponibles</div>';
+    });
 
     // Score macro — viene de sessionStorage (mismo tab)
     const macroRaw = sessionStorage.getItem('ethan_macro_cache');
@@ -405,7 +477,13 @@ export async function render(container, { actionsSlot }) {
         </div>
       </div>
 
-      <!-- Fila 3: Noticias generales -->
+      <!-- Fila 3: Earnings Calendar -->
+      <div class="db-card" style="margin-bottom:14px;" id="db-earnings-card">
+        <div class="db-card-title">📅 Próximos Earnings</div>
+        <div id="db-earnings-content"><div class="db-empty">Cargando...</div></div>
+      </div>
+
+      <!-- Fila 4: Noticias generales -->
       <div class="db-card" id="db-noticias-card" style="margin-bottom:14px;">
         <div class="db-card-title">Noticias del mercado</div>
         <div id="db-noticias-content"><div class="db-empty">Cargando noticias...</div></div>
