@@ -372,6 +372,61 @@ export async function render(container, { actionsSlot }) {
           </div>
         </div>
       </div>
+
+      <!-- PANEL OPCIONES -->
+      <div class="rm-panel" id="panel-opciones">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px;">
+          <div class="rm-card">
+            <div class="rm-card-title">⚙️ Calculadora Black-Scholes</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
+              <div><label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">Tipo</label>
+                <select id="opt-type" class="rm-input" style="width:100%;"><option value="call">CALL (alcista)</option><option value="put">PUT (bajista)</option></select></div>
+              <div><label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">Precio actual (S)</label>
+                <input type="number" id="opt-spot" class="rm-input" value="185" step="0.01" style="width:100%;"></div>
+              <div><label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">Strike (K)</label>
+                <input type="number" id="opt-strike" class="rm-input" value="185" step="0.01" style="width:100%;"></div>
+              <div><label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">Días al vencimiento</label>
+                <input type="number" id="opt-days" class="rm-input" value="45" min="1" max="365" style="width:100%;"></div>
+              <div><label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">Volatilidad implícita (%)</label>
+                <input type="number" id="opt-iv" class="rm-input" value="30" step="0.5" style="width:100%;"></div>
+              <div><label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">Tipo libre de riesgo (%)</label>
+                <input type="number" id="opt-rf" class="rm-input" value="5" step="0.25" style="width:100%;"></div>
+            </div>
+            <button class="btn btn-primary" id="opt-calc-btn" style="width:100%;margin-bottom:16px;">Calcular</button>
+            <div id="opt-results"></div>
+          </div>
+          <div class="rm-card">
+            <div class="rm-card-title">🛡️ Cobertura de Posición con Put</div>
+            <div style="font-size:11px;color:var(--text2);margin-bottom:14px;line-height:1.5;">Calcula la put óptima para cubrir una posición. La put actúa como stop garantizado incluso ante gaps bajistas.</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
+              <div><label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">Capital total (€)</label>
+                <input type="number" id="cob-capital" class="rm-input" value="84000" style="width:100%;"></div>
+              <div><label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">% capital en posición</label>
+                <input type="number" id="cob-pct-pos" class="rm-input" value="10" step="1" style="width:100%;"></div>
+              <div><label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">Precio actual</label>
+                <input type="number" id="cob-spot" class="rm-input" value="185" step="0.01" style="width:100%;"></div>
+              <div><label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">Stop / nivel de protección</label>
+                <input type="number" id="cob-stop" class="rm-input" value="165" step="0.01" style="width:100%;"></div>
+              <div><label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">Volatilidad implícita (%)</label>
+                <input type="number" id="cob-iv" class="rm-input" value="30" step="0.5" style="width:100%;"></div>
+              <div><label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">Días de cobertura</label>
+                <input type="number" id="cob-days" class="rm-input" value="45" style="width:100%;"></div>
+            </div>
+            <button class="btn btn-primary" id="cob-calc-btn" style="width:100%;margin-bottom:16px;">Calcular cobertura</button>
+            <div id="cob-results"></div>
+          </div>
+        </div>
+        <div class="rm-card">
+          <div class="rm-card-title">📚 Guía de las Griegas</div>
+          <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;">
+            <div style="background:var(--surface2);border-radius:6px;padding:12px 14px;"><div style="font-family:var(--mono);font-size:11px;font-weight:700;color:var(--teal);margin-bottom:6px;">Delta (Δ)</div><div style="font-size:10px;color:var(--text2);line-height:1.5;">Sensibilidad al precio del subyacente. Calls: 0 a 1. Puts: −1 a 0. ATM ≈ 0.5.</div></div>
+            <div style="background:var(--surface2);border-radius:6px;padding:12px 14px;"><div style="font-family:var(--mono);font-size:11px;font-weight:700;color:var(--teal);margin-bottom:6px;">Gamma (Γ)</div><div style="font-size:10px;color:var(--text2);line-height:1.5;">Velocidad de cambio del Delta. Alta en opciones ATM y cerca del vencimiento.</div></div>
+            <div style="background:var(--surface2);border-radius:6px;padding:12px 14px;"><div style="font-family:var(--mono);font-size:11px;font-weight:700;color:var(--teal);margin-bottom:6px;">Theta (Θ)</div><div style="font-size:10px;color:var(--text2);line-height:1.5;">Pérdida diaria por paso del tiempo. Siempre negativa para el comprador. El mayor enemigo.</div></div>
+            <div style="background:var(--surface2);border-radius:6px;padding:12px 14px;"><div style="font-family:var(--mono);font-size:11px;font-weight:700;color:var(--teal);margin-bottom:6px;">Vega (V)</div><div style="font-size:10px;color:var(--text2);line-height:1.5;">Sensibilidad a la volatilidad implícita. Alta IV = opciones caras. Compra cuando IV es baja.</div></div>
+            <div style="background:var(--surface2);border-radius:6px;padding:12px 14px;"><div style="font-family:var(--mono);font-size:11px;font-weight:700;color:var(--teal);margin-bottom:6px;">Rho (ρ)</div><div style="font-size:10px;color:var(--text2);line-height:1.5;">Sensibilidad al tipo de interés. Poco relevante para opciones a corto plazo.</div></div>
+          </div>
+        </div>
+      </div>
     `;
 
     // ── Tabs ──────────────────────────────────────
@@ -651,114 +706,12 @@ export async function render(container, { actionsSlot }) {
     `;
   }
 
-  // Panel de opciones HTML
-  const panelOpciones = document.createElement('div');
-  panelOpciones.className = 'rm-panel';
-  panelOpciones.id = 'panel-opciones';
-  panelOpciones.innerHTML = `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px;">
-
-      <!-- Calculadora Black-Scholes -->
-      <div class="rm-card">
-        <div class="rm-card-title">⚙️ Calculadora Black-Scholes</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
-          <div>
-            <label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">Tipo</label>
-            <select id="opt-type" class="rm-input" style="width:100%;">
-              <option value="call">CALL (alcista)</option>
-              <option value="put">PUT (bajista)</option>
-            </select>
-          </div>
-          <div>
-            <label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">Precio actual (S)</label>
-            <input type="number" id="opt-spot" class="rm-input" value="185" step="0.01" style="width:100%;">
-          </div>
-          <div>
-            <label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">Strike (K)</label>
-            <input type="number" id="opt-strike" class="rm-input" value="185" step="0.01" style="width:100%;">
-          </div>
-          <div>
-            <label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">Días al vencimiento</label>
-            <input type="number" id="opt-days" class="rm-input" value="45" min="1" max="365" style="width:100%;">
-          </div>
-          <div>
-            <label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">Volatilidad implícita (%)</label>
-            <input type="number" id="opt-iv" class="rm-input" value="30" step="0.5" style="width:100%;">
-          </div>
-          <div>
-            <label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">Tipo libre de riesgo (%)</label>
-            <input type="number" id="opt-rf" class="rm-input" value="5" step="0.25" style="width:100%;">
-          </div>
-        </div>
-        <button class="btn btn-primary" id="opt-calc-btn" style="width:100%;margin-bottom:16px;">Calcular</button>
-        <div id="opt-results"></div>
-      </div>
-
-      <!-- Cobertura de posiciones -->
-      <div class="rm-card">
-        <div class="rm-card-title">🛡️ Cobertura de Posición con Put</div>
-        <div style="font-size:11px;color:var(--text2);margin-bottom:14px;line-height:1.5;">Calcula la put óptima para cubrir una posición con apalancamiento (10% del capital). La put actúa como stop garantizado incluso ante gaps.</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
-          <div>
-            <label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">Capital total (€)</label>
-            <input type="number" id="cob-capital" class="rm-input" value="84000" style="width:100%;">
-          </div>
-          <div>
-            <label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">% capital en posición</label>
-            <input type="number" id="cob-pct-pos" class="rm-input" value="10" step="1" style="width:100%;">
-          </div>
-          <div>
-            <label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">Precio entrada / actual</label>
-            <input type="number" id="cob-spot" class="rm-input" value="185" step="0.01" style="width:100%;">
-          </div>
-          <div>
-            <label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">Stop / nivel de protección</label>
-            <input type="number" id="cob-stop" class="rm-input" value="165" step="0.01" style="width:100%;">
-          </div>
-          <div>
-            <label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">Volatilidad implícita (%)</label>
-            <input type="number" id="cob-iv" class="rm-input" value="30" step="0.5" style="width:100%;">
-          </div>
-          <div>
-            <label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">Días de cobertura</label>
-            <input type="number" id="cob-days" class="rm-input" value="45" style="width:100%;">
-          </div>
-        </div>
-        <button class="btn btn-primary" id="cob-calc-btn" style="width:100%;margin-bottom:16px;">Calcular cobertura</button>
-        <div id="cob-results"></div>
-      </div>
-    </div>
-
-    <!-- Explicación griegas -->
-    <div class="rm-card">
-      <div class="rm-card-title">📚 Guía de las Griegas</div>
-      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;">
-        ${[
-          ['Delta (Δ)', 'Sensibilidad del precio de la opción al precio del subyacente. Delta=0.5 = la opción sube $0.50 por cada $1 que sube el subyacente. Las calls tienen delta positivo (0 a 1), las puts negativo (−1 a 0).'],
-          ['Gamma (Γ)', 'Velocidad de cambio del Delta. Alta gamma = el delta cambia rápidamente con el precio. Opciones at-the-money tienen gamma más alta.'],
-          ['Theta (Θ)', 'Pérdida de valor por el paso del tiempo. Siempre negativa para el comprador. Si compras una opción, pierdes Theta cada día aunque el subyacente no se mueva.'],
-          ['Vega (V)', 'Sensibilidad a cambios en la volatilidad implícita. Vega=0.15 = si la IV sube 1%, la opción sube $0.15. Alta IV = opciones más caras.'],
-          ['Rho (ρ)', 'Sensibilidad a cambios en el tipo de interés libre de riesgo. Generalmente el menos importante para opciones a corto plazo.'],
-        ].map(([name, desc]) => `
-          <div style="background:var(--surface2);border-radius:6px;padding:12px 14px;">
-            <div style="font-family:var(--mono);font-size:11px;font-weight:700;color:var(--teal);margin-bottom:6px;">${name}</div>
-            <div style="font-size:10px;color:var(--text2);line-height:1.5;">${desc}</div>
-          </div>`).join('')}
-      </div>
-    </div>
-  `;
-
-  // Insertar panel en el DOM
-  document.getElementById('panel-reglas')?.insertAdjacentElement('afterend', panelOpciones);
-
-  // Listeners
+  // Listeners opciones — se registran después de load() porque el HTML ya está en el template
   document.getElementById('opt-calc-btn')?.addEventListener('click', calcOptions);
   document.getElementById('cob-calc-btn')?.addEventListener('click', calcCobertura);
   ['opt-type','opt-spot','opt-strike','opt-days','opt-iv','opt-rf'].forEach(id => {
     document.getElementById(id)?.addEventListener('input', calcOptions);
   });
-
-  // Calcular al inicio con valores por defecto
   calcOptions();
   calcCobertura();
 
