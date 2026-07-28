@@ -1,27 +1,52 @@
 // /api/cava.js — José Luis Cava · Resumen de vídeos
 // Sin dependencias externas — fetch nativo para transcripción
 
-const CHANNEL_ID = 'UCjTfnOFcGW3n3M0WKXpZS0Q';
+const CHANNEL_ID = 'UC6cpU68F1BiwwXoAC3sgcGQ';
 
 async function getLatestVideos(n = 8) {
-  // Intentar con handle primero, luego con channel ID
-  const urls = [
-    'https://www.youtube.com/feeds/videos.xml?user=JoseLuisCavatv',
-    'https://www.youtube.com/feeds/videos.xml?channel_id=UC6cpU68F1BiwwXoAC3sgcGQ',
-  ];
-
-  // Intentar obtener el channel ID real via la página del canal
+  // 1. Intentar scraping de la página del canal via worker — más reciente
   try {
-    const worker = `https://soft-field-156f.miguel-gomez-anton.workers.dev/?url=${encodeURIComponent('https://www.youtube.com/@JoseLuisCavatv')}`;
-    const pr = await fetch(worker, { signal: (() => { const c = new AbortController(); setTimeout(() => c.abort(), 8000); return c.signal; })() });
-    if (pr.ok) {
-      const html = await pr.text();
-      const channelMatch = html.match(/"channelId":"(UC[^"]+)"/);
-      if (channelMatch) {
-        urls.unshift(`https://www.youtube.com/feeds/videos.xml?channel_id=${channelMatch[1]}`);
+    const channelUrl = 'https://www.youtube.com/@JoseLuisCavatv/videos';
+    const workerUrl = `https://soft-field-156f.miguel-gomez-anton.workers.dev/?url=${encodeURIComponent(channelUrl)}`;
+    const r = await fetch(workerUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', 'Accept-Language': 'es-ES,es;q=0.9' },
+      signal: (() => { const c = new AbortController(); setTimeout(() => c.abort(), 12000); return c.signal; })(),
+    });
+    if (r.ok) {
+      const html = await r.text();
+      // Extraer initialData JSON que contiene los vídeos
+      const dataMatch = html.match(/var ytInitialData = ({.+?});<\/script>/s) ||
+                        html.match(/ytInitialData = ({.+?});\s*(?:var|window|<)/s);
+      if (dataMatch) {
+        const data = JSON.parse(dataMatch[1]);
+        const tabs = data?.contents?.twoColumnBrowseResultsRenderer?.tabs || [];
+        const videosTab = tabs.find(t => t.tabRenderer?.title === 'Videos' || t.tabRenderer?.selected);
+        const items = videosTab?.tabRenderer?.content?.richGridRenderer?.contents ||
+                      tabs[1]?.tabRenderer?.content?.richGridRenderer?.contents || [];
+        const videos = [];
+        for (const item of items) {
+          if (videos.length >= n) break;
+          const v = item?.richItemRenderer?.content?.videoRenderer;
+          if (!v?.videoId) continue;
+          const id = v.videoId;
+          const title = v.title?.runs?.[0]?.text || v.title?.simpleText || '';
+          const published = v.publishedTimeText?.simpleText || '';
+          if (id && title) videos.push({
+            id, title, published,
+            thumb: `https://img.youtube.com/vi/${id}/mqdefault.jpg`,
+            url: `https://www.youtube.com/watch?v=${id}`,
+          });
+        }
+        if (videos.length > 0) return videos;
       }
     }
   } catch {}
+
+  // 2. Fallback: RSS oficial
+  const urls = [
+    `https://www.youtube.com/feeds/videos.xml?channel_id=${CHANNEL_ID}`,
+    'https://www.youtube.com/feeds/videos.xml?user=JoseLuisCavatv',
+  ];
 
   let xml = null;
   for (const url of urls) {
@@ -33,7 +58,8 @@ async function getLatestVideos(n = 8) {
       if (r.ok) { xml = await r.text(); break; }
     } catch {}
   }
-  if (!xml) throw new Error('YouTube RSS: no se pudo obtener el feed del canal');
+  if (!xml) throw new Error('YouTube: no se pudo obtener el feed del canal');
+
   const videos = [];
   const entryRegex = /<entry>([\s\S]*?)<\/entry>/g;
   let m;

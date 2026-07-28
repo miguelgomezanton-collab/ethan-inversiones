@@ -479,6 +479,27 @@ export async function render(container, { actionsSlot, savedState }) {
       UserData.get('ethan_capital_bajista').then(v => v || 0),
     ]);
 
+    // Actualizar precios automáticamente en segundo plano
+    // Solo si hay posiciones abiertas y no se ha actualizado hoy
+    const today = new Date().toISOString().slice(0, 10);
+    const lastUpdate = sessionStorage.getItem('ethan_fondo_last_update');
+    if (lastUpdate !== today && positions.length > 0) {
+      const tickersToUpdate = [
+        ...positions.filter(p => !p.exitDateISO).map(p => ({ ticker: p.ticker, from: p.entryDateISO || today })),
+        { ticker: 'SPY', from: fondo?.movimientos?.[0]?.date || '2026-01-01' },
+      ];
+      Promise.all(tickersToUpdate.map(async ({ ticker, from }) => {
+        try {
+          const TICKER_MAP = { '3GOL': '3GOL.MI' };
+          const yahooTicker = TICKER_MAP[ticker] || ticker;
+          const days = await fetchYahooHistory(yahooTicker, from, today);
+          if (days?.length) await saveHistoryToFirestore(ticker, days, 'active');
+        } catch {}
+      })).then(() => {
+        sessionStorage.setItem('ethan_fondo_last_update', today);
+      });
+    }
+
     const capitalTotal = capA + capB;
 
     // Calcular valor actual de la cartera
