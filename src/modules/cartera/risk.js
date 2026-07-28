@@ -166,6 +166,7 @@ export async function render(container, { actionsSlot }) {
         <button class="rm-tab" data-tab="exposicion">📊 Exposición</button>
         <button class="rm-tab" data-tab="escenarios">⚡ Escenarios</button>
         <button class="rm-tab" data-tab="reglas">📋 Mis Reglas</button>
+        <button class="rm-tab" data-tab="opciones">⚙️ Opciones</button>
       </div>
 
       <!-- OVERVIEW -->
@@ -436,5 +437,330 @@ export async function render(container, { actionsSlot }) {
 
   document.getElementById('risk-refresh-btn')?.addEventListener('click', load);
   load();
+
+  // ── Black-Scholes ─────────────────────────────────────────────
+  function norm(x) {
+    // Aproximación de la distribución normal acumulada
+    const a = [0.319381530, -0.356563782, 1.781477937, -1.821255978, 1.330274429];
+    const k = 1 / (1 + 0.2316419 * Math.abs(x));
+    let poly = 0;
+    for (let i = 4; i >= 0; i--) poly = poly * k + a[i];
+    poly *= k;
+    const n = Math.exp(-x*x/2) / Math.sqrt(2*Math.PI) * poly;
+    return x >= 0 ? 1 - n : n;
+  }
+  function normPDF(x) { return Math.exp(-x*x/2) / Math.sqrt(2*Math.PI); }
+
+  function blackScholes(S, K, T, r, sigma, type) {
+    if (T <= 0) return { price: Math.max(0, type==='call'?S-K:K-S), delta:0, gamma:0, theta:0, vega:0, rho:0 };
+    const d1 = (Math.log(S/K) + (r + sigma*sigma/2)*T) / (sigma*Math.sqrt(T));
+    const d2 = d1 - sigma*Math.sqrt(T);
+    const Nd1 = norm(d1), Nd2 = norm(d2);
+    const Nd1n = norm(-d1), Nd2n = norm(-d2);
+    const nd1 = normPDF(d1);
+    let price, delta, theta;
+    if (type === 'call') {
+      price = S*Nd1 - K*Math.exp(-r*T)*Nd2;
+      delta = Nd1;
+      theta = (-S*nd1*sigma/(2*Math.sqrt(T)) - r*K*Math.exp(-r*T)*Nd2) / 365;
+    } else {
+      price = K*Math.exp(-r*T)*Nd2n - S*Nd1n;
+      delta = Nd1 - 1;
+      theta = (-S*nd1*sigma/(2*Math.sqrt(T)) + r*K*Math.exp(-r*T)*Nd2n) / 365;
+    }
+    const gamma = nd1 / (S*sigma*Math.sqrt(T));
+    const vega  = S*nd1*Math.sqrt(T) / 100;
+    const rho   = type==='call' ? K*T*Math.exp(-r*T)*Nd2/100 : -K*T*Math.exp(-r*T)*Nd2n/100;
+    return { price, delta, gamma, theta, vega, rho };
+  }
+
+  function calcOptions() {
+    const S     = parseFloat(document.getElementById('opt-spot')?.value) || 0;
+    const K     = parseFloat(document.getElementById('opt-strike')?.value) || 0;
+    const days  = parseFloat(document.getElementById('opt-days')?.value) || 30;
+    const iv    = parseFloat(document.getElementById('opt-iv')?.value) || 30;
+    const rf    = parseFloat(document.getElementById('opt-rf')?.value) || 5;
+    const type  = document.getElementById('opt-type')?.value || 'call';
+    if (!S || !K) return;
+    const T = days / 365;
+    const sigma = iv / 100;
+    const r = rf / 100;
+    const bs = blackScholes(S, K, T, r, sigma, type);
+    const breakeven = type === 'call' ? K + bs.price : K - bs.price;
+    const intrinsic = Math.max(0, type === 'call' ? S - K : K - S);
+    const timeValue = bs.price - intrinsic;
+
+    const fmtG = (n, d=4) => n != null ? (n >= 0 ? '' : '') + n.toFixed(d) : '—';
+    const col = n => n > 0 ? 'var(--green)' : n < 0 ? 'var(--red)' : 'var(--text2)';
+
+    document.getElementById('opt-results').innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border);border-radius:8px;overflow:hidden;margin-bottom:16px;">
+        <div style="background:var(--surface2);padding:16px 18px;">
+          <div style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px;">Prima teórica</div>
+          <div style="font-family:var(--serif);font-size:32px;font-style:italic;font-weight:600;color:var(--teal);">$${bs.price.toFixed(2)}</div>
+          <div style="font-family:var(--mono);font-size:10px;color:var(--text2);margin-top:4px;">Intrínseco $${intrinsic.toFixed(2)} · Temporal $${timeValue.toFixed(2)}</div>
+        </div>
+        <div style="background:var(--surface2);padding:16px 18px;">
+          <div style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px;">Breakeven</div>
+          <div style="font-family:var(--serif);font-size:32px;font-style:italic;font-weight:600;">$${breakeven.toFixed(2)}</div>
+          <div style="font-family:var(--mono);font-size:10px;color:var(--text2);margin-top:4px;">${type==='call'?'Necesita subir':'Necesita bajar'} $${Math.abs(breakeven-S).toFixed(2)}</div>
+        </div>
+        <div style="background:var(--surface2);padding:16px 18px;">
+          <div style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px;">Delta</div>
+          <div style="font-family:var(--serif);font-size:32px;font-style:italic;font-weight:600;color:${col(bs.delta)};">${fmtG(bs.delta,3)}</div>
+          <div style="font-family:var(--mono);font-size:10px;color:var(--text2);margin-top:4px;">Por cada $1 de movimiento</div>
+        </div>
+        <div style="background:var(--surface2);padding:16px 18px;">
+          <div style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px;">Theta (día)</div>
+          <div style="font-family:var(--serif);font-size:32px;font-style:italic;font-weight:600;color:var(--red);">${fmtG(bs.theta,3)}</div>
+          <div style="font-family:var(--mono);font-size:10px;color:var(--text2);margin-top:4px;">Pérdida diaria por tiempo</div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border);border-radius:8px;overflow:hidden;margin-bottom:20px;">
+        <div style="background:var(--surface);padding:14px 16px;">
+          <div style="font-family:var(--mono);font-size:9px;color:var(--text3);margin-bottom:5px;">Gamma</div>
+          <div style="font-family:var(--mono);font-size:16px;font-weight:600;">${fmtG(bs.gamma,4)}</div>
+          <div style="font-size:10px;color:var(--text3);margin-top:3px;">Cambio en Delta por $1</div>
+        </div>
+        <div style="background:var(--surface);padding:14px 16px;">
+          <div style="font-family:var(--mono);font-size:9px;color:var(--text3);margin-bottom:5px;">Vega</div>
+          <div style="font-family:var(--mono);font-size:16px;font-weight:600;">${fmtG(bs.vega,4)}</div>
+          <div style="font-size:10px;color:var(--text3);margin-top:3px;">Por cada 1% de IV</div>
+        </div>
+        <div style="background:var(--surface);padding:14px 16px;">
+          <div style="font-family:var(--mono);font-size:9px;color:var(--text3);margin-bottom:5px;">Rho</div>
+          <div style="font-family:var(--mono);font-size:16px;font-weight:600;">${fmtG(bs.rho,4)}</div>
+          <div style="font-size:10px;color:var(--text3);margin-top:3px;">Por cada 1% de tipo</div>
+        </div>
+        <div style="background:var(--surface);padding:14px 16px;">
+          <div style="font-family:var(--mono);font-size:9px;color:var(--text3);margin-bottom:5px;">Coste 1 contrato</div>
+          <div style="font-family:var(--mono);font-size:16px;font-weight:600;color:var(--amber);">$${(bs.price*100).toFixed(0)}</div>
+          <div style="font-size:10px;color:var(--text3);margin-top:3px;">× 100 acciones</div>
+        </div>
+      </div>
+
+      <!-- P&L Chart SVG -->
+      ${renderPLChart(S, K, bs.price, type)}
+    `;
+  }
+
+  function renderPLChart(S, K, premium, type) {
+    const W = 680, H = 140;
+    const range = S * 0.3;
+    const minP = S - range, maxP = S + range;
+    const steps = 60;
+    const prices = Array.from({length: steps+1}, (_,i) => minP + (maxP-minP)*i/steps);
+    const pls = prices.map(p => {
+      const intrinsic = Math.max(0, type==='call' ? p-K : K-p);
+      return (intrinsic - premium) * 100; // por contrato
+    });
+    const maxPL = Math.max(...pls, premium*100);
+    const minPL = Math.min(...pls, -premium*100);
+    const rangeY = maxPL - minPL || 1;
+    const toX = i => (i/steps*W).toFixed(1);
+    const toY = v => (H - (v-minPL)/rangeY*H).toFixed(1);
+    const zero = toY(0);
+    const pts = pls.map((v,i) => `${toX(i)},${toY(v)}`).join(' ');
+    // Línea de precio actual
+    const spotX = ((S-minP)/(maxP-minP)*W).toFixed(1);
+    const breakX = type==='call' ? ((K+premium-minP)/(maxP-minP)*W).toFixed(1) : ((K-premium-minP)/(maxP-minP)*W).toFixed(1);
+    return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px 16px;">
+      <div style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:10px;">Perfil P&L al vencimiento · 1 contrato (100 acciones)</div>
+      <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;display:block;">
+        <line x1="0" y1="${zero}" x2="${W}" y2="${zero}" stroke="var(--border2)" stroke-width="1" stroke-dasharray="4,4"/>
+        <polyline points="${pts}" fill="none" stroke="var(--teal)" stroke-width="2" stroke-linejoin="round"/>
+        <line x1="${spotX}" y1="0" x2="${spotX}" y2="${H}" stroke="var(--amber)" stroke-width="1.5" stroke-dasharray="4,3"/>
+        <line x1="${breakX}" y1="0" x2="${breakX}" y2="${H}" stroke="var(--green)" stroke-width="1" stroke-dasharray="3,3"/>
+        <text x="${parseFloat(spotX)+4}" y="14" font-family="IBM Plex Mono" font-size="9" fill="var(--amber)">Spot</text>
+        <text x="${parseFloat(breakX)+4}" y="26" font-family="IBM Plex Mono" font-size="9" fill="var(--green)">BE</text>
+      </svg>
+      <div style="display:flex;gap:20px;margin-top:8px;font-family:var(--mono);font-size:10px;color:var(--text3);">
+        <span style="color:var(--amber);">— Precio actual</span>
+        <span style="color:var(--green);">— Breakeven</span>
+        <span style="color:var(--teal);">— P&L</span>
+        <span style="margin-left:auto;">Pérdida máxima: $${(premium*100).toFixed(0)} · Beneficio: ilimitado${type==='call'?'':' hasta $'+((K-premium)*100).toFixed(0)}</span>
+      </div>
+    </div>`;
+  }
+
+  function calcCobertura() {
+    const capital = parseFloat(document.getElementById('cob-capital')?.value) || 0;
+    const pctPos  = parseFloat(document.getElementById('cob-pct-pos')?.value) || 10;
+    const spot    = parseFloat(document.getElementById('cob-spot')?.value) || 0;
+    const stop    = parseFloat(document.getElementById('cob-stop')?.value) || 0;
+    const iv      = parseFloat(document.getElementById('cob-iv')?.value) || 30;
+    const days    = parseFloat(document.getElementById('cob-days')?.value) || 45;
+    const rf      = 5;
+    if (!capital || !spot || !stop) return;
+
+    const posValue   = capital * pctPos / 100;
+    const shares     = Math.floor(posValue / spot);
+    const contracts  = Math.ceil(shares / 100);
+    const riesgoMax  = shares * (spot - stop); // sin cobertura
+    const pctRiesgo  = riesgoMax / capital * 100;
+
+    // Strike óptimo = stop o ligeramente por debajo
+    const strikeOpt = Math.round(stop * 0.98 / 5) * 5; // redondeo a múltiplo de 5
+    const bs = blackScholes(spot, strikeOpt, days/365, rf/100, iv/100, 'put');
+    const costeCob = bs.price * 100 * contracts;
+    const riesgoConCob = costeCob;
+    const ahorro = riesgoMax - costeCob;
+    const eficiencia = (ahorro / riesgoMax * 100);
+
+    document.getElementById('cob-results').innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-bottom:16px;">
+        <div style="background:var(--surface2);border-radius:8px;padding:16px 18px;">
+          <div style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:10px;">Sin cobertura</div>
+          <div style="font-family:var(--serif);font-size:28px;font-style:italic;color:var(--red);">−$${riesgoMax.toFixed(0)}</div>
+          <div style="font-family:var(--mono);font-size:10px;color:var(--text2);margin-top:4px;">${pctRiesgo.toFixed(1)}% del capital · ${shares} acciones</div>
+          <div style="font-family:var(--mono);font-size:10px;color:var(--text3);margin-top:3px;">Si toca el stop en $${stop}</div>
+        </div>
+        <div style="background:var(--surface2);border-radius:8px;padding:16px 18px;">
+          <div style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:10px;">Con cobertura put</div>
+          <div style="font-family:var(--serif);font-size:28px;font-style:italic;color:var(--amber);">−$${costeCob.toFixed(0)}</div>
+          <div style="font-family:var(--mono);font-size:10px;color:var(--text2);margin-top:4px;">${(costeCob/capital*100).toFixed(1)}% del capital · ${contracts} contratos</div>
+          <div style="font-family:var(--mono);font-size:10px;color:var(--text3);margin-top:3px;">Strike $${strikeOpt} · prima $${bs.price.toFixed(2)}/acción</div>
+        </div>
+      </div>
+      <div style="background:rgba(64,217,192,0.06);border:1px solid rgba(64,217,192,0.2);border-radius:8px;padding:14px 18px;margin-bottom:14px;">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--teal);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px;">Análisis de la cobertura</div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;">
+          <div>
+            <div style="font-size:10px;color:var(--text2);margin-bottom:4px;">Riesgo eliminado</div>
+            <div style="font-family:var(--mono);font-size:16px;font-weight:700;color:var(--green);">$${ahorro.toFixed(0)}</div>
+          </div>
+          <div>
+            <div style="font-size:10px;color:var(--text2);margin-bottom:4px;">Eficiencia</div>
+            <div style="font-family:var(--mono);font-size:16px;font-weight:700;color:${eficiencia>70?'var(--green)':eficiencia>40?'var(--amber)':'var(--red)'};">${eficiencia.toFixed(0)}%</div>
+          </div>
+          <div>
+            <div style="font-size:10px;color:var(--text2);margin-bottom:4px;">Theta diario</div>
+            <div style="font-family:var(--mono);font-size:16px;font-weight:700;color:var(--red);">−$${Math.abs(bs.theta*100*contracts).toFixed(1)}</div>
+          </div>
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--text2);line-height:1.6;padding:12px 14px;background:var(--surface2);border-radius:6px;">
+        ${eficiencia > 70
+          ? `✅ Cobertura eficiente. Por $${costeCob.toFixed(0)} eliminas $${riesgoMax.toFixed(0)} de riesgo. El coste de la prima (${(costeCob/capital*100).toFixed(1)}% del capital) está justificado.`
+          : eficiencia > 40
+          ? `🟡 Cobertura moderada. La prima es relativamente cara para el riesgo que eliminas. Considera si el escenario bajista es muy probable.`
+          : `🔴 Cobertura poco eficiente. La prima cuesta casi tanto como el riesgo que elimina. Con tu gestión de stops puede no ser necesaria.`
+        }
+        ${pctRiesgo < 2.5 ? ` Con solo ${pctRiesgo.toFixed(1)}% de riesgo sobre capital, tu gestión de posición ya es conservadora — la cobertura es opcional.` : ''}
+      </div>
+    `;
+  }
+
+  // Panel de opciones HTML
+  const panelOpciones = document.createElement('div');
+  panelOpciones.className = 'rm-panel';
+  panelOpciones.id = 'panel-opciones';
+  panelOpciones.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px;">
+
+      <!-- Calculadora Black-Scholes -->
+      <div class="rm-card">
+        <div class="rm-card-title">⚙️ Calculadora Black-Scholes</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
+          <div>
+            <label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">Tipo</label>
+            <select id="opt-type" class="rm-input" style="width:100%;">
+              <option value="call">CALL (alcista)</option>
+              <option value="put">PUT (bajista)</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">Precio actual (S)</label>
+            <input type="number" id="opt-spot" class="rm-input" value="185" step="0.01" style="width:100%;">
+          </div>
+          <div>
+            <label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">Strike (K)</label>
+            <input type="number" id="opt-strike" class="rm-input" value="185" step="0.01" style="width:100%;">
+          </div>
+          <div>
+            <label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">Días al vencimiento</label>
+            <input type="number" id="opt-days" class="rm-input" value="45" min="1" max="365" style="width:100%;">
+          </div>
+          <div>
+            <label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">Volatilidad implícita (%)</label>
+            <input type="number" id="opt-iv" class="rm-input" value="30" step="0.5" style="width:100%;">
+          </div>
+          <div>
+            <label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">Tipo libre de riesgo (%)</label>
+            <input type="number" id="opt-rf" class="rm-input" value="5" step="0.25" style="width:100%;">
+          </div>
+        </div>
+        <button class="btn btn-primary" id="opt-calc-btn" style="width:100%;margin-bottom:16px;">Calcular</button>
+        <div id="opt-results"></div>
+      </div>
+
+      <!-- Cobertura de posiciones -->
+      <div class="rm-card">
+        <div class="rm-card-title">🛡️ Cobertura de Posición con Put</div>
+        <div style="font-size:11px;color:var(--text2);margin-bottom:14px;line-height:1.5;">Calcula la put óptima para cubrir una posición con apalancamiento (10% del capital). La put actúa como stop garantizado incluso ante gaps.</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
+          <div>
+            <label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">Capital total (€)</label>
+            <input type="number" id="cob-capital" class="rm-input" value="84000" style="width:100%;">
+          </div>
+          <div>
+            <label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">% capital en posición</label>
+            <input type="number" id="cob-pct-pos" class="rm-input" value="10" step="1" style="width:100%;">
+          </div>
+          <div>
+            <label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">Precio entrada / actual</label>
+            <input type="number" id="cob-spot" class="rm-input" value="185" step="0.01" style="width:100%;">
+          </div>
+          <div>
+            <label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">Stop / nivel de protección</label>
+            <input type="number" id="cob-stop" class="rm-input" value="165" step="0.01" style="width:100%;">
+          </div>
+          <div>
+            <label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">Volatilidad implícita (%)</label>
+            <input type="number" id="cob-iv" class="rm-input" value="30" step="0.5" style="width:100%;">
+          </div>
+          <div>
+            <label style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:5px;">Días de cobertura</label>
+            <input type="number" id="cob-days" class="rm-input" value="45" style="width:100%;">
+          </div>
+        </div>
+        <button class="btn btn-primary" id="cob-calc-btn" style="width:100%;margin-bottom:16px;">Calcular cobertura</button>
+        <div id="cob-results"></div>
+      </div>
+    </div>
+
+    <!-- Explicación griegas -->
+    <div class="rm-card">
+      <div class="rm-card-title">📚 Guía de las Griegas</div>
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;">
+        ${[
+          ['Delta (Δ)', 'Sensibilidad del precio de la opción al precio del subyacente. Delta=0.5 = la opción sube $0.50 por cada $1 que sube el subyacente. Las calls tienen delta positivo (0 a 1), las puts negativo (−1 a 0).'],
+          ['Gamma (Γ)', 'Velocidad de cambio del Delta. Alta gamma = el delta cambia rápidamente con el precio. Opciones at-the-money tienen gamma más alta.'],
+          ['Theta (Θ)', 'Pérdida de valor por el paso del tiempo. Siempre negativa para el comprador. Si compras una opción, pierdes Theta cada día aunque el subyacente no se mueva.'],
+          ['Vega (V)', 'Sensibilidad a cambios en la volatilidad implícita. Vega=0.15 = si la IV sube 1%, la opción sube $0.15. Alta IV = opciones más caras.'],
+          ['Rho (ρ)', 'Sensibilidad a cambios en el tipo de interés libre de riesgo. Generalmente el menos importante para opciones a corto plazo.'],
+        ].map(([name, desc]) => `
+          <div style="background:var(--surface2);border-radius:6px;padding:12px 14px;">
+            <div style="font-family:var(--mono);font-size:11px;font-weight:700;color:var(--teal);margin-bottom:6px;">${name}</div>
+            <div style="font-size:10px;color:var(--text2);line-height:1.5;">${desc}</div>
+          </div>`).join('')}
+      </div>
+    </div>
+  `;
+
+  // Insertar panel en el DOM
+  document.getElementById('panel-reglas')?.insertAdjacentElement('afterend', panelOpciones);
+
+  // Listeners
+  document.getElementById('opt-calc-btn')?.addEventListener('click', calcOptions);
+  document.getElementById('cob-calc-btn')?.addEventListener('click', calcCobertura);
+  ['opt-type','opt-spot','opt-strike','opt-days','opt-iv','opt-rf'].forEach(id => {
+    document.getElementById(id)?.addEventListener('input', calcOptions);
+  });
+
+  // Calcular al inicio con valores por defecto
+  calcOptions();
+  calcCobertura();
+
   return { destroy() {} };
 }
