@@ -488,6 +488,15 @@ export async function render(container, { actionsSlot }) {
       const saved = document.getElementById('limits-saved');
       if (saved) { saved.style.display='block'; setTimeout(()=>saved.style.display='none', 2000); }
     });
+
+    // ── Listeners opciones (dentro de load porque el HTML ya está pintado) ──
+    document.getElementById('opt-calc-btn')?.addEventListener('click', calcOptions);
+    document.getElementById('cob-calc-btn')?.addEventListener('click', calcCobertura);
+    ['opt-type','opt-spot','opt-strike','opt-days','opt-iv','opt-rf'].forEach(id => {
+      document.getElementById(id)?.addEventListener('input', calcOptions);
+    });
+    calcOptions();
+    calcCobertura();
   }
 
   document.getElementById('risk-refresh-btn')?.addEventListener('click', load);
@@ -705,15 +714,6 @@ export async function render(container, { actionsSlot }) {
       </div>
     `;
   }
-
-  // Listeners opciones — se registran después de load() porque el HTML ya está en el template
-  document.getElementById('opt-calc-btn')?.addEventListener('click', calcOptions);
-  document.getElementById('cob-calc-btn')?.addEventListener('click', calcCobertura);
-  ['opt-type','opt-spot','opt-strike','opt-days','opt-iv','opt-rf'].forEach(id => {
-    document.getElementById(id)?.addEventListener('input', calcOptions);
-  });
-  calcOptions();
-  calcCobertura();
 
   return { destroy() {} };
 }
