@@ -691,24 +691,14 @@ export async function render(container, { actionsSlot }) {
     const contracts  = Math.ceil(shares / 100);
     const riskEur    = capital * riskPct / 100; // máximo a perder
 
-    // Buscar el strike que hace que la prima × contratos ≤ riskEur
-    // Probamos strikes desde ATM hasta OTM buscando el que más protege dentro del presupuesto
-    const strikes = [];
-    for (let pct = 0; pct >= -30; pct -= 1) {
-      const k = Math.round(spot * (1 + pct/100) / 5) * 5;
-      if (k <= 0) break;
-      const bs = blackScholes(spot, k, days/365, rf/100, iv/100, 'put');
-      const cost = bs.price * 100 * contracts;
-      strikes.push({ k, cost, prima: bs.price, delta: bs.delta, theta: bs.theta, pct });
-      if (cost <= riskEur) break; // encontramos el más cercano al presupuesto
-    }
+    // Strike ATM — protección inmediata desde el primer día
+    // Redondeamos al múltiplo de 5 más cercano al precio actual
+    const strikeATM = Math.round(spot / 5) * 5;
+    const bsATM = blackScholes(spot, strikeATM, days/365, rf/100, iv/100, 'put');
+    const costATM = bsATM.price * 100 * contracts;
 
-    // Strike óptimo = el último que cabe en el presupuesto
-    const optima = strikes.filter(s => s.cost <= riskEur).pop() ||
-                   strikes[strikes.length - 1];
-
-    // También calcular qué pasa con strikes más cercanos aunque cuesten más
-    const atm  = strikes[0]; // ATM
+    // También calculamos cuántas acciones podemos comprar si la prima viene del capital
+    const optima = { k: strikeATM, cost: costATM, prima: bsATM.price, delta: bsATM.delta, theta: bsATM.theta, pct: 0 };
     const fmtP = (n,d=1) => (n>=0?'+':'')+n.toFixed(d)+'%';
     const fmtE = n => (n>=0?'+':'')+'€'+Math.abs(n).toFixed(0);
     const col  = n => n>=0?'var(--green)':'var(--red)';
@@ -747,7 +737,7 @@ export async function render(container, { actionsSlot }) {
           <div>
             <div style="font-size:10px;color:var(--text2);margin-bottom:4px;">Strike</div>
             <div style="font-family:var(--mono);font-size:20px;font-weight:700;color:var(--text1);">$${optima.k}</div>
-            <div style="font-size:10px;color:var(--text3);">${((optima.k/spot-1)*100).toFixed(1)}% OTM</div>
+            <div style="font-size:10px;color:var(--text3);">ATM — protección inmediata</div>
           </div>
           <div>
             <div style="font-size:10px;color:var(--text2);margin-bottom:4px;">Prima por acción</div>
@@ -772,8 +762,8 @@ export async function render(container, { actionsSlot }) {
         </div>
         <div style="margin-top:12px;font-size:11px;color:var(--text2);line-height:1.6;">
           ${optima.cost <= riskEur
-            ? `✅ La put strike $${optima.k} cuesta €${optima.cost.toFixed(0)} — dentro de tu presupuesto de riesgo (€${riskEur.toFixed(0)}). Pérdida máxima garantizada: €${optima.cost.toFixed(0)} (${riskPct}% del capital).`
-            : `⚠ Ningún strike cabe exactamente en €${riskEur.toFixed(0)}. El más cercano es $${optima.k} por €${optima.cost.toFixed(0)}. Considera reducir el % de posición o aumentar el % de riesgo.`}
+            ? `✅ Put ATM strike $${optima.k} — protección inmediata desde el primer día. Coste €${optima.cost.toFixed(0)} dentro de tu presupuesto de riesgo (€${riskEur.toFixed(0)}). La pérdida máxima es el coste de la prima.`
+            : `⚠ La put ATM strike $${optima.k} cuesta €${optima.cost.toFixed(0)}, superior a tu presupuesto de €${riskEur.toFixed(0)} (${riskPct}% del capital). Opciones: aumentar el % de riesgo, reducir la posición, o usar menos días de vencimiento.`}
         </div>
       </div>
 
