@@ -423,6 +423,26 @@ export async function render(container, { actionsSlot }) {
             <div id="cob-results"></div>
           </div>
         </div>
+
+        <!-- Simulación comparativa -->
+        <div class="rm-card">
+          <div class="rm-card-title">📊 Simulador — Stop Tradicional vs Opción como Stop</div>
+          <div style="font-size:11px;color:var(--text2);margin-bottom:16px;line-height:1.6;">
+            Compara dos estrategias para el mismo capital arriesgado (2%). El sistema con opción permite más acciones pero el coste de la prima reduce la ganancia en escenarios alcistas moderados.
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px;">
+            <div class="opt-field"><label class="opt-label">Capital total (€)</label><input type="number" id="sim-capital" class="opt-input" value="84000"></div>
+            <div class="opt-field"><label class="opt-label">Precio entrada</label><input type="number" id="sim-spot" class="opt-input" value="185" step="0.01"></div>
+            <div class="opt-field"><label class="opt-label">Stop loss</label><input type="number" id="sim-stop" class="opt-input" value="165" step="0.01"></div>
+            <div class="opt-field"><label class="opt-label">IV opción (%)</label><input type="number" id="sim-iv" class="opt-input" value="30" step="0.5"></div>
+            <div class="opt-field"><label class="opt-label">% riesgo capital</label><input type="number" id="sim-risk-pct" class="opt-input" value="2" step="0.5"></div>
+            <div class="opt-field"><label class="opt-label">% posición con opción</label><input type="number" id="sim-pos-pct" class="opt-input" value="10" step="1"></div>
+            <div class="opt-field"><label class="opt-label">Días al vencimiento</label><input type="number" id="sim-days" class="opt-input" value="45"></div>
+            <div class="opt-field" style="align-self:end;"><button class="btn btn-primary" id="sim-calc-btn" style="width:100%;">Simular</button></div>
+          </div>
+          <div id="sim-results"></div>
+        </div>
+
         <div class="rm-card">
           <div class="rm-card-title">📚 Guía de las Griegas</div>
           <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;">
@@ -499,11 +519,13 @@ export async function render(container, { actionsSlot }) {
     // ── Listeners opciones (dentro de load porque el HTML ya está pintado) ──
     document.getElementById('opt-calc-btn')?.addEventListener('click', calcOptions);
     document.getElementById('cob-calc-btn')?.addEventListener('click', calcCobertura);
+    document.getElementById('sim-calc-btn')?.addEventListener('click', calcSimulacion);
     ['opt-type','opt-spot','opt-strike','opt-days','opt-iv','opt-rf'].forEach(id => {
       document.getElementById(id)?.addEventListener('input', calcOptions);
     });
     calcOptions();
     calcCobertura();
+    calcSimulacion();
   }
 
   document.getElementById('risk-refresh-btn')?.addEventListener('click', load);
@@ -652,6 +674,145 @@ export async function render(container, { actionsSlot }) {
         <span style="margin-left:auto;">Pérdida máxima: $${(premium*100).toFixed(0)} · Beneficio: ilimitado${type==='call'?'':' hasta $'+((K-premium)*100).toFixed(0)}</span>
       </div>
     </div>`;
+  }
+
+  function calcSimulacion() {
+    const capital  = parseFloat(document.getElementById('sim-capital')?.value) || 84000;
+    const spot     = parseFloat(document.getElementById('sim-spot')?.value) || 185;
+    const stopVal  = parseFloat(document.getElementById('sim-stop')?.value) || 165;
+    const iv       = parseFloat(document.getElementById('sim-iv')?.value) || 30;
+    const riskPct  = parseFloat(document.getElementById('sim-risk-pct')?.value) || 2;
+    const posPct   = parseFloat(document.getElementById('sim-pos-pct')?.value) || 10;
+    const days     = parseFloat(document.getElementById('sim-days')?.value) || 45;
+    if (!capital || !spot || !stopVal) return;
+
+    // ── Sistema 1: Stop tradicional ──
+    const riskEur1  = capital * riskPct / 100;
+    const distStop  = spot - stopVal;
+    const shares1   = distStop > 0 ? Math.floor(riskEur1 / distStop) : 0;
+    const invested1 = shares1 * spot;
+
+    // ── Sistema 2: Put como stop ──
+    const invested2  = capital * posPct / 100;
+    const shares2    = Math.floor(invested2 / spot);
+    const contracts2 = Math.ceil(shares2 / 100);
+    const strikeOpt  = Math.round(stopVal * 0.98 / 5) * 5;
+    const bs         = blackScholes(spot, strikeOpt, days/365, 0.05, iv/100, 'put');
+    const primaCost  = bs.price * 100 * contracts2;
+
+    // ── Movimientos -10% a +10% en pasos de 2% ──
+    const moves = [-10,-8,-6,-4,-2,0,2,4,6,8,10];
+
+    const rows = moves.map(pct => {
+      const newPrice = spot * (1 + pct/100);
+
+      // Sistema 1 P&L
+      let pnl1;
+      if (newPrice <= stopVal) {
+        pnl1 = -riskEur1; // stop activado
+      } else {
+        pnl1 = shares1 * (newPrice - spot);
+      }
+
+      // Sistema 2 P&L
+      const putPayoff = Math.max(0, strikeOpt - newPrice) * 100 * contracts2;
+      const stockPnl2 = shares2 * (newPrice - spot);
+      const pnl2 = stockPnl2 + putPayoff - primaCost;
+
+      const pnlPct1 = pnl1 / capital * 100;
+      const pnlPct2 = pnl2 / capital * 100;
+      const mejor   = pnl2 > pnl1 ? 2 : pnl1 > pnl2 ? 1 : 0;
+
+      return { pct, newPrice, pnl1, pnl2, pnlPct1, pnlPct2, mejor };
+    });
+
+    // ── SVG Gráfico comparativo ──
+    const W = 760, H = 180;
+    const allPnls = [...rows.map(r=>r.pnlPct1), ...rows.map(r=>r.pnlPct2)];
+    const minV = Math.min(...allPnls)*1.1, maxV = Math.max(...allPnls)*1.1;
+    const rangeV = maxV - minV || 1;
+    const toX = i => (i/(moves.length-1)*W).toFixed(1);
+    const toY = v => (H - (v-minV)/rangeV*H).toFixed(1);
+    const zero = toY(0);
+    const pts1 = rows.map((r,i) => `${toX(i)},${toY(r.pnlPct1)}`).join(' ');
+    const pts2 = rows.map((r,i) => `${toX(i)},${toY(r.pnlPct2)}`).join(' ');
+
+    const fmt = (n,d=2) => (n>=0?'+':'')+n.toFixed(d);
+    const col = n => n>=0?'var(--green)':'var(--red)';
+
+    document.getElementById('sim-results').innerHTML = `
+      <!-- Parámetros calculados -->
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border);border-radius:8px;overflow:hidden;margin-bottom:16px;">
+        <div style="background:var(--surface2);padding:12px 14px;">
+          <div style="font-family:var(--mono);font-size:9px;color:var(--text2);margin-bottom:5px;text-transform:uppercase;">Sistema 1 · Acciones</div>
+          <div style="font-family:var(--mono);font-size:18px;font-weight:700;">${shares1}</div>
+          <div style="font-size:10px;color:var(--text2);margin-top:3px;">Invertido: €${invested1.toFixed(0)} (${(invested1/capital*100).toFixed(1)}%)</div>
+        </div>
+        <div style="background:var(--surface2);padding:12px 14px;">
+          <div style="font-family:var(--mono);font-size:9px;color:var(--text2);margin-bottom:5px;text-transform:uppercase;">Sistema 2 · Acciones</div>
+          <div style="font-family:var(--mono);font-size:18px;font-weight:700;color:var(--teal);">${shares2}</div>
+          <div style="font-size:10px;color:var(--text2);margin-top:3px;">Invertido: €${invested2.toFixed(0)} (${posPct}%)</div>
+        </div>
+        <div style="background:var(--surface2);padding:12px 14px;">
+          <div style="font-family:var(--mono);font-size:9px;color:var(--text2);margin-bottom:5px;text-transform:uppercase;">Coste prima put</div>
+          <div style="font-family:var(--mono);font-size:18px;font-weight:700;color:var(--amber);">€${primaCost.toFixed(0)}</div>
+          <div style="font-size:10px;color:var(--text2);margin-top:3px;">${contracts2} contrato${contracts2>1?'s':''} · strike $${strikeOpt}</div>
+        </div>
+        <div style="background:var(--surface2);padding:12px 14px;">
+          <div style="font-family:var(--mono);font-size:9px;color:var(--text2);margin-bottom:5px;text-transform:uppercase;">Apalancamiento</div>
+          <div style="font-family:var(--mono);font-size:18px;font-weight:700;color:var(--blue);">${(shares2/shares1).toFixed(1)}×</div>
+          <div style="font-size:10px;color:var(--text2);margin-top:3px;">más acciones con opción</div>
+        </div>
+      </div>
+
+      <!-- Gráfico -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:14px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+          <div style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;">P&L sobre capital · % movimiento del precio</div>
+          <div style="display:flex;gap:16px;font-family:var(--mono);font-size:10px;">
+            <span style="color:var(--teal);">— Sistema 1 (stop)</span>
+            <span style="color:var(--amber);">— Sistema 2 (opción)</span>
+          </div>
+        </div>
+        <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;display:block;">
+          <line x1="0" y1="${zero}" x2="${W}" y2="${zero}" stroke="var(--border2)" stroke-width="1" stroke-dasharray="4,4"/>
+          ${moves.map((m,i) => `<text x="${toX(i)}" y="${H+14}" font-family="IBM Plex Mono" font-size="9" fill="var(--text3)" text-anchor="middle">${m>0?'+':''}${m}%</text>`).join('')}
+          <polyline points="${pts1}" fill="none" stroke="var(--teal)" stroke-width="2.5" stroke-linejoin="round"/>
+          <polyline points="${pts2}" fill="none" stroke="var(--amber)" stroke-width="2.5" stroke-linejoin="round" stroke-dasharray="6,3"/>
+          ${rows.map((r,i) => `<circle cx="${toX(i)}" cy="${toY(r.pnlPct1)}" r="3" fill="var(--teal)"/>`).join('')}
+          ${rows.map((r,i) => `<circle cx="${toX(i)}" cy="${toY(r.pnlPct2)}" r="3" fill="var(--amber)"/>`).join('')}
+        </svg>
+      </div>
+
+      <!-- Tabla comparativa -->
+      <table style="width:100%;border-collapse:collapse;font-size:11px;">
+        <thead>
+          <tr style="background:var(--surface2);">
+            <th style="padding:9px 12px;text-align:left;font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text2);border-bottom:1px solid var(--border);">Movimiento</th>
+            <th style="padding:9px 12px;text-align:right;font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text2);border-bottom:1px solid var(--border);">Precio</th>
+            <th style="padding:9px 12px;text-align:right;font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:0.08em;color:var(--teal);border-bottom:1px solid var(--border);">S1 P&L €</th>
+            <th style="padding:9px 12px;text-align:right;font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:0.08em;color:var(--teal);border-bottom:1px solid var(--border);">S1 % capital</th>
+            <th style="padding:9px 12px;text-align:right;font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:0.08em;color:var(--amber);border-bottom:1px solid var(--border);">S2 P&L €</th>
+            <th style="padding:9px 12px;text-align:right;font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:0.08em;color:var(--amber);border-bottom:1px solid var(--border);">S2 % capital</th>
+            <th style="padding:9px 12px;text-align:center;font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text2);border-bottom:1px solid var(--border);">Mejor</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(r => `<tr style="border-bottom:1px solid var(--border);${r.pct===0?'background:var(--teal-dim);':''}">
+            <td style="padding:9px 12px;font-weight:${r.pct===0?'700':'400'};color:${r.pct===0?'var(--text1)':'var(--text2)'};">${r.pct>0?'+':''}${r.pct}%</td>
+            <td style="padding:9px 12px;text-align:right;font-family:var(--mono);">$${r.newPrice.toFixed(2)}</td>
+            <td style="padding:9px 12px;text-align:right;font-family:var(--mono);font-weight:700;color:${col(r.pnl1)};">${fmt(r.pnl1,0)}€</td>
+            <td style="padding:9px 12px;text-align:right;font-family:var(--mono);color:${col(r.pnlPct1)};">${fmt(r.pnlPct1)}%</td>
+            <td style="padding:9px 12px;text-align:right;font-family:var(--mono);font-weight:700;color:${col(r.pnl2)};">${fmt(r.pnl2,0)}€</td>
+            <td style="padding:9px 12px;text-align:right;font-family:var(--mono);color:${col(r.pnlPct2)};">${fmt(r.pnlPct2)}%</td>
+            <td style="padding:9px 12px;text-align:center;">${r.mejor===1?'<span style="color:var(--teal);font-weight:700;">S1</span>':r.mejor===2?'<span style="color:var(--amber);font-weight:700;">S2</span>':'='}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+      <div style="font-size:10px;color:var(--text2);margin-top:10px;padding:10px 12px;background:var(--surface2);border-radius:6px;font-family:var(--mono);">
+        S1 = Stop tradicional (${riskPct}% riesgo · ${shares1} acciones) · S2 = Put como stop (${posPct}% capital · ${shares2} acciones · prima €${primaCost.toFixed(0)})
+      </div>
+    `;
   }
 
   function calcCobertura() {
