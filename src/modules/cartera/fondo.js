@@ -306,17 +306,18 @@ async function calcMetricas(fondo, vlActual, history = [], positions = [], capit
     const spyHist = await UserData.get('ethan_px_hist_SPY') || {};
     const spyReturns = [];
     const fondoReturnsSPY = [];
-    dailyDates.forEach((date, i) => {
-      // Buscar el día anterior en la serie
-      const prevDate = serieFinal[i]?.[0];
-      if (!prevDate) return;
-      const spyCur = spyHist[date];
+    // dailyDates[i] = fecha del día i, serieFinal[i+1][0] = fecha actual, serieFinal[i][0] = día anterior
+    for (let i = 0; i < dailyDates.length; i++) {
+      const date     = dailyDates[i];            // fecha del retorno diario
+      const prevDate = serieFinal[i]?.[0];       // día anterior en la serie VL
+      if (!date || !prevDate || date === prevDate) continue;
+      const spyCur  = spyHist[date];
       const spyPrev = spyHist[prevDate];
-      if (spyCur && spyPrev && spyPrev > 0) {
+      if (spyCur && spyPrev && spyPrev > 0 && dailyReturns[i] != null) {
         spyReturns.push((spyCur - spyPrev) / spyPrev);
         fondoReturnsSPY.push(dailyReturns[i]);
       }
-    });
+    }
 
     if (spyReturns.length >= 10) {
       const meanF = fondoReturnsSPY.reduce((a,b)=>a+b,0)/fondoReturnsSPY.length;
@@ -326,7 +327,10 @@ async function calcMetricas(fondo, vlActual, history = [], positions = [], capit
       beta = varSPY > 0 ? cov / varSPY : null;
       const spyAnnReturn = Math.pow(1 + meanS, 252) - 1;
       const rf = 0.05;
-      alpha = beta != null ? annReturn - (rf + beta * (spyAnnReturn - rf)) : null;
+      // Alpha sobre retorno del período real (no anualizado) — evita distorsión en fondos jóvenes
+      const spyTotalReturn = spyReturns.reduce((acc, r) => acc * (1 + r), 1) - 1;
+      const rfPeriod = Math.pow(1 + rf, spyReturns.length / 252) - 1;
+      alpha = beta != null ? totalReturn - (rfPeriod + beta * (spyTotalReturn - rfPeriod)) : null;
       const stdF = Math.sqrt(fondoReturnsSPY.reduce((a,r)=>a+(r-meanF)**2,0)/fondoReturnsSPY.length);
       const stdS = Math.sqrt(varSPY);
       correlation = stdF > 0 && stdS > 0 ? cov / (stdF * stdS) : null;
