@@ -128,11 +128,12 @@ Sé concreto y accionable. Usa los datos reales proporcionados. Máximo 4 accion
   const r = await fetch('/api/macro-ai', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt, type: 'estrategia' }),
+    body: JSON.stringify({ prompt }),
   });
   if (!r.ok) throw new Error(`Error API: ${r.status}`);
   const data = await r.json();
-  const text = data.resultado || data.content || '';
+  const text = data.text || data.resultado || data.content || '';
+  if (!text) throw new Error('Sin respuesta de la IA — comprueba los créditos de Anthropic');
   const clean = text.replace(/```json\n?|```\n?/g,'').trim();
   const match = clean.match(/\{[\s\S]*\}/);
   if (!match) throw new Error('Respuesta IA no válida');
