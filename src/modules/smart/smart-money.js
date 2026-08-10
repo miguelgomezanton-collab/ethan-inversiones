@@ -7,6 +7,178 @@ const fmtPct = (n, d=1) => n != null && isFinite(n) ? (n*100).toFixed(d)+'%' : '
 const fmtNum = n => n != null ? Math.abs(n).toLocaleString('es-ES') : '—';
 const fmtDate = d => d && d.length >= 10 ? new Date(d+'T12:00:00').toLocaleDateString('es-ES',{day:'2-digit',month:'short',year:'numeric'}) : (d||'—');
 const fmtM = n => n != null ? '$'+(n/1e6).toFixed(1)+'M' : '—';
+const fmtB = n => n != null ? (Math.abs(n)>=1e9?'$'+(n/1e9).toFixed(1)+'B':'$'+(n/1e6).toFixed(0)+'M') : '—';
+
+// ── Recompras de acciones ─────────────────────────────────────────────────
+const PROXIES_SM = [
+  u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+  u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+];
+
+async function fetchRecompras(ticker) {
+  try {
+    // 1. Yahoo Finance — datos de shares y mercado
+    const yahooUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${ticker}?modules=defaultKeyStatistics,summaryDetail,financialData`;
+    let yahoo = null;
+    for (const fn of PROXIES_SM) {
+      try {
+        const ctrl = new AbortController();
+        const tid = setTimeout(() => ctrl.abort(), 8000);
+        const r = await fetch(fn(yahooUrl), { signal: ctrl.signal });
+        clearTimeout(tid);
+        if (!r.ok) continue;
+        const data = await r.json();
+        yahoo = data?.quoteSummary?.result?.[0];
+        if (yahoo) break;
+      } catch {}
+    }
+
+    const stats   = yahoo?.defaultKeyStatistics || {};
+    const summary = yahoo?.summaryDetail || {};
+    const floatShares     = stats.floatShares?.raw ?? null;
+    const sharesOut       = stats.sharesOutstanding?.raw ?? null;
+    const marketCap       = summary.marketCap?.raw ?? null;
+    const sharesShortPct  = stats.sharesPercentSharesOut?.raw ?? null;
+
+    // 2. SEC EDGAR — último 10-Q o 10-K buscando recompras
+    let secData = null;
+    try {
+      // Buscar CIK del ticker
+      const cikUrl = `https://efts.sec.gov/LATEST/search-index?q=%22${ticker}%22&dateRange=custom&startdt=2024-01-01&forms=10-Q,10-K`;
+      const cikProxy = PROXIES_SM[0](cikUrl);
+      const cikCtrl = new AbortController();
+      const cikTid = setTimeout(() => cikCtrl.abort(), 8000);
+      const cikRes = await fetch(cikProxy, { signal: cikCtrl.signal });
+      clearTimeout(cikTid);
+
+      if (cikRes.ok) {
+        const cikData = await cikRes.json();
+        const filing = cikData?.hits?.hits?.[0];
+        if (filing) {
+          const docUrl = `https://www.sec.gov${filing._source?.file_date ? '/cgi-bin/browse-edgar?action=getcompany&CIK=' + filing._source?.entity_id + '&type=10-Q&dateb=&owner=include&count=1&search_text=' : ''}`;
+          // Extraer texto del filing via EDGAR full-text search
+          const snippets = cikData?.hits?.hits?.slice(0,3)
+            .map(h => h._source?.period_of_report + ': ' + (h.highlight?.['file_date']?.[0] || ''))
+            .filter(Boolean);
+          secData = { snippets, filingDate: filing?._source?.period_of_report };
+        }
+      }
+    } catch {}
+
+    // 3. Claude extrae el programa de recompras del texto de Yahoo + SEC
+    let programa = null;
+    try {
+      const ctx = `Empresa: ${ticker}
+Capitalización: ${marketCap ? fmtB(marketCap) : '—'}
+Acciones en circulación: ${sharesOut ? (sharesOut/1e6).toFixed(1)+'M' : '—'}
+Float: ${floatShares ? (floatShares/1e6).toFixed(1)+'M' : '—'}
+Short interest: ${sharesShortPct ? (sharesShortPct*100).toFixed(1)+'%' : '—'}`;
+
+      const prompt = `Eres un analista financiero. Basándote en el conocimiento público sobre ${ticker}, estima el programa de recompra de acciones más reciente conocido.
+
+Contexto actual de la empresa:
+${ctx}
+
+Responde SOLO con JSON sin markdown:
+{
+  "tienePrograma": true,
+  "aprobadoTotal": 90000000000,
+  "ejecutadoEstimado": 67000000000,
+  "pendienteEstimado": 23000000000,
+  "pctFloatAnual": 3.2,
+  "ultimaActualizacion": "Q1 2025",
+  "fuente": "Estimación basada en reportes públicos",
+  "nota": "Dato aproximado basado en últimos earnings conocidos. Puede estar desactualizado hasta 3 meses."
+}
+
+Si no tienes información suficiente sobre el programa de recompras de ${ticker}, responde con {"tienePrograma": false, "nota": "Sin datos de programa de recompras conocido"}
+
+Sé conservador — solo incluye datos que conozcas con razonable certeza.`;
+
+      const r = await fetch('/api/macro-ai', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt }),
+      });
+      if (r.ok) {
+        const d = await r.json();
+        const text = (d.text || '').replace(/```json\n?|```\n?/g,'').trim();
+        const match = text.match(/\{[\s\S]*\}/);
+        if (match) programa = JSON.parse(match[0]);
+      }
+    } catch {}
+
+    return {
+      floatShares, sharesOut, marketCap, sharesShortPct,
+      programa,
+    };
+  } catch(e) {
+    return null;
+  }
+}
+
+function paintRecompras(recompras, ticker) {
+  if (!recompras) return `<div style="font-family:var(--mono);font-size:11px;color:var(--text3);">Sin datos de recompras disponibles para ${ticker}</div>`;
+
+  const { floatShares, sharesOut, marketCap, sharesShortPct, programa } = recompras;
+
+  const floatHTML = floatShares || sharesOut || marketCap ? `
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px;">
+      ${marketCap ? `<div style="background:var(--surface2);border-radius:8px;padding:12px 14px;">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--text3);margin-bottom:5px;text-transform:uppercase;">Market Cap</div>
+        <div style="font-family:var(--serif);font-size:20px;font-style:italic;font-weight:600;">${fmtB(marketCap)}</div>
+      </div>` : ''}
+      ${floatShares ? `<div style="background:var(--surface2);border-radius:8px;padding:12px 14px;">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--text3);margin-bottom:5px;text-transform:uppercase;">Float</div>
+        <div style="font-family:var(--serif);font-size:20px;font-style:italic;font-weight:600;">${(floatShares/1e6).toFixed(0)}M acc.</div>
+      </div>` : ''}
+      ${sharesShortPct != null ? `<div style="background:var(--surface2);border-radius:8px;padding:12px 14px;">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--text3);margin-bottom:5px;text-transform:uppercase;">Short % float</div>
+        <div style="font-family:var(--serif);font-size:20px;font-style:italic;font-weight:600;color:${sharesShortPct>0.1?'var(--red)':'var(--text1)'};">${(sharesShortPct*100).toFixed(1)}%</div>
+      </div>` : ''}
+    </div>` : '';
+
+  if (!programa || !programa.tienePrograma) {
+    return floatHTML + `<div style="font-family:var(--mono);font-size:11px;color:var(--text3);padding:12px 14px;background:var(--surface2);border-radius:8px;">${programa?.nota || 'Sin datos de programa de recompras conocido'}</div>`;
+  }
+
+  const ejecutado = programa.ejecutadoEstimado || 0;
+  const aprobado  = programa.aprobadoTotal || 1;
+  const pctEjec   = Math.min(100, (ejecutado/aprobado*100));
+  const pendiente = programa.pendienteEstimado || (aprobado - ejecutado);
+
+  return `${floatHTML}
+    <div style="background:var(--surface2);border-radius:10px;padding:16px 18px;margin-bottom:12px;">
+      <div style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:12px;">Programa de Recompras · ${programa.ultimaActualizacion || '—'}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:14px;">
+        <div>
+          <div style="font-size:10px;color:var(--text3);margin-bottom:4px;">Total aprobado</div>
+          <div style="font-family:var(--serif);font-size:22px;font-style:italic;font-weight:600;color:var(--text1);">${fmtB(aprobado)}</div>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--text3);margin-bottom:4px;">Ejecutado (est.)</div>
+          <div style="font-family:var(--serif);font-size:22px;font-style:italic;font-weight:600;color:var(--amber);">${fmtB(ejecutado)}</div>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--text3);margin-bottom:4px;">Pendiente (est.)</div>
+          <div style="font-family:var(--serif);font-size:22px;font-style:italic;font-weight:600;color:var(--green);">${fmtB(pendiente)}</div>
+        </div>
+      </div>
+      <!-- Barra de progreso -->
+      <div style="font-size:10px;color:var(--text3);margin-bottom:5px;">Progreso del programa</div>
+      <div style="height:8px;background:var(--surface);border-radius:4px;overflow:hidden;margin-bottom:6px;">
+        <div style="height:100%;width:${pctEjec.toFixed(0)}%;background:linear-gradient(90deg,var(--teal),var(--amber));border-radius:4px;"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:9px;color:var(--text3);">
+        <span>Ejecutado ${pctEjec.toFixed(0)}%</span>
+        <span>Pendiente ${(100-pctEjec).toFixed(0)}%</span>
+      </div>
+      ${programa.pctFloatAnual ? `<div style="margin-top:10px;font-size:11px;color:var(--text2);">Ritmo de recompras: <strong style="color:var(--teal);">${programa.pctFloatAnual.toFixed(1)}% del float/año</strong> — equivalente a recomprar toda la empresa en ${(100/programa.pctFloatAnual).toFixed(0)} años al ritmo actual</div>` : ''}
+    </div>
+    <div style="font-family:var(--mono);font-size:9px;color:var(--text3);background:rgba(251,191,36,0.06);border:1px solid rgba(251,191,36,0.2);border-radius:6px;padding:8px 12px;line-height:1.6;">
+      ⚠ ${programa.nota || 'Datos aproximados basados en últimos reportes públicos conocidos. Pueden estar desactualizados hasta 3 meses. Verifica en los earnings reports oficiales de la empresa.'}
+    </div>`;
+}
 
 const CSS = `
 .sm-wrap{font-family:var(--sans);}
@@ -85,19 +257,22 @@ export async function render(container, { actionsSlot }) {
       if (st) st.textContent = `Consultando insiders y mercado para ${ticker} en paralelo...`;
       res.innerHTML = `<div class="sm-loader"><div class="loader-ring"></div>Buscando datos de Smart Money para ${ticker}... (15-30s)</div>`;
 
-      const [insidersRes, marketRes] = await Promise.allSettled([
+      const [insidersRes, marketRes, recomprasRes] = await Promise.allSettled([
         fetch(`/api/smart-money?ticker=${ticker}&section=insiders`, { signal: (() => { const c = new AbortController(); setTimeout(() => c.abort(), 58000); return c.signal; })() }).then(r => r.json()),
         fetch(`/api/smart-money?ticker=${ticker}&section=market`,   { signal: (() => { const c = new AbortController(); setTimeout(() => c.abort(), 58000); return c.signal; })() }).then(r => r.json()),
+        fetchRecompras(ticker),
       ]);
 
-      const insidersData = insidersRes.status === 'fulfilled' ? insidersRes.value : {};
-      const marketData   = marketRes.status === 'fulfilled'   ? marketRes.value   : {};
+      const insidersData  = insidersRes.status  === 'fulfilled' ? insidersRes.value  : {};
+      const marketData    = marketRes.status    === 'fulfilled' ? marketRes.value    : {};
+      const recomprasData = recomprasRes.status === 'fulfilled' ? recomprasRes.value : null;
 
       const data = {
         ticker,
         insiders:      insidersData.insiders      || [],
         shortInterest: marketData.shortInterest   || null,
         institutional: marketData.institutional   || null,
+        recompras:     recomprasData,
         errors: [
           ...(insidersData.error ? ['Insiders: ' + insidersData.error.slice(0,60)] : []),
           ...(marketData.error   ? ['Market: '   + marketData.error.slice(0,60)]   : []),
@@ -281,6 +456,16 @@ export async function render(container, { actionsSlot }) {
       <div style="font-size:10px;color:var(--text3);font-family:var(--mono);padding:8px 0;">
         ⚠ Datos parciales: ${data.errors.join(' · ')}
       </div>` : ''}
+
+      <!-- Recompras de acciones -->
+      <div class="sm-section">🔄 Recompra de Acciones</div>
+      <div class="sm-card">
+        <div class="sm-card-title">Programa de Recompras · Share Buyback</div>
+        <div class="sm-card-desc">Datos de Yahoo Finance + estimación IA basada en últimos reportes públicos.</div>
+        <div id="sm-recompras-content">
+          ${paintRecompras(data.recompras, ticker)}
+        </div>
+      </div>
     `;
   }
 
