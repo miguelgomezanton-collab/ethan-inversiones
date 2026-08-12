@@ -1,5 +1,6 @@
 // /api/smart-13f.js — 13F Tracker via SEC EDGAR
 const WORKER = 'https://soft-field-156f.miguel-gomez-anton.workers.dev/?url=';
+const UA = 'ETHAN-Mercados contact@ethan-inversiones.vercel.app';
 
 const FUNDS = {
   berkshire:  { name:'Berkshire Hathaway',     manager:'Warren Buffett', cik:'1067983', style:'Value concentrado',    color:'#40d9c0' },
@@ -11,67 +12,57 @@ const FUNDS = {
   fidelity:   { name:'Fidelity (FMR LLC)',       manager:'Will Danoff',   cik:'315066',  style:'Growth americano',     color:'#fb923c' },
 };
 
-async function efetch(url, text = false) {
-  const headers = { 'User-Agent': 'ETHAN-Mercados contact@ethan-inversiones.vercel.app', 'Accept': '*/*' };
-  // Intentar directo
+async function efetch(url) {
   for (const fn of [u => u, u => WORKER + encodeURIComponent(u)]) {
     try {
       const ctrl = new AbortController();
       setTimeout(() => ctrl.abort(), 20000);
-      const r = await fetch(fn(url), { headers, signal: ctrl.signal });
-      if (r.ok) return text ? r.text() : r.json();
+      const r = await fetch(fn(url), { headers: { 'User-Agent': UA }, signal: ctrl.signal });
+      if (r.ok) return r;
     } catch {}
   }
-  throw new Error(`EDGAR inaccesible: ${url.slice(-40)}`);
+  throw new Error(`Sin acceso: ${url.slice(-50)}`);
 }
 
 async function getLatest13F(cik) {
   const paddedCik = cik.padStart(10, '0');
 
-  // 1. Submissions JSON — obtener último accession number
-  const subData = await efetch(`https://data.sec.gov/submissions/CIK${paddedCik}.json`);
+  // 1. Submissions JSON
+  const subR   = await efetch(`https://data.sec.gov/submissions/CIK${paddedCik}.json`);
+  const subData = await subR.json();
   const filings = subData.filings?.recent;
   if (!filings) throw new Error('Sin filings');
 
   const idx = filings.form.findIndex(f => f === '13F-HR');
   if (idx === -1) throw new Error('Sin 13F-HR');
 
-  const accNum  = filings.accessionNumber[idx];          // con guiones
-  const accClean = accNum.replace(/-/g, '');             // sin guiones
-  const period  = filings.reportDate?.[idx] || '';
-  const filed   = filings.filingDate[idx] || '';
+  const accNum   = filings.accessionNumber[idx];
+  const accClean = accNum.replace(/-/g, '');
+  const period   = filings.reportDate?.[idx] || '';
+  const filed    = filings.filingDate[idx] || '';
 
-  // 2. Índice del filing para encontrar el nombre exacto del archivo XML
-  const idxUrl  = `https://www.sec.gov/Archives/edgar/data/${cik}/${accClean}/${accClean}-index.json`;
-  let xmlFile = 'form13fInfoTable.xml'; // nombre más común en filings modernos
+  // 2. Leer índice HTML del filing para encontrar el XML de holdings
+  const idxUrl = `https://www.sec.gov/Archives/edgar/data/${cik}/${accClean}/${accNum}-index.htm`;
+  const idxR   = await efetch(idxUrl);
+  const html   = await idxR.text();
 
-  try {
-    const idxData = await efetch(idxUrl);
-    const items   = idxData.directory?.item || [];
-    const found   = items.find(f =>
-      f.name?.toLowerCase().endsWith('.xml') &&
-      !f.name?.toLowerCase().includes('primary') &&
-      !f.name?.toLowerCase().includes('primary_doc')
-    );
-    if (found) xmlFile = found.name;
-  } catch {}
+  // Buscar el link al XML de INFORMATION TABLE (no primary_doc)
+  // Patrón: href con .xml que NO sea primary_doc
+  const matches = [...html.matchAll(/href="[^"]*\/([^"\/]+\.xml)"/gi)];
+  const xmlFile = matches
+    .map(m => m[1])
+    .find(name => !name.toLowerCase().includes('primary') && name.endsWith('.xml'));
 
-  // 3. Descargar XML de holdings
+  if (!xmlFile) throw new Error('No se encontró el archivo XML de holdings en el índice');
+
+  // 3. Descargar el XML
   const xmlUrl = `https://www.sec.gov/Archives/edgar/data/${cik}/${accClean}/${xmlFile}`;
-  const xml    = await efetch(xmlUrl, true);
+  const xmlR   = await efetch(xmlUrl);
+  const xml    = await xmlR.text();
 
-  if (!xml || !xml.includes('infoTable')) {
-    // Intentar el archivo txt completo (contiene todo)
-    const txtUrl = `https://www.sec.gov/Archives/edgar/data/${cik}/${accClean}/${accClean}.txt`;
-    const txt    = await efetch(txtUrl, true);
-    if (!txt?.includes('infoTable')) throw new Error('No se encontraron holdings');
-    return parseXML(txt, period, filed);
-  }
+  if (!xml.includes('infoTable')) throw new Error('XML sin datos de holdings');
 
-  return parseXML(xml, period, filed);
-}
-
-function parseXML(xml, period, filed) {
+  // 4. Parsear
   const holdings = [];
   const rowRegex = /<infoTable>([\s\S]*?)<\/infoTable>/gi;
   let m;
@@ -83,11 +74,13 @@ function parseXML(xml, period, filed) {
     const shares = parseInt(get('sshPrnamt')) || 0;
     if (name && value > 0) holdings.push({ name, value: value * 1000, shares });
   }
+
   holdings.sort((a, b) => b.value - a.value);
   const total = holdings.reduce((s, h) => s + h.value, 0);
   const top15 = holdings.slice(0, 15).map(h => ({
     ...h, pct: total > 0 ? parseFloat((h.value / total * 100).toFixed(1)) : 0,
   }));
+
   return { period, filed, holdings: top15, totalPositions: holdings.length, totalValue: total };
 }
 
