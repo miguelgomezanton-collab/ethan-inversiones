@@ -524,6 +524,8 @@ export async function render(container, { actionsSlot }) {
     scion:      { name:'Scion Asset Mgmt',       manager:'Michael Burry', style:'Contrarian extremo',     color:'#f47174' },
     baupost:    { name:'Baupost Group',           manager:'Seth Klarman',  style:'Value profundo',          color:'#4ade80' },
     fidelity:   { name:'Fidelity (FMR LLC)',      manager:'Will Danoff',   style:'Growth americano',        color:'#fb923c' },
+    gic:        { name:'GIC — Singapore',         manager:'Lim Chow Kiat', style:'Fondo soberano SG',      color:'#e879f9' },
+    norges:     { name:'Norges Bank (NBIM)',      manager:'Nicolai Tangen',style:'Fondo soberano Noruega', color:'#f43f5e' },
   };
 
   let loaded13F = false;
