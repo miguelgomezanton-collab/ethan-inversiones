@@ -13,15 +13,29 @@ const FUNDS = {
   fidelity:   { name:'Fidelity (FMR LLC)',      manager:'Will Danoff',   cik:'315066',  style:'Growth americano',     color:'#fb923c' },
 };
 
+const WORKER = 'https://soft-field-156f.miguel-gomez-anton.workers.dev/?url=';
+
+async function edgarFetch(url) {
+  for (const fn of [u => u, u => WORKER + encodeURIComponent(u)]) {
+    try {
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), 15000);
+      const r = await fetch(fn(url), {
+        headers: { 'User-Agent': 'ETHAN-Mercados admin@ethan-inversiones.vercel.app' },
+        signal: ctrl.signal,
+      });
+      clearTimeout(tid);
+      if (r.ok) return r;
+    } catch {}
+  }
+  throw new Error('EDGAR no accesible: ' + url.slice(0,60));
+}
+
 async function getLatest13F(cik) {
   const paddedCik = cik.padStart(10, '0');
   const subUrl = `https://data.sec.gov/submissions/CIK${paddedCik}.json`;
 
-  const r = await fetch(subUrl, {
-    headers: { 'User-Agent': 'ETHAN-Mercados admin@ethan-inversiones.vercel.app' },
-    signal: (() => { const c = new AbortController(); setTimeout(() => c.abort(), 15000); return c.signal; })()
-  });
-  if (!r.ok) throw new Error(`EDGAR: ${r.status}`);
+  const r = await edgarFetch(subUrl);
   const data = await r.json();
 
   const filings = data.filings?.recent;
@@ -40,10 +54,7 @@ async function getLatest13F(cik) {
   let infotableFile = 'infotable.xml';
 
   try {
-    const ir = await fetch(idxUrl, {
-      headers: { 'User-Agent': 'ETHAN-Mercados admin@ethan-inversiones.vercel.app' },
-      signal: (() => { const c = new AbortController(); setTimeout(() => c.abort(), 8000); return c.signal; })()
-    });
+    const ir = await edgarFetch(idxUrl);
     if (ir.ok) {
       const idxData = await ir.json();
       const items = idxData.directory?.item || [];
@@ -56,11 +67,7 @@ async function getLatest13F(cik) {
   } catch {}
 
   const xmlUrl = `https://www.sec.gov/Archives/edgar/data/${cik}/${accNum}/${infotableFile}`;
-  const xr = await fetch(xmlUrl, {
-    headers: { 'User-Agent': 'ETHAN-Mercados admin@ethan-inversiones.vercel.app' },
-    signal: (() => { const c = new AbortController(); setTimeout(() => c.abort(), 15000); return c.signal; })()
-  });
-  if (!xr.ok) throw new Error(`Holdings XML: ${xr.status}`);
+  const xr = await edgarFetch(xmlUrl);
   const xml = await xr.text();
 
   // Parsear holdings
