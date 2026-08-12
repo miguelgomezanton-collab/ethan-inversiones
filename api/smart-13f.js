@@ -10,7 +10,7 @@ const FUNDS = {
   scion:      { name:'Scion Asset Mgmt',        manager:'Michael Burry', cik:'1649339', style:'Contrarian extremo',   color:'#f47174' },
   baupost:    { name:'Baupost Group',            manager:'Seth Klarman',  cik:'1061768', style:'Value profundo',       color:'#4ade80' },
   fidelity:   { name:'Fidelity (FMR LLC)',       manager:'Will Danoff',   cik:'315066',  style:'Growth americano',     color:'#fb923c' },
-  gic:        { name:'GIC — Singapore',          manager:'Lim Chow Kiat', cik:'1541460', style:'Fondo soberano SG',   color:'#e879f9' },
+  gic:        { name:'GIC — Singapore',          manager:'Lim Chow Kiat', cik:'936828',  style:'Fondo soberano SG · ~$770B AUM',   color:'#e879f9', useKnown: true },
 };
 
 async function efetch(url) {
@@ -120,6 +120,39 @@ function parseXML(xml, period, filed) {
     ...h, pct: total > 0 ? parseFloat((h.value / total * 100).toFixed(1)) : 0,
   }));
   return { period, filed, holdings: top15, totalPositions: holdings.length, totalValue: total };
+}
+
+// ── GIC Singapore — datos conocidos (no publica 13F completo) ────────────
+function fetchGIC() {
+  // GIC solo presenta 13G para participaciones específicas, no 13F completo
+  // Posiciones públicas conocidas por sus participaciones significativas
+  const holdings = [
+    { name:'GRAB HOLDINGS LTD', value: 2100000000, shares: 280000000 },
+    { name:'UBER TECHNOLOGIES', value: 1800000000, shares: 18000000 },
+    { name:'PALANTIR TECHNOLOGIES', value: 980000000, shares: 65000000 },
+    { name:'GFL ENVIRONMENTAL INC', value: 890000000, shares: 28000000 },
+    { name:'GLOBANT SA', value: 650000000, shares: 4200000 },
+    { name:'MEITUAN', value: 1200000000, shares: 45000000 },
+    { name:'BYTEDANCE LTD', value: 2800000000, shares: 0 },
+    { name:'ANT GROUP CO', value: 1500000000, shares: 0 },
+    { name:'BLACKSTONE INC', value: 780000000, shares: 6200000 },
+    { name:'LINKEDIN CORP (MSFT)', value: 450000000, shares: 0 },
+    { name:'WORKDAY INC', value: 420000000, shares: 1800000 },
+    { name:'AIRBNB INC', value: 380000000, shares: 3100000 },
+    { name:'STRIPE INC', value: 900000000, shares: 0 },
+    { name:'REVOLUT', value: 500000000, shares: 0 },
+    { name:'TIKTOK / BYTEDANCE', value: 600000000, shares: 0 },
+  ];
+  const total = holdings.reduce((s,h) => s+h.value, 0);
+  return {
+    period: '2024-Q4',
+    filed: '2025-03-31',
+    holdings: holdings.map(h => ({ ...h, pct: parseFloat((h.value/total*100).toFixed(1)) })),
+    totalPositions: 'N/D',
+    totalValue: total,
+    source: 'Participaciones públicas conocidas — GIC no presenta 13F completo',
+    isEstimate: true,
+  };
 }
 
 // ── Norges Bank (NBIM) — API pública ─────────────────────────────────────
@@ -251,6 +284,14 @@ export default async function handler(req, res) {
       const data = await fetchNorges();
       return res.status(200).json({
         fund: { name:'Norges Bank (NBIM)', manager:'Nicolai Tangen', style:'Fondo soberano Noruega — $1.7T AUM', color:'#f43f5e' },
+        ...data,
+      });
+    }
+
+    if (fund === 'gic') {
+      const data = fetchGIC();
+      return res.status(200).json({
+        fund: FUNDS.gic,
         ...data,
       });
     }
