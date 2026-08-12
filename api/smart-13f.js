@@ -43,32 +43,22 @@ async function getLatest13F(cik) {
   const filed    = filings.filingDate[idx]   || '';
 
   // 2. Leer índice HTML para encontrar nombre exacto del XML
-  const idxUrl  = `https://www.sec.gov/Archives/edgar/data/${cik}/${accClean}/${accNum}-index.htm`;
-  let xmlFile   = null;
-  let xmlSizeKB = 0;
-
-  try {
-    const idxR  = await efetch(idxUrl);
-    const html  = await idxR.text();
-    // Buscar todos los .xml que no sean primary_doc
-    const rows  = [...html.matchAll(/\|\s*([^\|]+\.xml)\s*\|\s*INFORMATION TABLE[^\|]*\|\s*(\d+)/gi)];
-    if (rows.length) {
-      xmlFile   = rows[0][1].trim();
-      xmlSizeKB = parseInt(rows[0][2]) / 1024;
-    } else {
-      // Patrón alternativo
-      const m = html.match(/href="[^"]*\/([^"\/]+\.xml)"[^>]*>[^<]*<\/a>\s*\|\s*INFORMATION TABLE/i);
-      if (m) xmlFile = m[1];
-    }
-  } catch {}
-
-  // Si no encontramos el nombre, buscar en el HTML de forma más amplia
-  if (!xmlFile) {
+  // Probamos .htm y .html ya que EDGAR usa ambos
+  let xmlFile = null;
+  for (const idxExt of ['-index.htm', '-index.html']) {
     try {
-      const idxR = await efetch(idxUrl);
-      const html = await idxR.text();
-      const allXml = [...html.matchAll(/([a-zA-Z0-9_\-]+\.xml)/g)].map(m => m[1]);
-      xmlFile = allXml.find(n => !n.toLowerCase().includes('primary'));
+      const idxUrl = `https://www.sec.gov/Archives/edgar/data/${cik}/${accClean}/${accNum}${idxExt}`;
+      const idxR   = await efetch(idxUrl);
+      const html   = await idxR.text();
+      // Extraer todos los nombres de .xml que aparezcan en el HTML
+      const allXml = [...html.matchAll(/([\w\-\.]+\.xml)/gi)].map(m => m[1]);
+      // El archivo de holdings es cualquier .xml que no sea primary_doc
+      xmlFile = allXml.find(n =>
+        !n.toLowerCase().includes('primary') &&
+        !n.toLowerCase().startsWith('xsl') &&
+        n.endsWith('.xml')
+      );
+      if (xmlFile) break;
     } catch {}
   }
 
