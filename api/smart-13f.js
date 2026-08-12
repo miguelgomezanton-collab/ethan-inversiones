@@ -1,147 +1,121 @@
-// /api/smart-13f.js — 13F Tracker via SEC EDGAR + efts search API
+// /api/smart-13f.js — 13F Tracker via SEC EDGAR
 const WORKER = 'https://soft-field-156f.miguel-gomez-anton.workers.dev/?url=';
 
 const FUNDS = {
-  berkshire:  { name:'Berkshire Hathaway',    manager:'Warren Buffett', cik:'1067983', style:'Value concentrado',    color:'#40d9c0' },
-  bridgewater:{ name:'Bridgewater Associates', manager:'Ray Dalio',     cik:'1350694', style:'Macro global',         color:'#5fa8e0' },
-  pershing:   { name:'Pershing Square',        manager:'Bill Ackman',   cik:'1336528', style:'Activista concentrado',color:'#a78bfa' },
-  thirdpoint: { name:'Third Point',            manager:'Dan Loeb',      cik:'1040273', style:'Activista tech',        color:'#fbbf24' },
-  scion:      { name:'Scion Asset Mgmt',       manager:'Michael Burry', cik:'1649339', style:'Contrarian extremo',   color:'#f47174' },
-  baupost:    { name:'Baupost Group',           manager:'Seth Klarman',  cik:'1061768', style:'Value profundo',       color:'#4ade80' },
-  fidelity:   { name:'Fidelity (FMR LLC)',      manager:'Will Danoff',   cik:'315066',  style:'Growth americano',     color:'#fb923c' },
+  berkshire:  { name:'Berkshire Hathaway',     manager:'Warren Buffett', cik:'1067983', style:'Value concentrado',    color:'#40d9c0' },
+  bridgewater:{ name:'Bridgewater Associates',  manager:'Ray Dalio',     cik:'1350694', style:'Macro global',         color:'#5fa8e0' },
+  pershing:   { name:'Pershing Square',         manager:'Bill Ackman',   cik:'1336528', style:'Activista concentrado',color:'#a78bfa' },
+  thirdpoint: { name:'Third Point',             manager:'Dan Loeb',      cik:'1040273', style:'Activista tech',        color:'#fbbf24' },
+  scion:      { name:'Scion Asset Mgmt',        manager:'Michael Burry', cik:'1649339', style:'Contrarian extremo',   color:'#f47174' },
+  baupost:    { name:'Baupost Group',            manager:'Seth Klarman',  cik:'1061768', style:'Value profundo',       color:'#4ade80' },
+  fidelity:   { name:'Fidelity (FMR LLC)',       manager:'Will Danoff',   cik:'315066',  style:'Growth americano',     color:'#fb923c' },
 };
 
-async function efetch(url) {
-  const ctrl = new AbortController();
-  setTimeout(() => ctrl.abort(), 20000);
+async function efetch(url, text = false) {
+  const headers = { 'User-Agent': 'ETHAN-Mercados contact@ethan-inversiones.vercel.app', 'Accept': '*/*' };
   // Intentar directo
-  try {
-    const r = await fetch(url, {
-      headers: { 'User-Agent': 'ETHAN-Mercados miguel@ethan-inversiones.vercel.app', 'Accept': 'application/json, text/xml, */*' },
-      signal: ctrl.signal,
-    });
-    if (r.ok) return r;
-  } catch {}
-  // Fallback: worker
-  const ctrl2 = new AbortController();
-  setTimeout(() => ctrl2.abort(), 20000);
-  const r2 = await fetch(WORKER + encodeURIComponent(url), { signal: ctrl2.signal });
-  if (r2.ok) return r2;
-  throw new Error(`Sin acceso: ${r2.status}`);
+  for (const fn of [u => u, u => WORKER + encodeURIComponent(u)]) {
+    try {
+      const ctrl = new AbortController();
+      setTimeout(() => ctrl.abort(), 20000);
+      const r = await fetch(fn(url), { headers, signal: ctrl.signal });
+      if (r.ok) return text ? r.text() : r.json();
+    } catch {}
+  }
+  throw new Error(`EDGAR inaccesible: ${url.slice(-40)}`);
 }
 
 async function getLatest13F(cik) {
   const paddedCik = cik.padStart(10, '0');
 
-  // 1. Obtener submissions para encontrar el último accession number
-  const subUrl = `https://data.sec.gov/submissions/CIK${paddedCik}.json`;
-  const subR = await efetch(subUrl);
-  const subData = await subR.json();
-
+  // 1. Submissions JSON — obtener último accession number
+  const subData = await efetch(`https://data.sec.gov/submissions/CIK${paddedCik}.json`);
   const filings = subData.filings?.recent;
   if (!filings) throw new Error('Sin filings');
 
   const idx = filings.form.findIndex(f => f === '13F-HR');
   if (idx === -1) throw new Error('Sin 13F-HR');
 
-  const accNum = filings.accessionNumber[idx]; // con guiones: 0001234567-25-000001
-  const period = filings.reportDate?.[idx] || filings.filingDate[idx] || '';
-  const filed  = filings.filingDate[idx] || '';
-  const accClean = accNum.replace(/-/g, '');
+  const accNum  = filings.accessionNumber[idx];          // con guiones
+  const accClean = accNum.replace(/-/g, '');             // sin guiones
+  const period  = filings.reportDate?.[idx] || '';
+  const filed   = filings.filingDate[idx] || '';
 
-  // 2. Obtener el índice del filing para encontrar el archivo infotable
-  const idxUrl = `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${cik}&type=13F-HR&dateb=&owner=include&count=1&search_text=&output=atom`;
-  // Mejor usar el filing viewer API
-  const viewerUrl = `https://efts.sec.gov/LATEST/search-index?q=%22${accNum}%22&dateRange=custom&startdt=${filed}&enddt=${filed}&forms=13F-HR`;
+  // 2. Índice del filing para encontrar el nombre exacto del archivo XML
+  const idxUrl  = `https://www.sec.gov/Archives/edgar/data/${cik}/${accClean}/${accClean}-index.json`;
+  let xmlFile = 'form13fInfoTable.xml'; // nombre más común en filings modernos
 
-  // 3. Obtener XML via el endpoint de archivos de EDGAR
-  // El archivo infotable siempre se llama igual o podemos encontrarlo via el índice JSON
-  const baseUrl = `https://www.sec.gov/Archives/edgar/data/${cik}/${accClean}`;
+  try {
+    const idxData = await efetch(idxUrl);
+    const items   = idxData.directory?.item || [];
+    const found   = items.find(f =>
+      f.name?.toLowerCase().endsWith('.xml') &&
+      !f.name?.toLowerCase().includes('primary') &&
+      !f.name?.toLowerCase().includes('primary_doc')
+    );
+    if (found) xmlFile = found.name;
+  } catch {}
 
-  // Intentar con nombres comunes de infotable
-  const candidates = ['infotable.xml', 'form13fInfoTable.xml', 'informationtable.xml', `${accClean}-index.htm`];
+  // 3. Descargar XML de holdings
+  const xmlUrl = `https://www.sec.gov/Archives/edgar/data/${cik}/${accClean}/${xmlFile}`;
+  const xml    = await efetch(xmlUrl, true);
 
-  let xml = null;
-  for (const name of candidates) {
-    try {
-      const r = await efetch(`${baseUrl}/${name}`);
-      const text = await r.text();
-      if (text.includes('infoTable') || text.includes('nameOfIssuer')) {
-        xml = text;
-        break;
-      }
-    } catch {}
+  if (!xml || !xml.includes('infoTable')) {
+    // Intentar el archivo txt completo (contiene todo)
+    const txtUrl = `https://www.sec.gov/Archives/edgar/data/${cik}/${accClean}/${accClean}.txt`;
+    const txt    = await efetch(txtUrl, true);
+    if (!txt?.includes('infoTable')) throw new Error('No se encontraron holdings');
+    return parseXML(txt, period, filed);
   }
 
-  // Si no, parsear el índice HTML para encontrar el archivo correcto
-  if (!xml) {
-    try {
-      const idxR = await efetch(`${baseUrl}/${accClean}-index.htm`);
-      const html = await idxR.text();
-      const match = html.match(/href="[^"]*\/([\w-]+\.xml)"/i);
-      if (match) {
-        const r = await efetch(`${baseUrl}/${match[1]}`);
-        const text = await r.text();
-        if (text.includes('infoTable')) xml = text;
-      }
-    } catch {}
-  }
+  return parseXML(xml, period, filed);
+}
 
-  if (!xml) throw new Error('No se pudo obtener el archivo de holdings');
-
-  // 4. Parsear
+function parseXML(xml, period, filed) {
   const holdings = [];
   const rowRegex = /<infoTable>([\s\S]*?)<\/infoTable>/gi;
   let m;
   while ((m = rowRegex.exec(xml)) !== null) {
-    const row = m[1];
-    const get = tag => new RegExp(`<${tag}[^>]*>([^<]+)<\/${tag}>`, 'i').exec(row)?.[1]?.trim() || '';
+    const row  = m[1];
+    const get  = tag => new RegExp(`<${tag}[^>]*>([^<]+)<\/${tag}>`, 'i').exec(row)?.[1]?.trim() || '';
     const name   = get('nameOfIssuer');
     const value  = parseInt(get('value')) || 0;
     const shares = parseInt(get('sshPrnamt')) || 0;
     if (name && value > 0) holdings.push({ name, value: value * 1000, shares });
   }
-
   holdings.sort((a, b) => b.value - a.value);
   const total = holdings.reduce((s, h) => s + h.value, 0);
   const top15 = holdings.slice(0, 15).map(h => ({
-    ...h,
-    pct: total > 0 ? parseFloat((h.value / total * 100).toFixed(1)) : 0,
+    ...h, pct: total > 0 ? parseFloat((h.value / total * 100).toFixed(1)) : 0,
   }));
-
-  return { period, filed, accNum, holdings: top15, totalPositions: holdings.length, totalValue: total };
+  return { period, filed, holdings: top15, totalPositions: holdings.length, totalValue: total };
 }
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Cache-Control', 's-maxage=7200');
-
   const { fund, ticker } = req.query;
-
   try {
     if (fund) {
       const f = FUNDS[fund.toLowerCase()];
       if (!f) return res.status(400).json({ error: `Fondo '${fund}' no reconocido` });
       const data = await getLatest13F(f.cik);
       return res.status(200).json({ fund: f, ...data });
-
     } else if (ticker) {
-      const results = [];
       const t = ticker.toUpperCase();
+      const results = [];
       await Promise.all(Object.entries(FUNDS).map(async ([key, f]) => {
         try {
           const data = await getLatest13F(f.cik);
-          const pos = data.holdings.find(h => {
+          const pos  = data.holdings.find(h => {
             const n = h.name.toUpperCase();
-            return n.startsWith(t + ' ') || n.startsWith(t + ',') || n === t ||
-                   n.includes(' ' + t + ' ') || n.endsWith(' ' + t);
+            return n === t || n.startsWith(t + ' ') || n.startsWith(t + ',') || n.includes(' ' + t + ' ');
           });
           if (pos) results.push({ key, fund: f, position: pos, period: data.period });
         } catch {}
       }));
       results.sort((a, b) => b.position.value - a.position.value);
       return res.status(200).json({ ticker: t, funds: results });
-
     } else {
       return res.status(200).json({ funds: Object.entries(FUNDS).map(([key, f]) => ({ key, ...f })) });
     }
