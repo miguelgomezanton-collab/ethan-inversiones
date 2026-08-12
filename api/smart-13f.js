@@ -99,11 +99,15 @@ async function getLatest13F(cik) {
 
 function parseXML(xml, period, filed) {
   const holdings = [];
-  const rowRegex = /<infoTable>([\s\S]*?)<\/infoTable>/gi;
+  // Soportar namespaces XML (ej: ns1:infoTable, n1:infoTable, etc.)
+  const rowRegex = /<(?:[\w]+:)?infoTable[^>]*>([\s\S]*?)<\/(?:[\w]+:)?infoTable>/gi;
   let m;
   while ((m = rowRegex.exec(xml)) !== null) {
     const row  = m[1];
-    const get  = tag => new RegExp(`<${tag}[^>]*>([^<]+)<\/${tag}>`, 'i').exec(row)?.[1]?.trim() || '';
+    const get  = tag => {
+      const r = new RegExp(`<(?:[\\w]+:)?${tag}[^>]*>([^<]+)<\/(?:[\\w]+:)?${tag}>`, 'i').exec(row);
+      return r?.[1]?.trim() || '';
+    };
     const name   = get('nameOfIssuer');
     const value  = parseInt(get('value'))    || 0;
     const shares = parseInt(get('sshPrnamt')) || 0;
@@ -118,6 +122,48 @@ function parseXML(xml, period, filed) {
 }
 
 export default async function handler(req, res) {
+  // Debug mode
+  if (req.query.debug === '1') {
+    const cik = FUNDS[req.query.fund?.toLowerCase()]?.cik || req.query.cik;
+    if (!cik) return res.status(400).json({ error: 'Necesita fund o cik' });
+    try {
+      const paddedCik = cik.padStart(10,'0');
+      const subR = await efetch(`https://data.sec.gov/submissions/CIK${paddedCik}.json`);
+      const subData = await subR.json();
+      const filings = subData.filings?.recent;
+      const idx = filings?.form?.findIndex(f => f === '13F-HR');
+      const accNum = filings?.accessionNumber?.[idx];
+      const accClean = accNum?.replace(/-/g,'');
+      const period = filings?.reportDate?.[idx];
+
+      // Leer índice
+      let idxHtml = '';
+      let xmlFile = null;
+      for (const ext of ['-index.htm','-index.html']) {
+        try {
+          const r = await efetch(`https://www.sec.gov/Archives/edgar/data/${cik}/${accClean}/${accNum}${ext}`);
+          idxHtml = await r.text();
+          const allXml = [...idxHtml.matchAll(/([\w\-\.]+\.xml)/gi)].map(m => m[1]);
+          xmlFile = allXml.find(n => !n.toLowerCase().includes('primary') && !n.startsWith('xsl'));
+          break;
+        } catch(e) { idxHtml = e.message; }
+      }
+
+      // Leer primeros 500 chars del XML
+      let xmlPreview = '';
+      if (xmlFile) {
+        try {
+          const xr = await efetch(`https://www.sec.gov/Archives/edgar/data/${cik}/${accClean}/${xmlFile}`);
+          const txt = await xr.text();
+          xmlPreview = txt.slice(0,500);
+        } catch(e) { xmlPreview = e.message; }
+      }
+
+      return res.status(200).json({ cik, accNum, accClean, period, xmlFile, xmlPreview: xmlPreview.slice(0,300), idxSnippet: idxHtml.slice(0,500) });
+    } catch(e) {
+      return res.status(500).json({ error: e.message });
+    }
+  }
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Cache-Control', 's-maxage=7200');
   const { fund, ticker } = req.query;
