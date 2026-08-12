@@ -223,20 +223,34 @@ export async function render(container, { actionsSlot }) {
   const el = document.getElementById('sm-wrap');
 
   el.innerHTML = `
-    <div class="sm-search">
-      <input type="text" id="sm-ticker" class="wl-input" placeholder="Ticker (ej. AAPL, NVDA...)" style="width:220px;text-transform:uppercase;">
-      <button class="btn btn-primary" id="sm-search-btn">🔍 Analizar Smart Money</button>
-      <span id="sm-status" style="font-family:var(--mono);font-size:11px;color:var(--text2);"></span>
+    <!-- Tabs principales -->
+    <div style="display:flex;gap:3px;border-bottom:1px solid var(--border);margin-bottom:18px;">
+      <button class="sm-main-tab active" data-tab="smart" style="padding:10px 18px;background:transparent;border:none;color:var(--teal);cursor:pointer;font-size:11px;font-weight:600;letter-spacing:0.03em;border-bottom:2px solid var(--teal);font-family:var(--sans);">🏦 Smart Money</button>
+      <button class="sm-main-tab" data-tab="13f" style="padding:10px 18px;background:transparent;border:none;color:var(--text3);cursor:pointer;font-size:11px;font-weight:600;letter-spacing:0.03em;border-bottom:2px solid transparent;font-family:var(--sans);">🐋 13F · Fondos Top</button>
     </div>
-    <div id="sm-results">
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:40px;text-align:center;">
-        <div style="font-size:32px;margin-bottom:12px;">🏦</div>
-        <div style="font-size:14px;font-weight:600;margin-bottom:6px;">Smart Money Intelligence</div>
-        <div style="font-size:11px;color:var(--text2);max-width:500px;margin:0 auto;line-height:1.6;">
-          Introduce un ticker para ver las compras y ventas de insiders (SEC Form 4),
-          el short interest institucional y los principales accionistas institucionales.
+
+    <!-- Panel Smart Money (original) -->
+    <div id="sm-panel-smart">
+      <div class="sm-search">
+        <input type="text" id="sm-ticker" class="wl-input" placeholder="Ticker (ej. AAPL, NVDA...)" style="width:220px;text-transform:uppercase;">
+        <button class="btn btn-primary" id="sm-search-btn">🔍 Analizar Smart Money</button>
+        <span id="sm-status" style="font-family:var(--mono);font-size:11px;color:var(--text2);"></span>
+      </div>
+      <div id="sm-results">
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:40px;text-align:center;">
+          <div style="font-size:32px;margin-bottom:12px;">🏦</div>
+          <div style="font-size:14px;font-weight:600;margin-bottom:6px;">Smart Money Intelligence</div>
+          <div style="font-size:11px;color:var(--text2);max-width:500px;margin:0 auto;line-height:1.6;">
+            Introduce un ticker para ver las compras y ventas de insiders (SEC Form 4),
+            el short interest institucional y los principales accionistas institucionales.
+          </div>
         </div>
       </div>
+    </div>
+
+    <!-- Panel 13F Fondos Top -->
+    <div id="sm-panel-13f" style="display:none;">
+      <div id="sm-13f-content"></div>
     </div>
   `;
 
@@ -485,6 +499,201 @@ export async function render(container, { actionsSlot }) {
     if (e.key === 'Enter') analyze();
     setTimeout(() => { if(e.target) e.target.value = e.target.value.toUpperCase(); }, 0);
   });
+
+  // ── Tabs principales ─────────────────────────────────────────
+  document.querySelectorAll('.sm-main-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.sm-main-tab').forEach(t => {
+        t.style.color = 'var(--text3)';
+        t.style.borderBottom = '2px solid transparent';
+      });
+      tab.style.color = 'var(--teal)';
+      tab.style.borderBottom = '2px solid var(--teal)';
+      document.getElementById('sm-panel-smart').style.display = tab.dataset.tab === 'smart' ? 'block' : 'none';
+      document.getElementById('sm-panel-13f').style.display   = tab.dataset.tab === '13f'   ? 'block' : 'none';
+      if (tab.dataset.tab === '13f') load13F();
+    });
+  });
+
+  // ── 13F Fondos Top ────────────────────────────────────────────
+  const FUNDS_META = {
+    berkshire:  { name:'Berkshire Hathaway',    manager:'Warren Buffett', style:'Value concentrado',     color:'#40d9c0' },
+    bridgewater:{ name:'Bridgewater Associates', manager:'Ray Dalio',     style:'Macro global',           color:'#5fa8e0' },
+    pershing:   { name:'Pershing Square',        manager:'Bill Ackman',   style:'Activista concentrado',  color:'#a78bfa' },
+    thirdpoint: { name:'Third Point',            manager:'Dan Loeb',       style:'Activista tech',         color:'#fbbf24' },
+    scion:      { name:'Scion Asset Mgmt',       manager:'Michael Burry', style:'Contrarian extremo',     color:'#f47174' },
+    baupost:    { name:'Baupost Group',           manager:'Seth Klarman',  style:'Value profundo',          color:'#4ade80' },
+    fidelity:   { name:'Fidelity (FMR LLC)',      manager:'Will Danoff',   style:'Growth americano',        color:'#fb923c' },
+  };
+
+  let loaded13F = false;
+
+  async function load13F() {
+    if (loaded13F) return;
+    const el = document.getElementById('sm-13f-content');
+    el.innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:16px;">
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
+          <div style="font-family:var(--mono);font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px;">Buscar por fondo</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;" id="sm-13f-fund-btns">
+            ${Object.entries(FUNDS_META).map(([key,f]) =>
+              `<button class="btn" data-fund="${key}" style="border-color:${f.color}20;font-size:10px;padding:5px 10px;">${f.name}</button>`
+            ).join('')}
+          </div>
+        </div>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
+          <div style="font-family:var(--mono);font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px;">¿Qué fondos tienen este ticker?</div>
+          <div style="display:flex;gap:8px;">
+            <input type="text" id="sm-13f-ticker" class="wl-input" placeholder="AAPL, NVDA..." style="width:140px;text-transform:uppercase;">
+            <button class="btn btn-primary" id="sm-13f-ticker-btn">Buscar</button>
+          </div>
+        </div>
+      </div>
+      <div id="sm-13f-result">
+        <div style="text-align:center;padding:48px 20px;color:var(--text3);font-family:var(--mono);font-size:11px;">
+          <div style="font-size:28px;margin-bottom:10px;">🐋</div>
+          Selecciona un fondo o introduce un ticker para ver las posiciones 13F más recientes
+        </div>
+      </div>`;
+
+    // Listeners
+    document.querySelectorAll('#sm-13f-fund-btns .btn').forEach(btn => {
+      btn.addEventListener('click', () => fetch13FbyFund(btn.dataset.fund));
+    });
+    document.getElementById('sm-13f-ticker-btn')?.addEventListener('click', () => {
+      const t = document.getElementById('sm-13f-ticker')?.value?.trim().toUpperCase();
+      if (t) fetch13FbyTicker(t);
+    });
+    document.getElementById('sm-13f-ticker')?.addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        const t = e.target.value.trim().toUpperCase();
+        if (t) fetch13FbyTicker(t);
+      }
+    });
+    loaded13F = true;
+  }
+
+  async function fetch13FbyFund(fund) {
+    const result = document.getElementById('sm-13f-result');
+    const meta = FUNDS_META[fund];
+    result.innerHTML = `<div class="sm-loader"><div class="loader-ring"></div>Obteniendo último 13F de ${meta.name} via SEC EDGAR...</div>`;
+    try {
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), 30000);
+      const r = await fetch(`/api/smart-13f?fund=${fund}`, { signal: ctrl.signal });
+      clearTimeout(tid);
+      const data = await r.json();
+      if (data.error) throw new Error(data.error);
+      paint13FFund(data, meta);
+    } catch(e) {
+      result.innerHTML = `<div style="background:var(--surface);border:1px solid var(--red);border-radius:10px;padding:20px;color:var(--red);font-family:var(--mono);font-size:11px;">⚠ ${e.message}</div>`;
+    }
+  }
+
+  async function fetch13FbyTicker(ticker) {
+    const result = document.getElementById('sm-13f-result');
+    result.innerHTML = `<div class="sm-loader"><div class="loader-ring"></div>Buscando ${ticker} en todos los 13F...</div>`;
+    try {
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), 60000);
+      const r = await fetch(`/api/smart-13f?ticker=${ticker}`, { signal: ctrl.signal });
+      clearTimeout(tid);
+      const data = await r.json();
+      if (data.error) throw new Error(data.error);
+      paint13FTicker(data, ticker);
+    } catch(e) {
+      result.innerHTML = `<div style="background:var(--surface);border:1px solid var(--red);border-radius:10px;padding:20px;color:var(--red);font-family:var(--mono);font-size:11px;">⚠ ${e.message}</div>`;
+    }
+  }
+
+  function paint13FFund(data, meta) {
+    const result = document.getElementById('sm-13f-result');
+    const fmtB = n => n >= 1e9 ? '$'+(n/1e9).toFixed(1)+'B' : '$'+(n/1e6).toFixed(0)+'M';
+    result.innerHTML = `
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;">
+        <div style="padding:16px 18px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
+          <div>
+            <div style="font-family:var(--serif);font-size:20px;font-style:italic;font-weight:600;">${meta.name}</div>
+            <div style="font-family:var(--mono);font-size:9px;color:var(--text2);margin-top:3px;">${meta.manager} · ${meta.style}</div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-family:var(--mono);font-size:9px;color:var(--text3);">Portfolio 13F</div>
+            <div style="font-family:var(--mono);font-size:14px;font-weight:700;color:var(--teal);">${fmtB(data.totalValue)}</div>
+            <div style="font-family:var(--mono);font-size:9px;color:var(--text3);">Q${data.period} · ${data.totalPositions} posiciones</div>
+          </div>
+        </div>
+        <div style="padding:8px 0;">
+          <div style="display:grid;grid-template-columns:1fr auto auto auto;padding:8px 18px;font-family:var(--mono);font-size:9px;color:var(--text3);text-transform:uppercase;border-bottom:1px solid var(--border);">
+            <span>Empresa</span><span style="text-align:right;padding-right:16px;">Valor</span><span style="text-align:right;padding-right:16px;">Acciones</span><span style="text-align:right;">% Portfolio</span>
+          </div>
+          ${data.holdings.map((h, i) => `
+            <div style="display:grid;grid-template-columns:1fr auto auto auto;padding:9px 18px;border-bottom:1px solid var(--border);align-items:center;${i%2===0?'background:rgba(64,217,192,0.02)':''}">
+              <div>
+                <span style="font-family:var(--mono);font-size:9px;color:var(--text3);margin-right:8px;">${i+1}</span>
+                <span style="font-size:12px;font-weight:600;">${h.name}</span>
+              </div>
+              <span style="font-family:var(--mono);font-size:11px;text-align:right;padding-right:16px;">${fmtB(h.value)}</span>
+              <span style="font-family:var(--mono);font-size:10px;color:var(--text2);text-align:right;padding-right:16px;">${h.shares.toLocaleString('es-ES')}</span>
+              <div style="text-align:right;min-width:60px;">
+                <span style="font-family:var(--mono);font-size:11px;font-weight:700;color:${h.pct>=10?'var(--teal)':h.pct>=5?'var(--text1)':'var(--text2)'};">${h.pct.toFixed(1)}%</span>
+                <div style="height:3px;background:var(--surface2);border-radius:2px;margin-top:3px;overflow:hidden;">
+                  <div style="height:100%;width:${Math.min(100,h.pct*5)}%;background:var(--teal);border-radius:2px;"></div>
+                </div>
+              </div>
+            </div>`).join('')}
+        </div>
+        <div style="padding:10px 18px;font-family:var(--mono);font-size:9px;color:var(--text3);">
+          ⚠ Datos SEC EDGAR 13F-HR · Publicación trimestral con 45 días de retraso · Solo posiciones largas en RV americana
+        </div>
+      </div>`;
+  }
+
+  function paint13FTicker(data, ticker) {
+    const result = document.getElementById('sm-13f-result');
+    const fmtB = n => n >= 1e9 ? '$'+(n/1e9).toFixed(1)+'B' : '$'+(n/1e6).toFixed(0)+'M';
+
+    if (!data.funds?.length) {
+      result.innerHTML = `<div style="text-align:center;padding:40px;font-family:var(--mono);font-size:11px;color:var(--text3);">
+        <div style="font-size:24px;margin-bottom:10px;">🔍</div>
+        ${ticker} no aparece en el top 15 de ninguno de los 7 fondos monitorizados
+      </div>`;
+      return;
+    }
+
+    result.innerHTML = `
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;">
+        <div style="padding:14px 18px;border-bottom:1px solid var(--border);">
+          <div style="font-family:var(--serif);font-size:20px;font-style:italic;font-weight:600;">${ticker} · Presencia en fondos 13F</div>
+          <div style="font-family:var(--mono);font-size:9px;color:var(--text2);margin-top:3px;">${data.funds.length} de 7 fondos tienen ${ticker} en su top 15</div>
+        </div>
+        ${data.funds.map(f => {
+          const meta = FUNDS_META[f.key] || {};
+          return `<div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:14px;">
+            <div style="width:10px;height:10px;border-radius:50%;background:${meta.color||'var(--teal)'};flex-shrink:0;"></div>
+            <div style="flex:1;">
+              <div style="font-size:12px;font-weight:600;">${meta.name || f.fund.name}</div>
+              <div style="font-family:var(--mono);font-size:9px;color:var(--text3);">${meta.manager || ''} · Q${f.period}</div>
+            </div>
+            <div style="text-align:right;">
+              <div style="font-family:var(--mono);font-size:13px;font-weight:700;">${fmtB(f.position.value)}</div>
+              <div style="font-family:var(--mono);font-size:9px;color:var(--text2);">${f.position.shares.toLocaleString('es-ES')} acc.</div>
+            </div>
+            <div style="text-align:right;min-width:54px;">
+              <div style="font-family:var(--mono);font-size:13px;font-weight:700;color:var(--teal);">${f.position.pct?.toFixed(1)}%</div>
+              <div style="font-family:var(--mono);font-size:9px;color:var(--text3);">del fondo</div>
+            </div>
+          </div>`;
+        }).join('')}
+        ${data.funds.length >= 3 ? `
+        <div style="padding:12px 18px;background:rgba(64,217,192,0.05);border-top:1px solid rgba(64,217,192,0.2);">
+          <div style="font-family:var(--mono);font-size:9px;color:var(--teal);font-weight:700;">🐋 CONFLUENCIA DE WHALES</div>
+          <div style="font-size:11px;color:var(--text1);margin-top:4px;">${data.funds.length} fondos independientes tienen ${ticker} en su top 15. Alta convicción institucional.</div>
+        </div>` : ''}
+        <div style="padding:10px 18px;font-family:var(--mono);font-size:9px;color:var(--text3);">
+          ⚠ Datos SEC EDGAR 13F-HR · 45 días de retraso · Solo posiciones largas
+        </div>
+      </div>`;
+  }
 
   return { destroy() { document.getElementById('sm-css')?.remove(); } };
 }
