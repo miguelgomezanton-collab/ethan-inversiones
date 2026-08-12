@@ -3,11 +3,58 @@
 // Insider Trading · Short Interest · Institutional Ownership
 // ═══════════════════════════════════════════════
 
+import { UserData } from '../../userdata.js';
+
 const fmtPct = (n, d=1) => n != null && isFinite(n) ? (n*100).toFixed(d)+'%' : '—';
 const fmtNum = n => n != null ? Math.abs(n).toLocaleString('es-ES') : '—';
 const fmtDate = d => d && d.length >= 10 ? new Date(d+'T12:00:00').toLocaleDateString('es-ES',{day:'2-digit',month:'short',year:'numeric'}) : (d||'—');
 const fmtM = n => n != null ? '$'+(n/1e6).toFixed(1)+'M' : '—';
 const fmtB = n => n != null ? (Math.abs(n)>=1e9?'$'+(n/1e9).toFixed(1)+'B':'$'+(n/1e6).toFixed(0)+'M') : '—';
+
+// ── Histórico Smart Money ─────────────────────────────────────────────────
+const SM_HIST_KEY = ticker => `ethan_sm_hist_${ticker.toUpperCase()}`;
+
+async function saveSmartMoneyHistory(ticker, shortFloat, instPct) {
+  try {
+    const key  = SM_HIST_KEY(ticker);
+    const prev = await UserData.get(key) || [];
+    const today = new Date().toISOString().slice(0, 10);
+    // Solo guardar si es un día nuevo
+    if (prev.length && prev[prev.length-1].date === today) return prev;
+    const entry = { date: today, shortFloat, instPct };
+    const updated = [...prev, entry].slice(-12); // máx 12 entradas (~3 meses)
+    await UserData.set(key, updated);
+    return updated;
+  } catch { return []; }
+}
+
+async function getSmartMoneyHistory(ticker) {
+  try {
+    return await UserData.get(SM_HIST_KEY(ticker)) || [];
+  } catch { return []; }
+}
+
+function renderTrend(current, history, label, fmt = fmtPct) {
+  if (!history?.length || current == null) return '';
+  const prev = history.length >= 2 ? history[history.length - 2] : null;
+  if (!prev) return '';
+
+  const field = label === 'inst' ? 'instPct' : 'shortFloat';
+  const prevVal = prev[field];
+  if (prevVal == null) return '';
+
+  const diff  = current - prevVal;
+  const absDiff = Math.abs(diff);
+  if (absDiff < 0.001) return `<span style="font-family:var(--mono);font-size:10px;color:var(--text3);">= sin cambio vs ${fmtDate(prev.date)}</span>`;
+
+  const up    = diff > 0;
+  // Para institucionales: subir es bueno. Para short: subir es malo.
+  const good  = label === 'inst' ? up : !up;
+  const color = good ? 'var(--green)' : 'var(--red)';
+  const arrow = up ? '▲' : '▼';
+
+  return `<span style="font-family:var(--mono);font-size:10px;color:${color};">${arrow} ${fmt(absDiff)} vs ${fmtDate(prev.date)}</span>`;
+}
 
 // ── Recompras de acciones ─────────────────────────────────────────────────
 const PROXIES_SM = [
@@ -295,6 +342,15 @@ export async function render(container, { actionsSlot }) {
         ],
       };
 
+      // Guardar histórico y obtener tendencia
+      const shortFloat = marketData.shortInterest?.shortFloat ?? null;
+      const instPctVal = marketData.institutional?.pctInstitutions ?? null;
+      const [history] = await Promise.all([
+        getSmartMoneyHistory(ticker),
+        saveSmartMoneyHistory(ticker, shortFloat, instPctVal),
+      ]);
+      data.history = history;
+
       paintResults(data, ticker);
       if (st) st.textContent = '';
     } catch(e) {
@@ -306,13 +362,17 @@ export async function render(container, { actionsSlot }) {
 
   function paintResults(data, ticker) {
     const res = document.getElementById('sm-results');
-    const { insiders, shortInterest, institutional } = data;
+    const { insiders, shortInterest, institutional, history } = data;
 
     // ── Señal resumen ────────────────────────────
     const buyCount  = insiders.filter(i => i.type === 'Compra' || i.type?.toLowerCase().includes('purchase')).length;
     const sellCount = insiders.filter(i => i.type === 'Venta'  || i.type?.toLowerCase().includes('sale')).length;
-    const siPct = shortInterest?.shortFloat;
+    const siPct   = shortInterest?.shortFloat;
     const instPct = institutional?.pctInstitutions;
+
+    // Tendencias vs dato anterior guardado
+    const trendInst  = renderTrend(instPct, history, 'inst');
+    const trendShort = renderTrend(siPct,   history, 'short');
 
     // Semáforo de señal
     let signal = 'neutral', signalText = 'Neutral', signalCol = 'var(--amber)';
@@ -345,6 +405,7 @@ export async function render(container, { actionsSlot }) {
             <div class="sm-kpi-lbl">Short Interest</div>
             <div class="sm-kpi-val" style="color:${siPct>0.2?'var(--red)':siPct>0.1?'var(--amber)':'var(--green)'};">${fmtPct(siPct)}</div>
             <div class="sm-kpi-sub">% del float</div>
+            ${trendShort ? `<div style="margin-top:4px;">${trendShort}</div>` : ''}
           </div>
           <div class="sm-kpi">
             <div class="sm-kpi-lbl">Days to Cover</div>
@@ -355,6 +416,7 @@ export async function render(container, { actionsSlot }) {
             <div class="sm-kpi-lbl">% Institucional</div>
             <div class="sm-kpi-val">${fmtPct(instPct)}</div>
             <div class="sm-kpi-sub">del float</div>
+            ${trendInst ? `<div style="margin-top:4px;">${trendInst}</div>` : ''}
           </div>
           <div class="sm-kpi">
             <div class="sm-kpi-lbl">% Insiders</div>
@@ -402,6 +464,7 @@ export async function render(container, { actionsSlot }) {
             <div class="sm-kpi-lbl">Short Float</div>
             <div class="sm-kpi-val" style="color:${siPct>0.2?'var(--red)':siPct>0.1?'var(--amber)':'var(--green)'};">${fmtPct(siPct)}</div>
             <div class="sm-kpi-sub"><span class="sm-badge ${siPct>0.2?'high':siPct>0.1?'med':'low'}">${siPct>0.2?'Alto':siPct>0.1?'Moderado':'Bajo'}</span></div>
+            ${trendShort ? `<div style="margin-top:6px;">${trendShort}</div>` : ''}
           </div>
           <div class="sm-kpi">
             <div class="sm-kpi-lbl">Days to Cover</div>
@@ -434,6 +497,7 @@ export async function render(container, { actionsSlot }) {
             <div class="sm-kpi-lbl">% Institucional</div>
             <div class="sm-kpi-val" style="color:${instPct>0.7?'var(--green)':instPct>0.4?'var(--amber)':'var(--text2)'};">${fmtPct(instPct)}</div>
             <div class="sm-kpi-sub">del float</div>
+            ${trendInst ? `<div style="margin-top:6px;">${trendInst}</div>` : ''}
           </div>
           <div class="sm-kpi">
             <div class="sm-kpi-lbl">% Insiders</div>
