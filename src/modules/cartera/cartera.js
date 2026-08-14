@@ -95,7 +95,16 @@ function detectEscapeFalso(highs, closes) {
 function analyzePosition(pos, data) {
   const { timestamps, opens, highs, lows, closes, volumes, name, currency } = data;
   const n = closes.length, di = n-1;
-  const currentPrice = closes[di];
+
+  // Buscar el último cierre válido (no null)
+  let currentPrice = null;
+  for (let i = di; i >= 0; i--) {
+    if (closes[i] != null && !isNaN(closes[i]) && closes[i] > 0) {
+      currentPrice = closes[i];
+      break;
+    }
+  }
+  if (!currentPrice) return null;
 
   const ema10d = calcEMA(closes, 10);
   const stopDiario = ema10d[di];
@@ -107,10 +116,25 @@ function analyzePosition(pos, data) {
   const activeStop = pos.stopType === 'manual'
     ? pos.stopManual
     : pos.stopType === 'semanal' ? stopSemanal : stopDiario;
+
   const escapeFalso = detectEscapeFalso(highs, closes);
-  const pnlPct = ((currentPrice - pos.entry) / pos.entry) * 100;
-  const distStop = ((currentPrice - activeStop) / currentPrice) * 100;
-  const tocoStop = currentPrice <= activeStop * 1.005;
+
+  // P&L correcto para long y short
+  const dir = pos.direction || 'alcista';
+  const pnlPct = dir === 'bajista'
+    ? ((pos.entry - currentPrice) / pos.entry) * 100
+    : ((currentPrice - pos.entry)  / pos.entry) * 100;
+
+  const distStop = activeStop > 0
+    ? dir === 'bajista'
+      ? ((activeStop - currentPrice) / currentPrice) * 100
+      : ((currentPrice - activeStop) / currentPrice) * 100
+    : 0;
+
+  // tocoStop: sin margen de 0.5% para evitar falsas alarmas
+  const tocoStop = dir === 'bajista'
+    ? currentPrice >= activeStop
+    : currentPrice <= activeStop;
 
   return { currentPrice, stopDiario, stopSemanal, activeStop, escapeFalso, tocoStop, pnlPct, distStop, name, currency };
 }
