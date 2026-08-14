@@ -766,13 +766,14 @@ export async function render(container, { actionsSlot }) {
         <thead>
           <tr>
             <th>TICKER</th><th>ENTRADA</th><th>SALIDA</th>
-            <th>P&L %</th><th>P&L €</th><th>DURACIÓN</th><th>MOTIVO</th><th>NOTAS</th>
+            <th>CAPITAL</th><th>P&L %</th><th>P&L €</th><th>DURACIÓN</th><th>MOTIVO</th><th>NOTAS</th>
             <th></th>
           </tr>
         </thead>
         <tbody>
           ${ops.map((h) => {
             const globalIdx = history.indexOf(h);
+            const capital = h.cost || (h.shares && h.entry ? h.shares * h.entry : null);
             return `
             <tr>
               <td>
@@ -781,6 +782,7 @@ export async function render(container, { actionsSlot }) {
               </td>
               <td class="sc2-price">$${h.entry.toFixed(2)}</td>
               <td class="sc2-price">$${h.exit.toFixed(2)}</td>
+              <td class="sc2-price" style="color:var(--text2);">${capital ? '$'+Math.round(capital).toLocaleString('es-ES') : '—'}</td>
               <td class="sc2-score" style="color:${h.pnlPct>=0?'var(--green)':'var(--red)'}">${h.pnlPct>=0?'+':''}${h.pnlPct.toFixed(2)}%</td>
               <td class="sc2-price" style="color:${h.pnlAbs!=null?(h.pnlAbs>=0?'var(--green)':'var(--red)'):'var(--text3)'}">${h.pnlAbs!=null?((h.pnlAbs>=0?'+':'')+'$'+h.pnlAbs.toFixed(0)):'—'}</td>
               <td class="sc2-vol">${h.duration}d</td>
