@@ -859,21 +859,25 @@ export async function render(container, { actionsSlot }) {
       capitalAlcista = nuevo;
       await UserData.set('ethan_capital_alcista', capitalAlcista);
 
-      // Actualizar fondo de participaciones
-      try {
-        const { getFondo, aportarCapital, retirarCapital, inicializarFondo, calcVL } = await import('../../fondo.js');
-        const fondo = await getFondo();
-        // Calcular valor actual de la cartera para el VL
-        const pnlRealizado = history.filter(h=>(h.direction||'alcista')==='alcista').reduce((s,h)=>s+(h.pnlAbs||0),0);
-        const valorActual = nuevo + pnlRealizado; // simplificado sin unrealized por ahora
-        if (!fondo) {
-          await inicializarFondo(nuevo, new Date().toISOString().slice(0,10));
-        } else if (diferencia > 0) {
-          await aportarCapital(diferencia, valorActual, 'Aportación alcista');
-        } else if (diferencia < 0) {
-          await retirarCapital(Math.abs(diferencia), valorActual, 'Retirada alcista');
-        }
-      } catch(e) { console.warn('Fondo:', e.message); }
+      // Solo actualizar fondo si hay un cambio real de capital (no la configuración inicial)
+      if (diferencia !== 0) {
+        try {
+          const { getFondo, aportarCapital, retirarCapital, inicializarFondo, calcVL } = await import('../../fondo.js');
+          const fondo = await getFondo();
+          const pnlRealizado = history.filter(h=>(h.direction||'alcista')==='alcista').reduce((s,h)=>s+(h.pnlAbs||0),0);
+          const valorActual = nuevo + pnlRealizado;
+          if (!fondo) {
+            await inicializarFondo(nuevo, new Date().toISOString().slice(0,10));
+          } else {
+            // Verificar que el fondo no fue ya inicializado con este importe
+            const fondoCapital = fondo.movimientos?.reduce((s,m) => m.tipo==='inicio'||m.tipo==='aportacion' ? s+m.importe : s-Math.abs(m.importe), 0) || 0;
+            if (Math.abs(fondoCapital - nuevo) > 1) {
+              if (diferencia > 0) await aportarCapital(diferencia, valorActual, 'Aportación alcista');
+              else await retirarCapital(Math.abs(diferencia), valorActual, 'Retirada alcista');
+            }
+          }
+        } catch(e) { console.warn('Fondo:', e.message); }
+      }
 
       renderHistory();
     });

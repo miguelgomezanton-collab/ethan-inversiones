@@ -239,7 +239,12 @@ async function calcMetricas(fondo, vlActual, history = [], positions = [], capit
 
       if (!hayDatos) return; // saltar días sin posiciones activas con datos
 
-      const cash = capitalInicial + pnlRealizadoAcum - costeInvertido;
+      // Cash = capital inicial + aportaciones hasta esta fecha + P&L realizado - coste invertido
+      const capitalAcum = movs.reduce((s, m) => {
+        if (m.date > date) return s;
+        return m.tipo === 'inicio' || m.tipo === 'aportacion' ? s + m.importe : s - Math.abs(m.importe);
+      }, 0);
+      const cash = capitalAcum + pnlRealizadoAcum - costeInvertido;
       const valorDia = Math.max(0, cash + valorMercado);
       const vlDia = valorDia / participaciones;
       if (vlDia > 0) serieFinal.push([date, vlDia]);
@@ -504,7 +509,7 @@ export async function render(container, { actionsSlot, savedState }) {
       });
     }
 
-    const capitalTotal = capA + capB;
+    const capitalTotal = (capA + capB) || fondo?.movimientos?.reduce((s, m) => m.tipo === 'aportacion' ? s + m.importe : s - Math.abs(m.importe), 0) || 0;
 
     // Calcular valor actual de la cartera
     const pnlRealizado = history.reduce((s, h) => s + (h.pnlAbs || 0), 0);
