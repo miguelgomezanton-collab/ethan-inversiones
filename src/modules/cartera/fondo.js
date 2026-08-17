@@ -378,13 +378,9 @@ async function calcMetricas(fondo, vlActual, history = [], positions = [], capit
   // YTD y MTD desde la serie
   const thisYear  = today.slice(0, 4);
   const thisMonth = today.slice(0, 7);
-  const prevMonth = new Date(today.slice(0,7) + '-01');
-  prevMonth.setDate(0); // último día del mes anterior
-  const prevMonthStr = prevMonth.toISOString().slice(0, 7);
 
   const serieThisYear  = serieFinal.filter(([d]) => d.slice(0,4) === thisYear);
   const serieThisMonth = serieFinal.filter(([d]) => d.slice(0,7) === thisMonth);
-  const seriePrevMonth = serieFinal.filter(([d]) => d.slice(0,7) === prevMonthStr);
 
   // YTD — si el fondo empezó este año es igual al TWR total
   const fondoStartYear = startDate?.slice(0,4);
@@ -394,12 +390,17 @@ async function calcMetricas(fondo, vlActual, history = [], positions = [], capit
       ? (serieThisYear[serieThisYear.length-1][1] - serieThisYear[0][1]) / serieThisYear[0][1]
       : totalReturn;
 
-  // MTD — base = último VL del mes anterior (más preciso que primer punto del mes)
-  const vlFinMesAnterior = seriePrevMonth.length > 0
-    ? seriePrevMonth[seriePrevMonth.length-1][1]
-    : serieThisMonth.length >= 2 ? serieThisMonth[0][1] : null;
-  const mtd = vlFinMesAnterior && serieThisMonth.length > 0
-    ? (serieThisMonth[serieThisMonth.length-1][1] - vlFinMesAnterior) / vlFinMesAnterior
+  // MTD — base = último punto de la serie ANTES del mes actual
+  // Esto captura correctamente el VL del cierre del mes anterior
+  // aunque haya días sin posiciones al inicio del mes actual
+  const seriePrevMes = serieFinal.filter(([d]) => d.slice(0,7) < thisMonth);
+  const vlBaseMTD = seriePrevMes.length > 0
+    ? seriePrevMes[seriePrevMes.length-1][1]   // último VL del mes anterior
+    : serieFinal.length > 0 ? serieFinal[0][1]  // fallback: primer punto del fondo
+    : null;
+  const vlActualSerie = serieFinal.length > 0 ? serieFinal[serieFinal.length-1][1] : vlActual;
+  const mtd = vlBaseMTD && vlBaseMTD > 0
+    ? (vlActualSerie - vlBaseMTD) / vlBaseMTD
     : null;
 
   return {
