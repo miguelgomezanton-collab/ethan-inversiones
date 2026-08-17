@@ -149,8 +149,9 @@ async function calcMetricas(fondo, vlActual, history = [], positions = [], capit
   const participaciones = fondo?.participaciones || (capitalInicial / VL_INICIAL);
 
   const totalReturn = (vlActual - VL_INICIAL) / VL_INICIAL;
-  const annReturn = tradingDays > 10
-    ? Math.pow(Math.max(1 + totalReturn, 0.001), 252 / tradingDays) - 1
+  // CAGR usando días naturales reales (más preciso que estimación de trading days)
+  const annReturn = nDays > 10
+    ? Math.pow(Math.max(1 + totalReturn, 0.001), 365 / nDays) - 1
     : totalReturn;
 
   // ── Leer histórico diario de Firestore ────────────────────────────
@@ -285,6 +286,7 @@ async function calcMetricas(fondo, vlActual, history = [], positions = [], capit
   const calmar = maxDD > 0 ? annReturn / maxDD : null;
 
   // Retornos diarios para Sharpe, Sortino, Volatilidad, Beta
+  // Incluir días planos (cash puro) como retorno 0 para volatilidad correcta
   const dailyReturns = [];
   const dailyDates = [];
   for (let i = 1; i < serieFinal.length; i++) {
@@ -295,16 +297,30 @@ async function calcMetricas(fondo, vlActual, history = [], positions = [], capit
     }
   }
 
+  // Añadir retornos 0 para días naturales sin punto (cash puro)
+  // Esto hace que la volatilidad anualizada sea correcta vs NAV completo
+  const nPuntos = serieFinal.length;
+  const nDiasNaturales = nDays;
+  const diasPlanos = Math.max(0, nDiasNaturales - nPuntos);
+  const allReturns = [...dailyReturns, ...Array(diasPlanos).fill(0)];
+
   let sharpe = null, sortino = null, annVol = null, beta = null, alpha = null, correlation = null, spyStats = null;
   if (dailyReturns.length >= 10) {
-    const mean = dailyReturns.reduce((a, b) => a + b, 0) / dailyReturns.length;
-    const variance = dailyReturns.reduce((a, r) => a + (r - mean) ** 2, 0) / dailyReturns.length;
+    // Volatilidad sobre todos los retornos incluyendo días planos
+    const mean = allReturns.reduce((a, b) => a + b, 0) / allReturns.length;
+    const variance = allReturns.reduce((a, r) => a + (r - mean) ** 2, 0) / allReturns.length;
     annVol = Math.sqrt(variance * 252);
-    sharpe = annVol > 0 ? annReturn / annVol : null;
-    const downR = dailyReturns.filter(r => r < 0);
+
+    // CAGR usando días naturales reales
+    const annReturn2 = nDays > 10
+      ? Math.pow(Math.max(1 + totalReturn, 0.001), 365 / nDays) - 1
+      : totalReturn;
+
+    sharpe = annVol > 0 ? annReturn2 / annVol : null;
+    const downR = allReturns.filter(r => r < 0);
     if (downR.length > 0) {
       const downVol = Math.sqrt(downR.reduce((a, r) => a + r * r, 0) / downR.length * 252);
-      sortino = downVol > 0 ? annReturn / downVol : null;
+      sortino = downVol > 0 ? annReturn2 / downVol : null;
     }
 
     // Beta vs SPY — leer histórico de SPY de Firestore
@@ -360,19 +376,30 @@ async function calcMetricas(fondo, vlActual, history = [], positions = [], capit
   }));
 
   // YTD y MTD desde la serie
-  const thisYear = today.slice(0, 4);
+  const thisYear  = today.slice(0, 4);
   const thisMonth = today.slice(0, 7);
-  const serieThisYear = serieFinal.filter(([d]) => d.slice(0,4) === thisYear);
+  const prevMonth = new Date(today.slice(0,7) + '-01');
+  prevMonth.setDate(0); // último día del mes anterior
+  const prevMonthStr = prevMonth.toISOString().slice(0, 7);
+
+  const serieThisYear  = serieFinal.filter(([d]) => d.slice(0,4) === thisYear);
   const serieThisMonth = serieFinal.filter(([d]) => d.slice(0,7) === thisMonth);
-  // Si el fondo empezó este año, YTD = TWR total (mismo período)
+  const seriePrevMonth = serieFinal.filter(([d]) => d.slice(0,7) === prevMonthStr);
+
+  // YTD — si el fondo empezó este año es igual al TWR total
   const fondoStartYear = startDate?.slice(0,4);
   const ytd = fondoStartYear === thisYear
     ? totalReturn
     : serieThisYear.length >= 2
       ? (serieThisYear[serieThisYear.length-1][1] - serieThisYear[0][1]) / serieThisYear[0][1]
       : totalReturn;
-  const mtd = serieThisMonth.length >= 2
-    ? (serieThisMonth[serieThisMonth.length-1][1] - serieThisMonth[0][1]) / serieThisMonth[0][1]
+
+  // MTD — base = último VL del mes anterior (más preciso que primer punto del mes)
+  const vlFinMesAnterior = seriePrevMonth.length > 0
+    ? seriePrevMonth[seriePrevMonth.length-1][1]
+    : serieThisMonth.length >= 2 ? serieThisMonth[0][1] : null;
+  const mtd = vlFinMesAnterior && serieThisMonth.length > 0
+    ? (serieThisMonth[serieThisMonth.length-1][1] - vlFinMesAnterior) / vlFinMesAnterior
     : null;
 
   return {
@@ -420,10 +447,13 @@ function vlChart(serieBase100, colorPositivo = true) {
 }
 
 // ── Metric card ───────────────────────────────
-function mc(label, value, badge, badgeClass, note) {
+function mc(label, value, badge, badgeClass, note, audited = false) {
   const valCol = badgeClass==='good'?'var(--green)':badgeClass==='bad'?'var(--red)':badgeClass==='warn'?'var(--amber)':'var(--text1)';
   return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px 20px;transition:background 0.15s;">
-    <div style="font-family:var(--mono);font-size:10px;color:var(--text3);margin-bottom:10px;">${label}</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <div style="font-family:var(--mono);font-size:10px;color:var(--text3);">${label}</div>
+      ${audited ? `<span style="font-family:var(--mono);font-size:8px;font-weight:700;padding:2px 6px;border-radius:3px;background:rgba(74,222,128,0.12);color:var(--green);letter-spacing:0.08em;">✓ AUDIT</span>` : ''}
+    </div>
     <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:6px;">
       <span style="font-family:var(--mono);font-size:22px;font-weight:500;color:${valCol};">${value}</span>
       ${badge ? `<span style="font-family:var(--mono);font-size:9px;padding:2px 7px;border-radius:3px;background:${valCol}22;color:${valCol};">${badge}</span>` : ''}
@@ -587,22 +617,31 @@ export async function render(container, { actionsSlot, savedState }) {
         <!-- Strip métricas rápidas -->
         <div class="fondo-strip">
           <div class="fondo-strip-cell">
-            <div class="fondo-strip-lbl">TWR Total</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div class="fondo-strip-lbl">TWR Total</div>
+              <span style="font-family:var(--mono);font-size:8px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(74,222,128,0.12);color:var(--green);">✓ AUDIT</span>
+            </div>
             <div class="fondo-strip-val" style="color:${twrCol};">${fmtPct(twr*100)}</div>
             <div class="fondo-strip-sub">(VL ${fmtVL(vlActual)} / ${VL_INICIAL})</div>
           </div>
           <div class="fondo-strip-cell">
             <div class="fondo-strip-lbl">CAGR Anualizado</div>
             <div class="fondo-strip-val" style="color:${(m?.annReturn||0)>=0?'var(--green)':'var(--red)'};">${fmtPct((m?.annReturn||0)*100)}</div>
-            <div class="fondo-strip-sub">252 sesiones/año</div>
+            <div class="fondo-strip-sub">365 días/año</div>
           </div>
           <div class="fondo-strip-cell">
-            <div class="fondo-strip-lbl">Máx. Histórico VL</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div class="fondo-strip-lbl">Máx. Histórico VL</div>
+              <span style="font-family:var(--mono);font-size:8px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(74,222,128,0.12);color:var(--green);">✓ AUDIT</span>
+            </div>
             <div class="fondo-strip-val" style="color:var(--text1);">${fmtVL(m?.maxHistoricoVL)}</div>
             <div class="fondo-strip-sub">Pico del fondo</div>
           </div>
           <div class="fondo-strip-cell">
-            <div class="fondo-strip-lbl">Drawdown Actual</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div class="fondo-strip-lbl">Drawdown Actual</div>
+              <span style="font-family:var(--mono);font-size:8px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(74,222,128,0.12);color:var(--green);">✓ AUDIT</span>
+            </div>
             <div class="fondo-strip-val" style="color:${(m?.drawdownActual||0)<0?'var(--red)':'var(--green)'};">${fmtPct((m?.drawdownActual||0)*100)}</div>
             <div class="fondo-strip-sub">Desde el máximo</div>
           </div>
@@ -649,12 +688,12 @@ export async function render(container, { actionsSlot, savedState }) {
         </div>` : ''}
 
         <div class="fondo-metrics">
-          ${mc('YTD', fmtPct(((m?.ytd)||0)*100), null, (m?.ytd||0)>=0?'good':'bad', 'Rentabilidad acumulada desde el 1 de enero del año en curso.')}
+          ${mc('YTD', fmtPct(((m?.ytd)||0)*100), null, (m?.ytd||0)>=0?'good':'bad', 'Rentabilidad acumulada desde el 1 de enero del año en curso.', true)}
           ${mc('MTD', m?.mtd!=null?fmtPct(m.mtd*100):'—', null, m?.mtd!=null?(m.mtd>=0?'good':'bad'):'neu', 'Rentabilidad del mes en curso.')}
-          ${mc('P&L Realizado', fmtE(pnlRealizado), pnlRealizado>=0?'Ganancia':'Pérdida', pnlRealizado>=0?'good':'bad', 'Suma de beneficios y pérdidas de todas las operaciones cerradas.')}
+          ${mc('P&L Realizado', fmtE(pnlRealizado), pnlRealizado>=0?'Ganancia':'Pérdida', pnlRealizado>=0?'good':'bad', 'Suma de beneficios y pérdidas de todas las operaciones cerradas.', true)}
           ${mc('P&L No Realizado', fmtE(pnlNoRealizado), pnlNoRealizado>=0?'Latente+':'Latente−', pnlNoRealizado>=0?'good':'bad', 'P&L de las posiciones abiertas a precio actual. Se actualiza al abrir Posiciones.')}
-          ${mc('Valor Liquidativo', fmtVL(vlActual), null, 'neu', `Precio por participación hoy. Inicio: ${VL_INICIAL.toFixed(4)}. Sube/baja con el P&L de la cartera.`)}
-          ${mc('Valor Cartera', fmtE(valorCartera), null, 'neu', `VL (${fmtVL(vlActual)}) × ${m?.participaciones?.toFixed(2)||'—'} participaciones.`)}
+          ${mc('Valor Liquidativo', fmtVL(vlActual), null, 'neu', `Precio por participación hoy. Inicio: ${VL_INICIAL.toFixed(4)}. Sube/baja con el P&L de la cartera.`, true)}
+          ${mc('Valor Cartera', fmtE(valorCartera), null, 'neu', `VL (${fmtVL(vlActual)}) × ${m?.participaciones?.toFixed(2)||'—'} participaciones.`, true)}
         </div>
 
       </div>
