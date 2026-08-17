@@ -286,7 +286,7 @@ async function calcMetricas(fondo, vlActual, history = [], positions = [], capit
   const calmar = maxDD > 0 ? annReturn / maxDD : null;
 
   // Retornos diarios para Sharpe, Sortino, Volatilidad, Beta
-  // Incluir días planos (cash puro) como retorno 0 para volatilidad correcta
+  // Incluir días hábiles en cash como retorno 0 (pero NO sábados/domingos/festivos)
   const dailyReturns = [];
   const dailyDates = [];
   for (let i = 1; i < serieFinal.length; i++) {
@@ -297,12 +297,12 @@ async function calcMetricas(fondo, vlActual, history = [], positions = [], capit
     }
   }
 
-  // Añadir retornos 0 para días naturales sin punto (cash puro)
-  // Esto hace que la volatilidad anualizada sea correcta vs NAV completo
-  const nPuntos = serieFinal.length;
-  const nDiasNaturales = nDays;
-  const diasPlanos = Math.max(0, nDiasNaturales - nPuntos);
-  const allReturns = [...dailyReturns, ...Array(diasPlanos).fill(0)];
+  // Días hábiles en cash = días hábiles totales del período - días con posición
+  // Días hábiles estimados = nDays * 252/365 (excluye fines de semana y festivos)
+  const diasHabilesTotal = Math.round(nDays * 252 / 365);
+  const diasConPosicion  = dailyReturns.length;
+  const diasHabilesPlanos = Math.max(0, diasHabilesTotal - diasConPosicion);
+  const allReturns = [...dailyReturns, ...Array(diasHabilesPlanos).fill(0)];
 
   let sharpe = null, sortino = null, annVol = null, beta = null, alpha = null, correlation = null, spyStats = null;
   if (dailyReturns.length >= 10) {
