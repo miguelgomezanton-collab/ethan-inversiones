@@ -756,22 +756,28 @@ export async function render(container, { actionsSlot }) {
     const sign = v => v>=0?'+':'';
     const color = v => v>=0?'var(--green)':'var(--red)';
 
+    const tile = (lbl, val, desc, col='') => `
+      <div class="pos-mtile">
+        <div class="pos-mtile-lbl">${lbl}</div>
+        <div class="pos-mtile-val" style="${col?'color:'+col:''}">${val}</div>
+        <div style="font-size:9px;color:var(--text3);margin-top:4px;line-height:1.4;">${desc}</div>
+      </div>`;
     return `
       <div class="pos-metrics-grid">
-        <div class="pos-mtile"><div class="pos-mtile-lbl">Capital Asignado</div><div class="pos-mtile-val">${capitalLabel}</div></div>
-        <div class="pos-mtile"><div class="pos-mtile-lbl">Beneficio Total (€)</div><div class="pos-mtile-val" style="color:${m.hasAbsData?color(m.totalPnlAbs):'var(--text3)'}">${m.hasAbsData?(sign(m.totalPnlAbs)+'$'+fmt(m.totalPnlAbs,0)):'Sin coste asignado'}</div></div>
-        <div class="pos-mtile"><div class="pos-mtile-lbl">Beneficio Total (%)</div><div class="pos-mtile-val" style="color:${m.totalPnlPctOnCapital!=null?color(m.totalPnlPctOnCapital):'var(--text3)'}">${m.totalPnlPctOnCapital!=null?(sign(m.totalPnlPctOnCapital)+fmt(m.totalPnlPctOnCapital)+'%'):'—'}</div></div>
-        <div class="pos-mtile"><div class="pos-mtile-lbl">Rent. media / op.</div><div class="pos-mtile-val" style="color:${color(m.avgPnlPct)}">${sign(m.avgPnlPct)}${fmt(m.avgPnlPct)}%</div></div>
-        <div class="pos-mtile"><div class="pos-mtile-lbl">Win Rate</div><div class="pos-mtile-val" style="color:${m.winRate>=50?'var(--green)':'var(--amber)'}">${fmt(m.winRate,1)}%</div></div>
-        <div class="pos-mtile"><div class="pos-mtile-lbl">Esperanza / op.<span style="font-size:8px;color:var(--text3);display:block;margin-top:2px;">WR×AvgWin − (1−WR)×AvgLoss</span></div><div class="pos-mtile-val" style="color:${color(m.expectancy)}">${sign(m.expectancy)}${fmt(m.expectancy)}%</div></div>
-        <div class="pos-mtile"><div class="pos-mtile-lbl">Avg Win</div><div class="pos-mtile-val" style="color:var(--green)">${sign(m.avgWin)}${fmt(m.avgWin)}%</div></div>
-        <div class="pos-mtile"><div class="pos-mtile-lbl">Avg Loss</div><div class="pos-mtile-val" style="color:var(--red)">-${fmt(m.avgLoss)}%</div></div>
-        <div class="pos-mtile"><div class="pos-mtile-lbl">Payoff</div><div class="pos-mtile-val" style="color:${m.payoff>=1.5?'var(--green)':'var(--amber)'}">${fmt(m.payoff)}</div></div>
-        <div class="pos-mtile"><div class="pos-mtile-lbl">Profit Factor</div><div class="pos-mtile-val" style="color:${m.profitFactor>=1.5?'var(--green)':'var(--amber)'}">${fmt(m.profitFactor)}</div></div>
-        <div class="pos-mtile"><div class="pos-mtile-lbl">Días Medios / Op.</div><div class="pos-mtile-val">${fmt(m.avgDays,1)}d</div></div>
-        <div class="pos-mtile"><div class="pos-mtile-lbl">Mejor Operación</div><div class="pos-mtile-val" style="color:var(--green)">+${fmt(m.maxWin)}%</div></div>
-        <div class="pos-mtile"><div class="pos-mtile-lbl">Peor Operación</div><div class="pos-mtile-val" style="color:var(--red)">${fmt(m.maxLoss)}%</div></div>
-        <div class="pos-mtile"><div class="pos-mtile-lbl">Nº Operaciones</div><div class="pos-mtile-val">${m.nOps}</div></div>
+        ${tile('Capital Asignado', capitalLabel, 'Capital de referencia asignado a esta estrategia.')}
+        ${tile('Beneficio Total (€)', m.hasAbsData?(sign(m.totalPnlAbs)+'$'+fmt(m.totalPnlAbs,0)):'Sin coste asignado', 'Suma del P&L realizado de todas las operaciones cerradas.', m.hasAbsData?color(m.totalPnlAbs):'')}
+        ${tile('Beneficio Total (%)', m.totalPnlPctOnCapital!=null?(sign(m.totalPnlPctOnCapital)+fmt(m.totalPnlPctOnCapital)+'%'):'—', 'Rentabilidad acumulada sobre el capital asignado.', m.totalPnlPctOnCapital!=null?color(m.totalPnlPctOnCapital):'')}
+        ${tile('Rent. media / op.', sign(m.avgPnlPct)+fmt(m.avgPnlPct)+'%', 'Rentabilidad media de todas las operaciones cerradas.', color(m.avgPnlPct))}
+        ${tile('Win Rate', fmt(m.winRate,1)+'%', 'Porcentaje de operaciones cerradas con beneficio.', m.winRate>=50?'var(--green)':'var(--amber)')}
+        ${tile('Esperanza / op.', sign(m.expectancy)+fmt(m.expectancy)+'%', 'Retorno histórico esperado por operación según Win Rate, Avg Win y Avg Loss.', color(m.expectancy))}
+        ${tile('Avg Win', '+'+fmt(m.avgWin)+'%', 'Rentabilidad media de las operaciones ganadoras.', 'var(--green)')}
+        ${tile('Avg Loss', '-'+fmt(m.avgLoss)+'%', 'Pérdida media de las operaciones perdedoras.', 'var(--red)')}
+        ${tile('Payoff', fmt(m.payoff), 'Ganancia media / pérdida media. >1 = favorable.', m.payoff>=1.5?'var(--green)':'var(--amber)')}
+        ${tile('Profit Factor', fmt(m.profitFactor), 'Ganancias brutas (€) / pérdidas brutas (€). >1 = sistema rentable.', m.profitFactor>=1.5?'var(--green)':'var(--amber)')}
+        ${tile('Días Medios / Op.', fmt(m.avgDays,1)+'d', 'Duración media de las operaciones cerradas.')}
+        ${tile('Mejor Operación', '+'+fmt(m.maxWin)+'%', 'Mayor rentabilidad obtenida en una operación cerrada.', 'var(--green)')}
+        ${tile('Peor Operación', fmt(m.maxLoss)+'%', 'Mayor pérdida registrada en una operación cerrada.', 'var(--red)')}
+        ${tile('Nº Operaciones', m.nOps, 'Número total de operaciones cerradas analizadas.')}
       </div>`;
   }
 
