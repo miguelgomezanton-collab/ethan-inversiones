@@ -730,31 +730,23 @@ export async function render(container, { actionsSlot }) {
     // Días medios por operación
     const avgDays = ops.reduce((s,o)=>s+(o.duration||0),0) / ops.length;
 
-    // Volatilidad (desviación estándar de los retornos %)
-    const mean = avgPnlPct;
-    const variance = ops.reduce((s,o) => s + Math.pow(o.pnlPct - mean, 2), 0) / ops.length;
-    const stdDev = Math.sqrt(variance);
-
-    // Sharpe simplificado (asumiendo rf=0): retorno medio / desviación estándar
-    const sharpe = stdDev > 0 ? (avgPnlPct / stdDev) : 0;
+    const winners = ops.filter(o => o.pnlPct > 0);
+    const losers  = ops.filter(o => o.pnlPct <= 0);
+    const avgWin  = winners.length ? winners.reduce((s,o) => s + o.pnlPct, 0) / winners.length : 0;
+    const avgLoss = losers.length  ? Math.abs(losers.reduce((s,o) => s + o.pnlPct, 0) / losers.length) : 0;
+    const payoff  = avgLoss > 0 ? avgWin / avgLoss : null;
+    const grossWin  = winners.reduce((s,o) => s + (o.pnlAbs || 0), 0);
+    const grossLoss = Math.abs(losers.reduce((s,o) => s + (o.pnlAbs || 0), 0));
+    const profitFactor = grossLoss > 0 ? grossWin / grossLoss : null;
+    const maxWin  = Math.max(...ops.map(o => o.pnlPct));
 
     // Máxima pérdida individual
     const maxLoss = Math.min(...ops.map(o => o.pnlPct));
 
-    // Máximo Drawdown (sobre la curva acumulada de retornos, ordenada cronológicamente)
-    const sorted = [...ops].sort((a,b) => (a.closedAt||0) - (b.closedAt||0));
-    let equity = 100, peak = 100, maxDD = 0;
-    sorted.forEach(o => {
-      equity *= (1 + o.pnlPct/100);
-      if (equity > peak) peak = equity;
-      const dd = ((peak - equity) / peak) * 100;
-      if (dd > maxDD) maxDD = dd;
-    });
-
     return {
       nOps: ops.length, winRate, avgPnlPct, expectancy,
       totalPnlAbs, hasAbsData, totalPnlPctOnCapital,
-      avgDays, stdDev, sharpe, maxLoss, maxDD
+      avgDays, maxLoss, avgWin, avgLoss, payoff, profitFactor, maxWin
     };
   }
 
@@ -769,14 +761,16 @@ export async function render(container, { actionsSlot }) {
         <div class="pos-mtile"><div class="pos-mtile-lbl">Capital Asignado</div><div class="pos-mtile-val">${capitalLabel}</div></div>
         <div class="pos-mtile"><div class="pos-mtile-lbl">Beneficio Total (€)</div><div class="pos-mtile-val" style="color:${m.hasAbsData?color(m.totalPnlAbs):'var(--text3)'}">${m.hasAbsData?(sign(m.totalPnlAbs)+'$'+fmt(m.totalPnlAbs,0)):'Sin coste asignado'}</div></div>
         <div class="pos-mtile"><div class="pos-mtile-lbl">Beneficio Total (%)</div><div class="pos-mtile-val" style="color:${m.totalPnlPctOnCapital!=null?color(m.totalPnlPctOnCapital):'var(--text3)'}">${m.totalPnlPctOnCapital!=null?(sign(m.totalPnlPctOnCapital)+fmt(m.totalPnlPctOnCapital)+'%'):'—'}</div></div>
-        <div class="pos-mtile"><div class="pos-mtile-lbl">Ganancia Media</div><div class="pos-mtile-val" style="color:${color(m.avgPnlPct)}">${sign(m.avgPnlPct)}${fmt(m.avgPnlPct)}%</div></div>
-        <div class="pos-mtile"><div class="pos-mtile-lbl">Ratio Win</div><div class="pos-mtile-val" style="color:${m.winRate>=50?'var(--green)':'var(--amber)'}">${fmt(m.winRate,1)}%</div></div>
-        <div class="pos-mtile"><div class="pos-mtile-lbl">Esperanza Matemática</div><div class="pos-mtile-val" style="color:${color(m.expectancy)}">${sign(m.expectancy)}${fmt(m.expectancy)}%</div></div>
+        <div class="pos-mtile"><div class="pos-mtile-lbl">Rent. media / op.</div><div class="pos-mtile-val" style="color:${color(m.avgPnlPct)}">${sign(m.avgPnlPct)}${fmt(m.avgPnlPct)}%</div></div>
+        <div class="pos-mtile"><div class="pos-mtile-lbl">Win Rate</div><div class="pos-mtile-val" style="color:${m.winRate>=50?'var(--green)':'var(--amber)'}">${fmt(m.winRate,1)}%</div></div>
+        <div class="pos-mtile"><div class="pos-mtile-lbl">Esperanza / op.</div><div class="pos-mtile-val" style="color:${color(m.expectancy)}">${sign(m.expectancy)}${fmt(m.expectancy)}%</div></div>
+        <div class="pos-mtile"><div class="pos-mtile-lbl">Avg Win</div><div class="pos-mtile-val" style="color:var(--green)">${sign(m.avgWin)}${fmt(m.avgWin)}%</div></div>
+        <div class="pos-mtile"><div class="pos-mtile-lbl">Avg Loss</div><div class="pos-mtile-val" style="color:var(--red)">${fmt(m.avgLoss)}%</div></div>
+        <div class="pos-mtile"><div class="pos-mtile-lbl">Payoff</div><div class="pos-mtile-val" style="color:${m.payoff>=1.5?'var(--green)':'var(--amber)'}">${fmt(m.payoff)}</div></div>
+        <div class="pos-mtile"><div class="pos-mtile-lbl">Profit Factor</div><div class="pos-mtile-val" style="color:${m.profitFactor>=1.5?'var(--green)':'var(--amber)'}">${fmt(m.profitFactor)}</div></div>
         <div class="pos-mtile"><div class="pos-mtile-lbl">Días Medios / Op.</div><div class="pos-mtile-val">${fmt(m.avgDays,1)}d</div></div>
-        <div class="pos-mtile"><div class="pos-mtile-lbl">Ratio Sharpe</div><div class="pos-mtile-val" style="color:${m.sharpe>=1?'var(--green)':m.sharpe>=0?'var(--amber)':'var(--red)'}">${fmt(m.sharpe)}</div></div>
-        <div class="pos-mtile"><div class="pos-mtile-lbl">Volatilidad Media</div><div class="pos-mtile-val">${fmt(m.stdDev)}%</div></div>
-        <div class="pos-mtile"><div class="pos-mtile-lbl">Máxima Pérdida</div><div class="pos-mtile-val" style="color:var(--red)">${fmt(m.maxLoss)}%</div></div>
-        <div class="pos-mtile"><div class="pos-mtile-lbl">Máximo DD</div><div class="pos-mtile-val" style="color:var(--red)">-${fmt(m.maxDD)}%</div></div>
+        <div class="pos-mtile"><div class="pos-mtile-lbl">Mejor Operación</div><div class="pos-mtile-val" style="color:var(--green)">+${fmt(m.maxWin)}%</div></div>
+        <div class="pos-mtile"><div class="pos-mtile-lbl">Peor Operación</div><div class="pos-mtile-val" style="color:var(--red)">${fmt(m.maxLoss)}%</div></div>
         <div class="pos-mtile"><div class="pos-mtile-lbl">Nº Operaciones</div><div class="pos-mtile-val">${m.nOps}</div></div>
       </div>`;
   }

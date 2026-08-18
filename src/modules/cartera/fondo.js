@@ -904,7 +904,7 @@ export async function render(container, { actionsSlot, savedState }) {
           if (!rg) return '<div class="empty"><div class="empty-icon">📊</div><div class="empty-title">Sin operaciones cerradas</div></div>';
           return `
           <div class="fondo-metrics" style="margin-bottom:16px;">
-            ${mc('Win Rate', rg?Math.round(rg.winRate*100)+'%':'—', rg&&rg.winRate>=0.5?'Bueno':'Vigilar', rg&&rg.winRate>=0.5?'good':'warn', rg.n+' operaciones cerradas')}
+            ${mc('Win Rate', rg?Math.round(rg.winRate*100)+'%':'—', rg&&rg.winRate>=0.5?'Bueno':'Vigilar', rg&&rg.winRate>=0.5?'good':'warn', rg.n+' operaciones cerradas', true)}
             ${mc('Profit Factor', rg&&rg.profitFactor!=null?rg.profitFactor.toFixed(2):'—', rg&&rg.profitFactor>=1.5?'Sólido':rg&&rg.profitFactor>=1?'Aceptable':'Débil', rg&&rg.profitFactor>=1.5?'good':rg&&rg.profitFactor>=1?'neu':'bad', 'Ganancias brutas / pérdidas brutas. >1.5 = sistema robusto.', true)}
             ${mc('Esperanza Mat.', rg?fmtPct2(rg.esperanza*100):'—', rg&&rg.esperanza>=0?'Positiva':'Negativa', rg&&rg.esperanza>=0?'good':'bad', 'Retorno esperado por operación normalizada.', true)}
             ${mc('Avg Win', rg?'+'+rg.avgWin.toFixed(1)+'%':'—', null, 'good', 'Ganancia media de las operaciones ganadoras.', true)}
