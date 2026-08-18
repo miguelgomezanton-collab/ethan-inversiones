@@ -477,10 +477,15 @@ function vlChart(serieBase100, colorPositivo = true) {
 // ── Metric card ───────────────────────────────
 function mc(label, value, badge, badgeClass, note, audited = false) {
   const valCol = badgeClass==='good'?'var(--green)':badgeClass==='bad'?'var(--red)':badgeClass==='warn'?'var(--amber)':'var(--text1)';
+  const auditBadge = audited === true
+    ? `<span style="font-family:var(--mono);font-size:8px;font-weight:700;padding:2px 6px;border-radius:3px;background:rgba(74,222,128,0.12);color:var(--green);letter-spacing:0.08em;">✓ AUDIT</span>`
+    : audited === 'model'
+    ? `<span style="font-family:var(--mono);font-size:8px;font-weight:700;padding:2px 6px;border-radius:3px;background:rgba(95,168,224,0.12);color:var(--blue);letter-spacing:0.08em;">✓ MODEL</span>`
+    : '';
   return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px 20px;transition:background 0.15s;">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
       <div style="font-family:var(--mono);font-size:10px;color:var(--text3);">${label}</div>
-      ${audited ? `<span style="font-family:var(--mono);font-size:8px;font-weight:700;padding:2px 6px;border-radius:3px;background:rgba(74,222,128,0.12);color:var(--green);letter-spacing:0.08em;">✓ AUDIT</span>` : ''}
+      ${auditBadge}
     </div>
     <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:6px;">
       <span style="font-family:var(--mono);font-size:22px;font-weight:500;color:${valCol};">${value}</span>
@@ -857,7 +862,7 @@ export async function render(container, { actionsSlot, savedState }) {
             <div style="font-family:var(--mono);font-size:9px;color:var(--text3);padding:10px 14px;background:rgba(251,191,36,0.05);border-radius:6px;margin-top:8px;line-height:1.6;">
               ⚠ Modelo: μ=0 (random walk) · σ=${(std*Math.sqrt(252)*100).toFixed(1)}% anualizado · μ histórico=${(meanHist*252*100).toFixed(1)}% (referencia, no usado — historial &lt;12 meses insuficiente para estimación robusta) · ${SIMS.toLocaleString()} simulaciones · 252 días
             </div>
-            ${mc('Tail Risk (P5)', fmtPct((pWorst-1)*100), fmtE((pWorst-1)*valorCartera), 'bad', `El peor 5% de escenarios. Pérdida máxima esperada en escenario de estrés a 12 meses.`, true)}
+            ${mc('Percentil 5', fmtPct((pWorst-1)*100), fmtE((pWorst-1)*valorCartera), 'bad', `El peor 5% de escenarios. El 5% de los escenarios simulados finaliza por debajo de este resultado a 12 meses.`, true)}
           </div>
 
           <!-- Histograma Monte Carlo -->
