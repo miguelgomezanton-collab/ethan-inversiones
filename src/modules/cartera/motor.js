@@ -655,16 +655,20 @@ async function loadAndRenderProposals(el) {
 // MAIN EXPORT
 // ════════════════════════════════════════════════════════════════
 export async function render(container, { actionsSlot, savedState } = {}) {
-  // CSS
   if (!document.getElementById('mt-css')) {
-    const style = document.createElement('style');
-    style.id = 'mt-css';
-    style.textContent = CSS;
-    document.head.appendChild(style);
+    const s = document.createElement('style'); s.id = 'mt-css'; s.textContent = CSS;
+    document.head.appendChild(s);
   }
 
-  // HTML
-  container.innerHTML = `
+  // 1. Loader mientras carga
+  container.innerHTML = `<div id="mt-wrap"><div style="display:flex;align-items:center;gap:10px;padding:40px 20px;font-family:var(--mono);font-size:11px;color:var(--text3);"><div class="mt-loader-ring"></div>Cargando Motor Integrado...</div></div>`;
+
+  // 2. Cargar datos y política
+  await loadState();
+  const wrap = container.querySelector('#mt-wrap');
+
+  // 3. Pintar HTML
+  wrap.innerHTML = `
     <div class="mt-tabs">
       <button class="mt-tab active" data-tab="state">📊 Portfolio State</button>
       <button class="mt-tab" data-tab="allocation">🎯 Asset Allocation</button>
@@ -839,25 +843,25 @@ export async function render(container, { actionsSlot, savedState } = {}) {
     </div>`;
 
   // ── Tabs ──────────────────────────────────────────────────────
-  container.querySelectorAll('.mt-tab').forEach(tab => {
+  wrap.querySelectorAll('.mt-tab').forEach(tab => {
     tab.addEventListener('click', () => {
-      container.querySelectorAll('.mt-tab').forEach(t=>t.classList.remove('active'));
-      container.querySelectorAll('.mt-panel').forEach(p=>p.classList.remove('active'));
+      wrap.querySelectorAll('.mt-tab').forEach(t=>t.classList.remove('active'));
+      wrap.querySelectorAll('.mt-panel').forEach(p=>p.classList.remove('active'));
       tab.classList.add('active');
-      container.querySelector(`#mt-panel-${tab.dataset.tab}`)?.classList.add('active');
+      wrap.querySelector(`#mt-panel-${tab.dataset.tab}`)?.classList.add('active');
       if (tab.dataset.tab === 'proposals') {
-        const el2 = container.querySelector('#mt-proposals-list');
+        const el2 = wrap.querySelector('#mt-proposals-list');
         if (el2) loadAndRenderProposals(el2);
       }
     });
   });
 
   // ── Sizing button ─────────────────────────────────────────────
-  container.querySelector('#mt-sz-btn')?.addEventListener('click', () => calcSizing(container));
+  wrap.querySelector('#mt-sz-btn')?.addEventListener('click', () => calcSizing(wrap));
 
   // ── Params save ───────────────────────────────────────────────
-  container.querySelector('#mt-params-save')?.addEventListener('click', async () => {
-    const g = id => parseFloat(container.querySelector('#mt-p-'+id)?.value)||0;
+  wrap.querySelector('#mt-params-save')?.addEventListener('click', async () => {
+    const g = id => parseFloat(wrap.querySelector('#mt-p-'+id)?.value)||0;
     POLICY.corePct      = g('core')/100;
     POLICY.satPct       = g('sat')/100;
     POLICY.maxAssetNav  = g('asset')/100;
@@ -866,32 +870,27 @@ export async function render(container, { actionsSlot, savedState } = {}) {
     POLICY.portRisk     = g('port')/100;
     POLICY.coreRisk     = g('crisk')/100;
     POLICY.satRisk      = g('srisk')/100;
-    POLICY.ddScale      = [1,2,3,4,5].map(i => parseFloat(container.querySelector(`#mt-p-dd${i}`)?.value)||0);
+    POLICY.ddScale      = [1,2,3,4,5].map(i => parseFloat(wrap.querySelector(`#mt-p-dd${i}`)?.value)||0);
     await UserData.set(POLICY_KEY, POLICY);
-    renderAll(container);
-    const btn = container.querySelector('#mt-params-save');
+    renderAll(wrap);
+    const btn = wrap.querySelector('#mt-params-save');
     if (btn) { btn.textContent='✓ Guardado'; btn.style.color='var(--green)'; setTimeout(()=>{btn.textContent='Guardar y versionar';btn.style.color='';},2500); }
   });
 
-  // ── Acción refresh en topbar ──────────────────────────────────
-  actionsSlot.innerHTML = `<button class="btn" style="font-size:10px;padding:5px 12px;" id="mt-refresh-btn">↻ Actualizar</button>`;
-  actionsSlot.querySelector('#mt-refresh-btn')?.addEventListener('click', async () => {
-    await loadState();
-    renderAll(container);
-  });
-
-  // ── Cargar datos ────────────────────────────────────────────────
-  const ok = await loadState();
-  if (!ok) {
-    container.querySelector('#mt-panel-state').innerHTML = `<div style="padding:40px;text-align:center;font-family:var(--mono);font-size:12px;color:var(--red);">⚠ Error al cargar datos de cartera. Verifica tu conexión.</div>`;
-    return;
+  // ── Refresh ───────────────────────────────────────────────────
+  if (actionsSlot) {
+    actionsSlot.innerHTML = `<button class="btn" style="font-size:10px;padding:5px 12px;">↻ Actualizar</button>`;
+    actionsSlot.querySelector('.btn')?.addEventListener('click', async () => {
+      await loadState();
+      renderAll(wrap);
+    });
   }
 
-  renderAll(container);
+  renderAll(wrap);
 }
 
 function renderParamsForm(container) {
-  const set = (id, v) => { const e=container.querySelector('#mt-p-'+id); if(e) e.value=v; };
+  const set = (id, v) => { const e=wrap.querySelector('#mt-p-'+id); if(e) e.value=v; };
   set('core',  (POLICY.corePct*100).toFixed(0));
   set('sat',   (POLICY.satPct*100).toFixed(0));
   set('asset', (POLICY.maxAssetNav*100).toFixed(0));
@@ -900,12 +899,12 @@ function renderParamsForm(container) {
   set('port',  (POLICY.portRisk*100).toFixed(0));
   set('crisk', (POLICY.coreRisk*100).toFixed(2));
   set('srisk', (POLICY.satRisk*100).toFixed(2));
-  POLICY.ddScale.forEach((v,i) => { const e=container.querySelector(`#mt-p-dd${i+1}`); if(e) e.value=v.toFixed(2); });
-  const pv = container.querySelector('#mt-policy-version'); if(pv) pv.textContent=POLICY.version;
-  const pu = container.querySelector('#mt-policy-updated'); if(pu) pu.textContent=POLICY.updatedAt?new Date(POLICY.updatedAt).toLocaleString('es-ES'):'—';
+  POLICY.ddScale.forEach((v,i) => { const e=wrap.querySelector(`#mt-p-dd${i+1}`); if(e) e.value=v.toFixed(2); });
+  const pv = wrap.querySelector('#mt-policy-version'); if(pv) pv.textContent=POLICY.version;
+  const pu = wrap.querySelector('#mt-policy-updated'); if(pu) pu.textContent=POLICY.updatedAt?new Date(POLICY.updatedAt).toLocaleString('es-ES'):'—';
 }
 
-function renderAll(container) {
+function renderAll(wrap) {
   renderState(container);
   renderAllocation(container);
   renderRiskBudget(container);
