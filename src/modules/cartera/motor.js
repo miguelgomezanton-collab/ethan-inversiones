@@ -889,8 +889,8 @@ export async function render(container, { actionsSlot, savedState } = {}) {
   renderAll(wrap);
 }
 
-function renderParamsForm(container) {
-  const set = (id, v) => { const e=wrap.querySelector('#mt-p-'+id); if(e) e.value=v; };
+function renderParamsForm(el) {
+  const set = (id, v) => { const e=el.querySelector('#mt-p-'+id); if(e) e.value=v; };
   set('core',  (POLICY.corePct*100).toFixed(0));
   set('sat',   (POLICY.satPct*100).toFixed(0));
   set('asset', (POLICY.maxAssetNav*100).toFixed(0));
@@ -899,14 +899,14 @@ function renderParamsForm(container) {
   set('port',  (POLICY.portRisk*100).toFixed(0));
   set('crisk', (POLICY.coreRisk*100).toFixed(2));
   set('srisk', (POLICY.satRisk*100).toFixed(2));
-  POLICY.ddScale.forEach((v,i) => { const e=wrap.querySelector(`#mt-p-dd${i+1}`); if(e) e.value=v.toFixed(2); });
-  const pv = wrap.querySelector('#mt-policy-version'); if(pv) pv.textContent=POLICY.version;
-  const pu = wrap.querySelector('#mt-policy-updated'); if(pu) pu.textContent=POLICY.updatedAt?new Date(POLICY.updatedAt).toLocaleString('es-ES'):'—';
+  POLICY.ddScale.forEach((v,i) => { const e=el.querySelector(`#mt-p-dd${i+1}`); if(e) e.value=v.toFixed(2); });
+  const pv = el.querySelector('#mt-policy-version'); if(pv) pv.textContent=POLICY.version;
+  const pu = el.querySelector('#mt-policy-updated'); if(pu) pu.textContent=POLICY.updatedAt?new Date(POLICY.updatedAt).toLocaleString('es-ES'):'—';
 }
 
-function renderAll(wrap) {
-  renderState(container);
-  renderAllocation(container);
-  renderRiskBudget(container);
-  renderParamsForm(container);
+function renderAll(el) {
+  renderState(el);
+  renderAllocation(el);
+  renderRiskBudget(el);
+  renderParamsForm(el);
 }
