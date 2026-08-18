@@ -238,16 +238,7 @@ async function calcMetricas(fondo, vlActual, history = [], positions = [], capit
         hayDatos = true;
       });
 
-      if (!hayDatos) {
-        // Día en cash — VL constante basado en P&L realizado acumulado
-        const capitalAcum = movs.reduce((s, m) => {
-          if (m.date > date) return s;
-          return m.tipo === 'inicio' || m.tipo === 'aportacion' ? s + m.importe : s - Math.abs(m.importe);
-        }, 0);
-        const vlCash = (capitalAcum + pnlRealizadoAcum) / participaciones;
-        if (vlCash > 0) serieFinal.push([date, vlCash]);
-        return;
-      }
+      if (!hayDatos) return; // días en cash — no generan punto en la serie VL
 
       // Cash = capital inicial + aportaciones hasta esta fecha + P&L realizado - coste invertido
       const capitalAcum = movs.reduce((s, m) => {
