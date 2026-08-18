@@ -164,18 +164,23 @@ registerPage('car-metricas', {
   title: 'Métricas de Trading',
   loader: () => import('./modules/cartera/metricas.js')
 });
+registerPage('car-motor', {
+  crumb: '4. Cartera <span>›</span> 4.3 Motor Integrado',
+  title: 'Motor Integrado',
+  loader: () => import('./modules/cartera/motor.js')
+});
 registerPage('car-allocation', {
-  crumb: '4. Cartera <span>›</span> 4.4 Asset Allocation',
+  crumb: '4. Cartera <span>›</span> 4.3 Asset Allocation',
   title: 'Asset Allocation',
   loader: () => import('./modules/cartera/allocation.js')
 });
 registerPage('car-money', {
-  crumb: '4. Cartera <span>›</span> 4.5 Money Management',
+  crumb: '4. Cartera <span>›</span> 4.4 Money Management',
   title: 'Money Management',
   loader: () => import('./modules/cartera/money.js')
 });
 registerPage('car-risk', {
-  crumb: '4. Cartera <span>›</span> 4.6 Risk Management',
+  crumb: '4. Cartera <span>›</span> 4.5 Risk Management',
   title: 'Risk Management',
   loader: () => import('./modules/cartera/risk.js')
 });
