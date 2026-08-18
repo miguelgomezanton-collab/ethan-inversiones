@@ -654,7 +654,7 @@ async function loadAndRenderProposals(el) {
 // ════════════════════════════════════════════════════════════════
 // MAIN EXPORT
 // ════════════════════════════════════════════════════════════════
-export async function load(container, actionsSlot) {
+export async function render(container, { actionsSlot, savedState } = {}) {
   // CSS
   if (!document.getElementById('mt-css')) {
     const style = document.createElement('style');
