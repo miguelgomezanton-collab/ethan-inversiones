@@ -763,9 +763,9 @@ export async function render(container, { actionsSlot }) {
         <div class="pos-mtile"><div class="pos-mtile-lbl">Beneficio Total (%)</div><div class="pos-mtile-val" style="color:${m.totalPnlPctOnCapital!=null?color(m.totalPnlPctOnCapital):'var(--text3)'}">${m.totalPnlPctOnCapital!=null?(sign(m.totalPnlPctOnCapital)+fmt(m.totalPnlPctOnCapital)+'%'):'—'}</div></div>
         <div class="pos-mtile"><div class="pos-mtile-lbl">Rent. media / op.</div><div class="pos-mtile-val" style="color:${color(m.avgPnlPct)}">${sign(m.avgPnlPct)}${fmt(m.avgPnlPct)}%</div></div>
         <div class="pos-mtile"><div class="pos-mtile-lbl">Win Rate</div><div class="pos-mtile-val" style="color:${m.winRate>=50?'var(--green)':'var(--amber)'}">${fmt(m.winRate,1)}%</div></div>
-        <div class="pos-mtile"><div class="pos-mtile-lbl">Esperanza / op.</div><div class="pos-mtile-val" style="color:${color(m.expectancy)}">${sign(m.expectancy)}${fmt(m.expectancy)}%</div></div>
+        <div class="pos-mtile"><div class="pos-mtile-lbl">Esperanza / op.<span style="font-size:8px;color:var(--text3);display:block;margin-top:2px;">WR×AvgWin − (1−WR)×AvgLoss</span></div><div class="pos-mtile-val" style="color:${color(m.expectancy)}">${sign(m.expectancy)}${fmt(m.expectancy)}%</div></div>
         <div class="pos-mtile"><div class="pos-mtile-lbl">Avg Win</div><div class="pos-mtile-val" style="color:var(--green)">${sign(m.avgWin)}${fmt(m.avgWin)}%</div></div>
-        <div class="pos-mtile"><div class="pos-mtile-lbl">Avg Loss</div><div class="pos-mtile-val" style="color:var(--red)">${fmt(m.avgLoss)}%</div></div>
+        <div class="pos-mtile"><div class="pos-mtile-lbl">Avg Loss</div><div class="pos-mtile-val" style="color:var(--red)">-${fmt(m.avgLoss)}%</div></div>
         <div class="pos-mtile"><div class="pos-mtile-lbl">Payoff</div><div class="pos-mtile-val" style="color:${m.payoff>=1.5?'var(--green)':'var(--amber)'}">${fmt(m.payoff)}</div></div>
         <div class="pos-mtile"><div class="pos-mtile-lbl">Profit Factor</div><div class="pos-mtile-val" style="color:${m.profitFactor>=1.5?'var(--green)':'var(--amber)'}">${fmt(m.profitFactor)}</div></div>
         <div class="pos-mtile"><div class="pos-mtile-lbl">Días Medios / Op.</div><div class="pos-mtile-val">${fmt(m.avgDays,1)}d</div></div>
