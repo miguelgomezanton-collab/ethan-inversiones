@@ -442,7 +442,7 @@ async function calcMetricas(fondo, vlActual, history = [], positions = [], capit
     hasHistory,
     serieBase100,
     nPuntos: serieFinal.length,
-    dailyReturns,
+    dailyReturns: allReturns,  // incluye días hábiles en cash con retorno 0
   };
 }
 
@@ -792,18 +792,20 @@ export async function render(container, { actionsSlot, savedState }) {
           const cvar95 = tail95.length ? tail95.reduce((a,b)=>a+b,0)/tail95.length : var95;
           const cvar95Eur = cvar95 * valorCartera;
 
-          // Monte Carlo — 500 simulaciones, 252 días
-          const mean = rets.reduce((a,b)=>a+b,0)/n;
-          const std = Math.sqrt(rets.reduce((a,r)=>a+(r-mean)**2,0)/n);
-          const SIMS = 500, DAYS = 252;
+          // Monte Carlo — 10.000 simulaciones, 252 días
+          // μ histórico solo como referencia — usamos μ=0 (random walk) para el escenario base
+          // ya que con <12 meses de historia el CAGR histórico no es estadísticamente robusto
+          const meanHist = rets.reduce((a,b)=>a+b,0)/n;
+          const std = Math.sqrt(rets.reduce((a,r)=>a+(r-meanHist)**2,0)/n);
+          const meanSim = 0; // random walk — conservador y defendible
+          const SIMS = 10000, DAYS = 252;
           const finals = [];
           for (let s=0; s<SIMS; s++) {
             let v = 1;
             for (let d=0; d<DAYS; d++) {
-              // Box-Muller para normal
               const u1 = Math.random(), u2 = Math.random();
               const z = Math.sqrt(-2*Math.log(u1)) * Math.cos(2*Math.PI*u2);
-              v *= (1 + mean + std*z);
+              v *= (1 + meanSim + std*z);
             }
             finals.push(v);
           }
@@ -851,8 +853,11 @@ export async function render(container, { actionsSlot, savedState }) {
           <div class="fondo-section">Monte Carlo — Proyección 12 meses</div>
           <div class="fondo-metrics" style="margin-bottom:12px;">
             ${mc('Escenario Optimista (P90)', fmtPct((p90-1)*100), '+'+fmtE((p90-1)*valorCartera), 'good', `El 10% de las simulaciones superan este resultado. Valor cartera: ${fmtE(p90*valorCartera)}`, true)}
-            ${mc('Escenario Base (P50)', fmtPct((p50-1)*100), fmtE((p50-1)*valorCartera), (p50-1)>=0?'good':'bad', `Mediana de 500 simulaciones. Valor cartera esperado: ${fmtE(p50*valorCartera)}`, true)}
+            ${mc('Escenario Base (P50)', fmtPct((p50-1)*100), fmtE((p50-1)*valorCartera), (p50-1)>=0?'good':'bad', `Mediana de ${SIMS.toLocaleString()} simulaciones con μ=0% (random walk). Valor cartera esperado: ${fmtE(p50*valorCartera)}`, true)}
             ${mc('Escenario Pesimista (P10)', fmtPct((p10-1)*100), fmtE((p10-1)*valorCartera), 'bad', `El 90% de las simulaciones superan este resultado. Valor cartera: ${fmtE(p10*valorCartera)}`, true)}
+            <div style="font-family:var(--mono);font-size:9px;color:var(--text3);padding:10px 14px;background:rgba(251,191,36,0.05);border-radius:6px;margin-top:8px;line-height:1.6;">
+              ⚠ Modelo: μ=0 (random walk) · σ=${(std*Math.sqrt(252)*100).toFixed(1)}% anualizado · μ histórico=${(meanHist*252*100).toFixed(1)}% (referencia, no usado — historial &lt;12 meses insuficiente para estimación robusta) · ${SIMS.toLocaleString()} simulaciones · 252 días
+            </div>
             ${mc('Tail Risk (P5)', fmtPct((pWorst-1)*100), fmtE((pWorst-1)*valorCartera), 'bad', `El peor 5% de escenarios. Pérdida máxima esperada en escenario de estrés a 12 meses.`, true)}
           </div>
 
