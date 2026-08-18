@@ -792,13 +792,12 @@ export async function render(container, { actionsSlot, savedState }) {
           const cvar95 = tail95.length ? tail95.reduce((a,b)=>a+b,0)/tail95.length : var95;
           const cvar95Eur = cvar95 * valorCartera;
 
-          // Monte Carlo — 10.000 simulaciones, 252 días
-          // μ histórico solo como referencia — usamos μ=0 (random walk) para el escenario base
-          // ya que con <12 meses de historia el CAGR histórico no es estadísticamente robusto
+          // Monte Carlo — 2.000 simulaciones, 252 días
+          // μ=0 (random walk) — conservador y defendible con <12 meses de historia
           const meanHist = rets.reduce((a,b)=>a+b,0)/n;
           const std = Math.sqrt(rets.reduce((a,r)=>a+(r-meanHist)**2,0)/n);
-          const meanSim = 0; // random walk — conservador y defendible
-          const SIMS = 10000, DAYS = 252;
+          const meanSim = 0;
+          const SIMS = 2000, DAYS = 252;
           const finals = [];
           for (let s=0; s<SIMS; s++) {
             let v = 1;
@@ -865,7 +864,7 @@ export async function render(container, { actionsSlot, savedState }) {
           <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:16px;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
               <div style="font-size:12px;font-weight:600;">Distribución de resultados — ${SIMS} simulaciones · ${DAYS} días</div>
-              <div style="font-size:10px;color:var(--text3);font-family:var(--mono);">μ=${fmtPct(mean*252*100)} · σ=${fmtPct(std*Math.sqrt(252)*100)} anualizado</div>
+              <div style="font-size:10px;color:var(--text3);font-family:var(--mono);">μ histórico=${fmtPct(meanHist*252*100)} · σ=${fmtPct(std*Math.sqrt(252)*100)} anualizado</div>
             </div>
             <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;display:block;">
               ${bars}
