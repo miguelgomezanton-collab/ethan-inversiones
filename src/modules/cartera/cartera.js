@@ -217,11 +217,36 @@ export async function render(container, { actionsSlot }) {
 
         <!-- Fila 3: Nombre manual (si no encuentra el ticker) -->
         <div class="pos-form-grid">
-          <div class="pos-form-field" style="grid-column:1/3">
+          <div class="pos-form-field">
             <label>Nombre del activo <span style="color:var(--text3)">(opcional — se rellena automáticamente)</span></label>
             <input type="text" id="pf-name" placeholder="ej. WisdomTree Gold 3x Daily Leveraged" class="wl-input" style="width:100%;">
           </div>
-          <div class="pos-form-field" style="grid-column:3/4">
+          <div class="pos-form-field">
+            <label>Sector</label>
+            <select id="pf-sector" class="sc2-sel" style="width:100%;">
+              <option value="">— Auto (desde watchlist)</option>
+              <option value="tech">Tecnología</option>
+              <option value="health">Healthcare</option>
+              <option value="energy">Energía</option>
+              <option value="finance">Financiero</option>
+              <option value="consumer">Consumo Discrecional</option>
+              <option value="industrial">Industrial</option>
+              <option value="materials">Materiales</option>
+              <option value="utilities">Utilities</option>
+              <option value="realestate">Real Estate</option>
+              <option value="comm">Comunicación</option>
+              <option value="staples">Consumo Básico</option>
+              <option value="commodities">Commodities</option>
+            </select>
+          </div>
+          <div class="pos-form-field">
+            <label>Bucket</label>
+            <select id="pf-bucket" class="sc2-sel" style="width:100%;">
+              <option value="sat">SATÉLITE</option>
+              <option value="core">CORE</option>
+            </select>
+          </div>
+          <div class="pos-form-field">
             <label>Notas</label>
             <input type="text" id="pf-notas" placeholder="Motivo de entrada, contexto..." class="wl-input" style="width:100%;">
           </div>
@@ -250,12 +275,23 @@ export async function render(container, { actionsSlot }) {
       document.getElementById('pf-stop-manual-wrap').style.display = e.target.value === 'manual' ? 'block' : 'none';
     });
 
-    // Buscar ticker en Yahoo
+    // Buscar ticker en Yahoo + autodetectar sector desde watchlist
     document.getElementById('pf-search-btn')?.addEventListener('click', async () => {
       const ticker = document.getElementById('pf-ticker')?.value.trim().toUpperCase();
       if (!ticker) return;
       const st = document.getElementById('pf-search-status');
       st.textContent = 'Buscando...'; st.style.color = 'var(--text3)';
+
+      // Autodetectar sector desde watchlist
+      try {
+        const wl = await UserData.get('ethan_watchlist') || [];
+        const wlEntry = wl.find(w => w.ticker?.toUpperCase() === ticker);
+        if (wlEntry?.sector) {
+          const sectorEl = document.getElementById('pf-sector');
+          if (sectorEl) sectorEl.value = wlEntry.sector;
+        }
+      } catch {}
+
       try {
         const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=5d`;
         let found = false;
@@ -308,11 +344,23 @@ export async function render(container, { actionsSlot }) {
       const entryStop = parseFloat(document.getElementById('pf-entry-stop')?.value)||stopManual||null;
       const name      = document.getElementById('pf-name')?.value.trim() || '';
       const notas     = document.getElementById('pf-notas')?.value.trim() || '';
+      const sector    = document.getElementById('pf-sector')?.value || '';
+      const bucket    = document.getElementById('pf-bucket')?.value || 'sat';
 
       if (!ticker || !entry || entry <= 0) { alert('Ticker y precio de entrada son obligatorios.'); return; }
       if (positions.find(p => p.ticker === ticker)) { alert(`${ticker} ya está en cartera.`); return; }
 
-      positions.push({ direction, ticker, name, entry, shares, cost, entryDate, stopType, stopManual, entryStop, notas, addedAt: new Date(entryDate).getTime() || Date.now() });
+      // Si no se seleccionó sector manualmente, intentar desde watchlist
+      let finalSector = sector;
+      if (!finalSector) {
+        try {
+          const wl = await UserData.get('ethan_watchlist') || [];
+          const wlEntry = wl.find(w => w.ticker?.toUpperCase() === ticker);
+          if (wlEntry?.sector) finalSector = wlEntry.sector;
+        } catch {}
+      }
+
+      positions.push({ direction, ticker, name, entry, shares, cost, entryDate, stopType, stopManual, entryStop, notas, sector: finalSector, bucket, addedAt: new Date(entryDate).getTime() || Date.now() });
       await savePositions();
 
       // Disparar backfill de precios desde fecha de entrada hasta hoy
