@@ -116,7 +116,11 @@ const CSS = `
 .mt-loader-ring{width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--teal);border-radius:50%;animation:spin 0.7s linear infinite;flex-shrink:0;}
 @keyframes spin{to{transform:rotate(360deg)}}
 
-/* ── AA Engine visual ── */
+.mt-aa-subtab{transition:color 0.15s,border-color 0.15s;}
+.mt-aa-subtab:hover{color:var(--text2)!important;}
+.mt-aa-subtab.active{color:var(--teal)!important;border-bottom-color:var(--teal)!important;}
+.mt-aa-subpanel{animation:mtFade 0.2s ease;}
+
 .mt-aa-bar{height:10px;border-radius:5px;overflow:hidden;display:flex;margin:10px 0;}
 .mt-aa-seg{height:100%;transition:width 0.4s ease;}
 .mt-aa-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin:12px 0;}
@@ -1124,60 +1128,79 @@ export async function render(container, { actionsSlot, savedState } = {}) {
 
     <!-- ASSET ALLOCATION -->
     <div class="mt-panel" id="mt-panel-allocation">
-      <div class="mt-sdiv"><div class="mt-sdiv-lbl">Capital Budgets</div><div class="mt-sdiv-line"></div></div>
-      <div class="mt-g2 mb12">
-        ${['core','sat'].map(b => {
-          const clr = b==='core'?'var(--teal)':'var(--purple)';
-          const nm  = b==='core'?'CORE':'SATÉLITE';
-          return `<div class="mt-card">
-            <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px;">
-              <div style="font-family:var(--serif);font-size:18px;font-style:italic;font-weight:600;color:${clr};">${nm}</div>
-              <span id="mt-${b}-tgt" style="font-family:var(--mono);font-size:10px;color:var(--text3);">—</span>
-            </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px;">
-              <div><div class="mt-lbl">Budget</div><div class="mt-val" id="mt-${b}-budget" style="font-size:16px;">—</div></div>
-              <div><div class="mt-lbl">Invertido</div><div class="mt-val" id="mt-${b}-inv" style="font-size:16px;color:var(--blue);">—</div></div>
-              <div><div class="mt-lbl">Disponible</div><div class="mt-val" id="mt-${b}-avail" style="font-size:16px;">—</div></div>
-            </div>
-            <div class="mt-bar-track"><div class="mt-bar-fill" id="mt-${b}-bar" style="width:0%;"></div></div>
-            <div style="font-family:var(--mono);font-size:9px;color:var(--text3);margin-top:3px;text-align:right;" id="mt-${b}-occ">—</div>
-          </div>`;
-        }).join('')}
-      </div>
-      <div class="mt-sdiv"><div class="mt-sdiv-lbl">Target vs Actual</div><div class="mt-sdiv-line"></div></div>
-      <div class="mt-card mb12">
-        <table style="width:100%;border-collapse:collapse;">
-          <thead><tr style="border-bottom:1px solid var(--border);">
-            ${['Dimensión','Concepto','Límite máx.','Actual','Estado'].map((h,i)=>
-              `<th style="font-family:var(--mono);font-size:9px;text-transform:uppercase;color:var(--text3);padding:8px 12px;text-align:${i===0?'left':'right'};">${h}</th>`).join('')}
-          </tr></thead>
-          <tbody id="mt-alloc-table"></tbody>
-        </table>
-      </div>
-      <div class="mt-sdiv"><div class="mt-sdiv-lbl">Cash Táctico</div><div class="mt-sdiv-line"></div></div>
-      <div class="mt-g3">
-        <div class="mt-kpi"><div class="mt-kpi-lbl">Cash Estructural</div><div class="mt-kpi-val" id="mt-cash-struct">—</div><div class="mt-kpi-sub">No asignado a ningún bucket</div></div>
-        <div class="mt-kpi"><div class="mt-kpi-lbl">Cash Táctico CORE</div><div class="mt-kpi-val" id="mt-cash-core" style="color:var(--teal)">—</div><div class="mt-kpi-sub">Budget CORE sin desplegar</div></div>
-        <div class="mt-kpi"><div class="mt-kpi-lbl">Cash Táctico Satélite</div><div class="mt-kpi-val" id="mt-cash-sat" style="color:var(--purple)">—</div><div class="mt-kpi-sub">Budget Satélite sin desplegar</div></div>
+
+      <!-- Subpestañas AA -->
+      <div style="display:flex;gap:2px;border-bottom:1px solid var(--border);margin-bottom:16px;">
+        <button class="mt-aa-subtab active" data-aatab="overview" style="padding:8px 16px;background:transparent;border:none;color:var(--teal);cursor:pointer;font-size:11px;font-weight:600;border-bottom:2px solid var(--teal);font-family:var(--sans);">📊 Overview</button>
+        <button class="mt-aa-subtab" data-aatab="core" style="padding:8px 16px;background:transparent;border:none;color:var(--text3);cursor:pointer;font-size:11px;font-weight:600;border-bottom:2px solid transparent;font-family:var(--sans);">🎯 CORE</button>
+        <button class="mt-aa-subtab" data-aatab="sat" style="padding:8px 16px;background:transparent;border:none;color:var(--text3);cursor:pointer;font-size:11px;font-weight:600;border-bottom:2px solid transparent;font-family:var(--sans);">🛰 SATÉLITE</button>
       </div>
 
-      <div class="mt-sdiv"><div class="mt-sdiv-lbl">CORE Engine · Señales y Pesos</div><div class="mt-sdiv-line"></div>
-        <button class="btn mt-badge" id="mt-aa-run-btn" style="font-size:10px;padding:5px 12px;margin-left:8px;">▶ Calcular</button>
-      </div>
-      <div id="mt-aa-core-results" style="font-family:var(--mono);font-size:11px;color:var(--text3);padding:20px;text-align:center;">
-        Pulsa Calcular para ejecutar el motor de señales CORE.
-      </div>
-
-      <div class="mt-sdiv"><div class="mt-sdiv-lbl">Satélite Engine · Pesos por Inversa de Volatilidad</div><div class="mt-sdiv-line"></div></div>
-      <div style="background:var(--surface2);border-radius:10px;padding:14px 16px;margin-bottom:12px;">
-        <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
-          <input type="text" id="mt-aa-sat-input" class="mt-input" placeholder="EXPD, XLI, XLV, VLO (separados por coma)" style="flex:1;text-transform:uppercase;">
-          <button class="btn btn-primary" id="mt-aa-sat-btn" style="white-space:nowrap;">▶ Calcular SAT</button>
+      <!-- OVERVIEW -->
+      <div class="mt-aa-subpanel active" id="mt-aa-panel-overview">
+        <div class="mt-sdiv"><div class="mt-sdiv-lbl">Capital Budgets</div><div class="mt-sdiv-line"></div></div>
+        <div class="mt-g2 mb12">
+          ${['core','sat'].map(b => {
+            const clr = b==='core'?'var(--teal)':'var(--purple)';
+            const nm  = b==='core'?'CORE':'SATÉLITE';
+            return `<div class="mt-card">
+              <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px;">
+                <div style="font-family:var(--serif);font-size:18px;font-style:italic;font-weight:600;color:${clr};">${nm}</div>
+                <span id="mt-${b}-tgt" style="font-family:var(--mono);font-size:10px;color:var(--text3);">—</span>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px;">
+                <div><div class="mt-lbl">Budget</div><div class="mt-val" id="mt-${b}-budget" style="font-size:16px;">—</div></div>
+                <div><div class="mt-lbl">Invertido</div><div class="mt-val" id="mt-${b}-inv" style="font-size:16px;color:var(--blue);">—</div></div>
+                <div><div class="mt-lbl">Disponible</div><div class="mt-val" id="mt-${b}-avail" style="font-size:16px;">—</div></div>
+              </div>
+              <div class="mt-bar-track"><div class="mt-bar-fill" id="mt-${b}-bar" style="width:0%;"></div></div>
+              <div style="font-family:var(--mono);font-size:9px;color:var(--text3);margin-top:3px;text-align:right;" id="mt-${b}-occ">—</div>
+            </div>`;
+          }).join('')}
         </div>
-        <div style="font-size:9px;color:var(--text3);font-family:var(--mono);">Introduce los tickers de tu universo Satélite. Se calculan pesos por inversa de volatilidad con tope del ${Math.round((POLICY.satMaxWeight??0.40)*100)}% por activo. 100% invertido.</div>
+        <div class="mt-sdiv"><div class="mt-sdiv-lbl">Límites de Exposición</div><div class="mt-sdiv-line"></div></div>
+        <div class="mt-card mb12">
+          <table style="width:100%;border-collapse:collapse;">
+            <thead><tr style="border-bottom:1px solid var(--border);">
+              ${['Dimensión','Concepto','Límite máx.','Actual','Estado'].map((h,i)=>
+                `<th style="font-family:var(--mono);font-size:9px;text-transform:uppercase;color:var(--text3);padding:8px 12px;text-align:${i===0?'left':'right'};">${h}</th>`).join('')}
+            </tr></thead>
+            <tbody id="mt-alloc-table"></tbody>
+          </table>
+        </div>
+        <div class="mt-sdiv"><div class="mt-sdiv-lbl">Cash Táctico</div><div class="mt-sdiv-line"></div></div>
+        <div class="mt-g3">
+          <div class="mt-kpi"><div class="mt-kpi-lbl">Cash Estructural</div><div class="mt-kpi-val" id="mt-cash-struct">—</div><div class="mt-kpi-sub">No asignado a ningún bucket</div></div>
+          <div class="mt-kpi"><div class="mt-kpi-lbl">Cash Táctico CORE</div><div class="mt-kpi-val" id="mt-cash-core" style="color:var(--teal)">—</div><div class="mt-kpi-sub">Budget CORE sin desplegar</div></div>
+          <div class="mt-kpi"><div class="mt-kpi-lbl">Cash Táctico Satélite</div><div class="mt-kpi-val" id="mt-cash-sat" style="color:var(--purple)">—</div><div class="mt-kpi-sub">Budget Satélite sin desplegar</div></div>
+        </div>
       </div>
-      <div id="mt-aa-sat-results" style="font-family:var(--mono);font-size:11px;color:var(--text3);padding:20px;text-align:center;">
-        Introduce tickers y pulsa Calcular SAT.
+
+      <!-- CORE -->
+      <div class="mt-aa-subpanel" id="mt-aa-panel-core" style="display:none;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+          <div style="font-size:10px;color:var(--text3);font-family:var(--mono);">
+            Universo: <strong style="color:var(--text2);" id="mt-aa-core-universe-label">—</strong> · Score mínimo: <strong style="color:var(--text2);" id="mt-aa-core-threshold-label">—</strong>/8 · Budget: <strong style="color:var(--teal);" id="mt-aa-core-budget-label">—</strong>
+          </div>
+          <button class="btn btn-primary" id="mt-aa-run-btn" style="font-size:10px;padding:6px 14px;">▶ Calcular señales</button>
+        </div>
+        <div id="mt-aa-core-results" style="font-family:var(--mono);font-size:11px;color:var(--text3);padding:40px;text-align:center;">
+          Pulsa Calcular señales para ejecutar el motor CORE.
+        </div>
+      </div>
+
+      <!-- SATÉLITE -->
+      <div class="mt-aa-subpanel" id="mt-aa-panel-sat" style="display:none;">
+        <div style="background:var(--surface2);border-radius:10px;padding:14px 16px;margin-bottom:14px;">
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+            <input type="text" id="mt-aa-sat-input" class="mt-input" placeholder="EXPD, XLI, XLV, VLO (separados por coma)" style="flex:1;text-transform:uppercase;">
+            <button class="btn btn-primary" id="mt-aa-sat-btn" style="white-space:nowrap;">▶ Calcular pesos</button>
+          </div>
+          <div style="font-size:9px;color:var(--text3);font-family:var(--mono);">Inversa de volatilidad · 100% invertido · Tope <span id="mt-aa-sat-maxw-label">${Math.round((POLICY.satMaxWeight??0.40)*100)}%</span> por activo · Budget SAT: <span id="mt-aa-sat-budget-label">—</span></div>
+        </div>
+        <div id="mt-aa-sat-results" style="font-family:var(--mono);font-size:11px;color:var(--text3);padding:40px;text-align:center;">
+          Introduce tickers y pulsa Calcular pesos.
+        </div>
       </div>
     </div>
 
@@ -1316,8 +1339,42 @@ export async function render(container, { actionsSlot, savedState } = {}) {
     });
   });
 
-  // ── Botón Calcular AA CORE ────────────────────────────────────
+  // ── Subpestañas Asset Allocation ─────────────────────────────
+  wrap.querySelectorAll('.mt-aa-subtab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      wrap.querySelectorAll('.mt-aa-subtab').forEach(t => {
+        t.classList.remove('active');
+        t.style.color = 'var(--text3)';
+        t.style.borderBottomColor = 'transparent';
+      });
+      wrap.querySelectorAll('.mt-aa-subpanel').forEach(p => p.style.display='none');
+      tab.classList.add('active');
+      tab.style.color = 'var(--teal)';
+      tab.style.borderBottomColor = 'var(--teal)';
+      const panel = wrap.querySelector(`#mt-aa-panel-${tab.dataset.aatab}`);
+      if (panel) panel.style.display = 'block';
+    });
+  });
+
+  // Actualizar labels dinámicos de CORE y SAT en subpestañas
+  function updateAALabels() {
+    const nav = STATE?.nav || 0;
+    const ul = wrap.querySelector('#mt-aa-core-universe-label');
+    const tl = wrap.querySelector('#mt-aa-core-threshold-label');
+    const bl = wrap.querySelector('#mt-aa-core-budget-label');
+    const sl = wrap.querySelector('#mt-aa-sat-budget-label');
+    const mw = wrap.querySelector('#mt-aa-sat-maxw-label');
+    if (ul) ul.textContent = (POLICY.coreUniverse||['VTI','VEU','IEF','BNDX']).join(', ');
+    if (tl) tl.textContent = POLICY.coreScoreThreshold ?? 6;
+    if (bl) bl.textContent = fmtE(nav * POLICY.corePct);
+    if (sl) sl.textContent = fmtE(nav * POLICY.satPct);
+    if (mw) mw.textContent = Math.round((POLICY.satMaxWeight??0.40)*100)+'%';
+  }
+  updateAALabels();
+
+  // ── Botón Calcular CORE ───────────────────────────────────────
   wrap.querySelector('#mt-aa-run-btn')?.addEventListener('click', () => {
+    updateAALabels();
     runAllocationEngine(wrap);
   });
 
