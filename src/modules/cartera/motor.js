@@ -1374,52 +1374,174 @@ export async function render(container, { actionsSlot, savedState } = {}) {
 
     <!-- PARÁMETROS -->
     <div class="mt-panel" id="mt-panel-params">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-        <div><div style="font-family:var(--mono);font-size:10px;color:var(--text2);">Policy v<span id="mt-policy-version">—</span></div><div style="font-family:var(--mono);font-size:9px;color:var(--text3);margin-top:2px;">Guardado: <span id="mt-policy-updated">—</span></div></div>
-      </div>
-      <div class="mt-sdiv"><div class="mt-sdiv-lbl">Asset Allocation</div><div class="mt-sdiv-line"></div></div>
-      <div class="mt-g4 mb12">
-        <div class="mt-field"><label>Target CORE (%)</label><input type="number" id="mt-p-core" class="mt-input" value="50"></div>
-        <div class="mt-field"><label>Target Satélite (%)</label><input type="number" id="mt-p-sat" class="mt-input" value="50"></div>
-        <div class="mt-field"><label>Máx. activo (% NAV)</label><input type="number" id="mt-p-asset" class="mt-input" value="20"></div>
-        <div class="mt-field"><label>Máx. sector (% NAV)</label><input type="number" id="mt-p-sector" class="mt-input" value="35"></div>
-      </div>
-      <div class="mt-g4 mb12">
-        <div class="mt-field"><label>Score mínimo CORE</label><input type="number" id="mt-p-core-threshold" class="mt-input" value="6" min="0" max="8"></div>
-        <div class="mt-field"><label>Máx. peso CORE (%)</label><input type="number" id="mt-p-core-maxw" class="mt-input" value="40"></div>
-        <div class="mt-field"><label>Máx. peso SAT (%)</label><input type="number" id="mt-p-sat-maxw" class="mt-input" value="40"></div>
-      </div>
-      <div class="mt-g2 mb12">
-        <div class="mt-field">
-          <label>Universo CORE (tickers separados por coma)</label>
-          <input type="text" id="mt-p-core-universe" class="mt-input" placeholder="VTI, VEU, IEF, BNDX" value="VTI, VEU, IEF, BNDX">
-          <div style="font-size:9px;color:var(--text3);margin-top:3px;">Por defecto: VTI, VEU, IEF, BNDX. Los que terminan en BND/IEF/TLT se tratan como RF, el resto como RV.</div>
+
+      <!-- Header Policy Console -->
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;padding-bottom:14px;border-bottom:1px solid var(--border);">
+        <div>
+          <div style="font-family:var(--serif);font-size:18px;font-style:italic;color:var(--text1);">Policy Console</div>
+          <div style="font-family:var(--mono);font-size:9px;color:var(--text3);margin-top:3px;">
+            Política activa: <strong style="color:var(--text2);">v<span id="mt-policy-version">—</span></strong>
+            · <span id="mt-policy-updated">—</span>
+          </div>
         </div>
-        <div class="mt-field">
-          <label>Máx. peso por activo CORE (%)</label>
-          <input type="number" id="mt-p-core-maxw" class="mt-input" value="40">
-          <div style="font-size:9px;color:var(--text3);margin-top:3px;">Tope de concentración por activo en la cartera CORE.</div>
+        <button class="btn btn-primary" id="mt-params-save" style="padding:9px 20px;">💾 Guardar y versionar</button>
+      </div>
+
+      <!-- BLOQUE 1: Asset Allocation -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:14px;">
+        <div style="font-family:var(--mono);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:var(--text2);margin-bottom:14px;">1 · Asset Allocation</div>
+
+        <!-- Slider CORE/SAT -->
+        <div style="margin-bottom:16px;">
+          <div style="font-size:10px;color:var(--text3);margin-bottom:8px;">Distribución estratégica del NAV</div>
+          <div style="display:flex;border-radius:6px;overflow:hidden;height:32px;margin-bottom:8px;">
+            <div id="mt-p-core-bar" style="background:rgba(64,217,192,0.25);display:flex;align-items:center;padding:0 12px;transition:width 0.3s;min-width:80px;">
+              <span style="font-family:var(--mono);font-size:11px;font-weight:700;color:var(--teal);">CORE <span id="mt-p-core-bar-pct">50</span>%</span>
+            </div>
+            <div id="mt-p-sat-bar" style="background:rgba(167,139,250,0.2);display:flex;align-items:center;justify-content:flex-end;padding:0 12px;flex:1;transition:width 0.3s;min-width:80px;">
+              <span style="font-family:var(--mono);font-size:11px;font-weight:700;color:var(--purple);"><span id="mt-p-sat-bar-pct">50</span>% SAT</span>
+            </div>
+          </div>
+          <input type="range" id="mt-p-core-slider" min="10" max="90" step="5" value="50"
+            style="width:100%;accent-color:var(--teal);cursor:pointer;">
+          <div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:9px;color:var(--text3);margin-top:3px;">
+            <span>10% CORE mín.</span><span>90% CORE máx.</span>
+          </div>
+          <!-- Inputs ocultos sincronizados con el slider -->
+          <input type="hidden" id="mt-p-core" value="50">
+          <input type="hidden" id="mt-p-sat" value="50">
+        </div>
+
+        <!-- Límites globales -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <div class="mt-field">
+            <label>Máx. por activo (% NAV)</label>
+            <input type="number" id="mt-p-asset" class="mt-input" value="20" step="1" min="5" max="50">
+            <div style="font-size:9px;color:var(--text3);margin-top:3px;">Ningún activo puede superar este % del NAV total.</div>
+          </div>
+          <div class="mt-field">
+            <label>Máx. por sector (% NAV)</label>
+            <input type="number" id="mt-p-sector" class="mt-input" value="35" step="5" min="10" max="60">
+            <div style="font-size:9px;color:var(--text3);margin-top:3px;">Límite de concentración sectorial global.</div>
+          </div>
+        </div>
+        <div style="margin-top:10px;font-size:9px;color:var(--text3);background:var(--surface2);padding:8px 12px;border-radius:6px;line-height:1.6;">
+          Los límites son acumulativos. ETHAN aplica siempre la restricción más conservadora entre el límite global y el límite específico del bucket.
         </div>
       </div>
-      <div class="mt-sdiv"><div class="mt-sdiv-lbl">Risk Management</div><div class="mt-sdiv-line"></div></div>
-      <div class="mt-g4 mb12">
-        <div class="mt-field"><label>Riesgo base/op. (% NAV)</label><input type="number" id="mt-p-trade" class="mt-input" step="0.25"></div>
-        <div class="mt-field"><label>Riesgo máx. cartera (%)</label><input type="number" id="mt-p-port" class="mt-input" step="0.5"></div>
-        <div class="mt-field"><label>Riesgo máx. CORE (%)</label><input type="number" id="mt-p-crisk" class="mt-input" step="0.25"></div>
-        <div class="mt-field"><label>Riesgo máx. Satélite (%)</label><input type="number" id="mt-p-srisk" class="mt-input" step="0.25"></div>
-      </div>
-      <div class="mt-sdiv"><div class="mt-sdiv-lbl">Drawdown Scaling</div><div class="mt-sdiv-line"></div></div>
-      <div class="mt-card mb12" style="background:var(--surface2);">
-        <div class="mt-g5">
-          ${['0%→-3%','-3%→-5%','-5%→-8%','-8%→-10%','>-10%'].map((l,i)=>
-            `<div class="mt-field"><label>${l}</label><input type="number" id="mt-p-dd${i+1}" class="mt-input" step="0.05"></div>`
-          ).join('')}
+
+      <!-- BLOQUE 2: Motor CORE -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:14px;">
+        <div style="font-family:var(--mono);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:var(--text2);margin-bottom:14px;">2 · Motor CORE</div>
+
+        <!-- Universo -->
+        <div class="mt-field mb12">
+          <label>Universo extra (además de VTI · VEU · IEF · BNDX · VNQ · VNQI · GLD · SLV · USO · SPY · HYG · EURUSD=X)</label>
+          <input type="text" id="mt-p-core-universe" class="mt-input" placeholder="Tickers adicionales separados por coma, ej: QQQ, IEMG">
+          <div style="font-size:9px;color:var(--text3);margin-top:3px;">El universo base es fijo. Añade aquí tickers extra que se tratarán como RV por defecto.</div>
+        </div>
+
+        <!-- Reglas de construcción -->
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;">
+          <div class="mt-field">
+            <label>Score mínimo de entrada</label>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <input type="number" id="mt-p-core-threshold" class="mt-input" value="6" min="0" max="8" step="1">
+              <span style="font-family:var(--mono);font-size:11px;color:var(--text3);white-space:nowrap;">/ 8</span>
+            </div>
+            <div style="font-size:9px;color:var(--text3);margin-top:3px;">Señales mínimas para entrar en el portfolio CORE.</div>
+          </div>
+          <div class="mt-field">
+            <label>Peso máximo por activo CORE</label>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <input type="number" id="mt-p-core-maxw" class="mt-input" value="40" min="10" max="100" step="5">
+              <span style="font-family:var(--mono);font-size:11px;color:var(--text3);white-space:nowrap;">% budget</span>
+            </div>
+            <div style="font-size:9px;color:var(--text3);margin-top:3px;">Prevalece el mínimo entre este límite y el límite global de activo.</div>
+          </div>
+          <div class="mt-field">
+            <label>Ventana de volatilidad</label>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <input type="number" id="mt-p-vol-window" class="mt-input" value="60" min="20" max="252" step="5">
+              <span style="font-family:var(--mono);font-size:11px;color:var(--text3);white-space:nowrap;">sesiones</span>
+            </div>
+            <div style="font-size:9px;color:var(--text3);margin-top:3px;">Período para calcular la volatilidad de ponderación.</div>
+          </div>
+        </div>
+        <div style="margin-top:10px;display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--surface2);border-radius:6px;">
+          <span style="font-family:var(--mono);font-size:9px;color:var(--text3);">Método de ponderación:</span>
+          <span style="font-family:var(--mono);font-size:9px;font-weight:700;color:var(--text2);">Inversa de volatilidad</span>
+          <span style="font-family:var(--mono);font-size:8px;color:var(--text3);">(único método disponible)</span>
         </div>
       </div>
+
+      <!-- BLOQUE 3: Risk Management -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:14px;">
+        <div style="font-family:var(--mono);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:var(--text2);margin-bottom:14px;">3 · Risk Management</div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+          <div class="mt-field">
+            <label>Riesgo base / operación (% NAV)</label>
+            <input type="number" id="mt-p-trade" class="mt-input" step="0.25">
+            <div style="font-size:9px;color:var(--text3);margin-top:3px;">Capital en riesgo por operación antes del DD scaling.</div>
+          </div>
+          <div>
+            <div style="font-size:9px;color:var(--text3);margin-bottom:8px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;">Límites de riesgo acumulado</div>
+            <div style="background:var(--surface2);border-radius:8px;padding:12px 14px;">
+              <div style="display:flex;align-items:baseline;gap:6px;margin-bottom:10px;">
+                <span style="font-family:var(--mono);font-size:9px;color:var(--text3);">CARTERA</span>
+                <input type="number" id="mt-p-port" class="mt-input" step="0.5" style="width:70px;padding:4px 8px;font-size:12px;">
+                <span style="font-family:var(--mono);font-size:9px;color:var(--text3);">% NAV máx.</span>
+              </div>
+              <div style="display:flex;align-items:baseline;gap:6px;margin-bottom:8px;padding-left:12px;">
+                <span style="font-family:var(--mono);font-size:9px;color:var(--text3);">↳ CORE</span>
+                <input type="number" id="mt-p-crisk" class="mt-input" step="0.25" style="width:70px;padding:4px 8px;font-size:12px;">
+                <span style="font-family:var(--mono);font-size:9px;color:var(--text3);">% NAV</span>
+              </div>
+              <div style="display:flex;align-items:baseline;gap:6px;padding-left:12px;">
+                <span style="font-family:var(--mono);font-size:9px;color:var(--text3);">↳ SAT</span>
+                <input type="number" id="mt-p-srisk" class="mt-input" step="0.25" style="width:70px;padding:4px 8px;font-size:12px;">
+                <span style="font-family:var(--mono);font-size:9px;color:var(--text3);">% NAV</span>
+              </div>
+              <div style="margin-top:8px;font-size:9px;color:var(--text3);border-top:1px solid var(--border);padding-top:8px;">
+                CORE + SAT no son aditivos: manda el límite de cartera.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- BLOQUE 4: Drawdown Scaling -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:14px;">
+        <div style="font-family:var(--mono);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:var(--text2);margin-bottom:14px;">4 · Drawdown Scaling</div>
+        <div style="font-size:10px;color:var(--text3);margin-bottom:12px;">Multiplicador aplicado al riesgo base cuando el fondo está en drawdown.</div>
+
+        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:14px;">
+          ${[
+            {label:'DD 0 – 3%', id:'mt-p-dd1', color:'var(--green)'},
+            {label:'DD 3 – 5%', id:'mt-p-dd2', color:'var(--teal)'},
+            {label:'DD 5 – 8%', id:'mt-p-dd3', color:'var(--amber)'},
+            {label:'DD 8 – 10%',id:'mt-p-dd4', color:'var(--red)'},
+            {label:'DD > 10%',  id:'mt-p-dd5', color:'var(--red)'},
+          ].map(b => `
+            <div style="background:var(--surface2);border-radius:8px;padding:10px 12px;text-align:center;">
+              <div style="font-family:var(--mono);font-size:9px;color:var(--text3);margin-bottom:6px;">${b.label}</div>
+              <div style="display:flex;align-items:center;justify-content:center;gap:4px;">
+                <span style="font-family:var(--mono);font-size:13px;color:var(--text3);">×</span>
+                <input type="number" id="${b.id}" class="mt-input" step="0.05" style="width:60px;padding:4px 6px;font-size:13px;text-align:center;color:${b.color};">
+              </div>
+            </div>`).join('')}
+        </div>
+
+        <!-- Situación actual dinámica -->
+        <div id="mt-p-dd-status" style="background:var(--surface2);border-radius:8px;padding:10px 14px;font-family:var(--mono);font-size:10px;color:var(--text2);">
+          —
+        </div>
+      </div>
+
       <div style="background:rgba(251,191,36,0.06);border:1px solid rgba(251,191,36,0.2);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:10px;color:var(--text2);line-height:1.6;">
-        ⚠ Guardar crea una nueva versión de política. Las propuestas quedan vinculadas a la versión activa en el momento del cálculo.
+        ⚠ Guardar crea una nueva versión de política. Todas las propuestas quedan vinculadas a la versión activa en el momento de su cálculo.
       </div>
-      <button class="btn btn-primary" id="mt-params-save">Guardar y versionar</button>
     </div>`;
 
   // ── Tabs ──────────────────────────────────────────────────────
@@ -1469,7 +1591,37 @@ export async function render(container, { actionsSlot, savedState } = {}) {
   }
   updateAALabels();
 
-  // ── Botón Calcular CORE ───────────────────────────────────────
+  // ── Slider CORE/SAT ───────────────────────────────────────────
+  const slider = wrap.querySelector('#mt-p-core-slider');
+  function updateSliderUI(val) {
+    const sat = 100 - val;
+    const coreBar = wrap.querySelector('#mt-p-core-bar');
+    const satBar  = wrap.querySelector('#mt-p-sat-bar');
+    if (coreBar) coreBar.style.width = val + '%';
+    if (satBar)  satBar.style.width  = sat + '%';
+    const cp = wrap.querySelector('#mt-p-core-bar-pct');
+    const sp = wrap.querySelector('#mt-p-sat-bar-pct');
+    if (cp) cp.textContent = val;
+    if (sp) sp.textContent = sat;
+    const ch = wrap.querySelector('#mt-p-core');
+    const sh = wrap.querySelector('#mt-p-sat');
+    if (ch) ch.value = val;
+    if (sh) sh.value = sat;
+  }
+  slider?.addEventListener('input', () => updateSliderUI(parseInt(slider.value)));
+
+  // ── Status DD dinámico ────────────────────────────────────────
+  function updateDDStatus() {
+    const el2 = wrap.querySelector('#mt-p-dd-status');
+    if (!el2 || !STATE) return;
+    const dd = STATE.drawdownActual || 0;
+    const mult = getDDMult(dd);
+    const baseRisk = parseFloat(wrap.querySelector('#mt-p-trade')?.value || POLICY.tradeRisk*100);
+    const effective = (baseRisk * mult).toFixed(2);
+    el2.innerHTML = `<strong>Situación actual:</strong> DD ${(dd*100).toFixed(1)}% → multiplicador <strong>×${mult.toFixed(2)}</strong> → riesgo base efectivo <strong style="color:var(--amber);">${effective}% NAV</strong>`;
+  }
+  updateDDStatus();
+  wrap.querySelector('#mt-p-trade')?.addEventListener('input', updateDDStatus);
   wrap.querySelector('#mt-aa-run-btn')?.addEventListener('click', () => {
     updateAALabels();
     runAllocationEngine(wrap);
@@ -1508,25 +1660,26 @@ export async function render(container, { actionsSlot, savedState } = {}) {
 
   // ── Params save ───────────────────────────────────────────────
   wrap.querySelector('#mt-params-save')?.addEventListener('click', async () => {
-    const g  = id => parseFloat(wrap.querySelector('#mt-p-'+id)?.value)||0;
-    const gs = id => (wrap.querySelector('#mt-p-'+id)?.value||'').split(',').map(s=>s.trim().toUpperCase()).filter(Boolean);
-    POLICY.corePct          = g('core')/100;
-    POLICY.satPct           = g('sat')/100;
-    POLICY.maxAssetNav      = g('asset')/100;
-    POLICY.maxSectorNav     = g('sector')/100;
-    POLICY.tradeRisk        = g('trade')/100;
-    POLICY.portRisk         = g('port')/100;
-    POLICY.coreRisk         = g('crisk')/100;
-    POLICY.satRisk          = g('srisk')/100;
-    POLICY.coreScoreThreshold = g('core-threshold');
-    POLICY.coreMaxWeight    = g('core-maxw')/100;
-    POLICY.satMaxWeight     = g('sat-maxw')/100;
-    POLICY.coreUniverse     = gs('core-universe');
-    POLICY.ddScale          = [1,2,3,4,5].map(i => parseFloat(wrap.querySelector(`#mt-p-dd${i}`)?.value)||0);
+    const g  = id => parseFloat(wrap.querySelector('#'+id)?.value)||0;
+    const gs = id => (wrap.querySelector('#'+id)?.value||'').split(',').map(s=>s.trim().toUpperCase()).filter(Boolean);
+    const corePct = g('mt-p-core');
+    POLICY.corePct            = corePct/100;
+    POLICY.satPct             = (100-corePct)/100;
+    POLICY.maxAssetNav        = g('mt-p-asset')/100;
+    POLICY.maxSectorNav       = g('mt-p-sector')/100;
+    POLICY.coreUniverse       = gs('mt-p-core-universe');
+    POLICY.coreScoreThreshold = g('mt-p-core-threshold');
+    POLICY.coreMaxWeight      = g('mt-p-core-maxw')/100;
+    POLICY.volWindow          = g('mt-p-vol-window');
+    POLICY.tradeRisk          = g('mt-p-trade')/100;
+    POLICY.portRisk           = g('mt-p-port')/100;
+    POLICY.coreRisk           = g('mt-p-crisk')/100;
+    POLICY.satRisk            = g('mt-p-srisk')/100;
+    POLICY.ddScale            = [1,2,3,4,5].map(i => parseFloat(wrap.querySelector(`#mt-p-dd${i}`)?.value)||0);
     await UserData.set(POLICY_KEY, POLICY);
     renderAll(wrap);
     const btn = wrap.querySelector('#mt-params-save');
-    if (btn) { btn.textContent='✓ Guardado'; btn.style.color='var(--green)'; setTimeout(()=>{btn.textContent='Guardar y versionar';btn.style.color='';},2500); }
+    if (btn) { btn.textContent='✓ Guardado · v'+POLICY.version.slice(0,10); btn.style.color='var(--green)'; setTimeout(()=>{btn.textContent='💾 Guardar y versionar';btn.style.color='';},2500); }
   });
 
   // ── Refresh ───────────────────────────────────────────────────
@@ -1546,23 +1699,38 @@ export async function render(container, { actionsSlot, savedState } = {}) {
 }
 
 function renderParamsForm(el) {
-  const set = (id, v) => { const e=el.querySelector('#mt-p-'+id); if(e) e.value=v; };
-  set('core',  (POLICY.corePct*100).toFixed(0));
-  set('sat',   (POLICY.satPct*100).toFixed(0));
-  set('asset', (POLICY.maxAssetNav*100).toFixed(0));
-  set('sector',(POLICY.maxSectorNav*100).toFixed(0));
-  set('trade', (POLICY.tradeRisk*100).toFixed(2));
-  set('port',  (POLICY.portRisk*100).toFixed(0));
-  set('crisk', (POLICY.coreRisk*100).toFixed(2));
-  set('srisk', (POLICY.satRisk*100).toFixed(2));
-  set('core-threshold', POLICY.coreScoreThreshold ?? 6);
-  set('core-maxw',     ((POLICY.coreMaxWeight ?? 0.40)*100).toFixed(0));
-  set('sat-maxw',      ((POLICY.satMaxWeight  ?? 0.40)*100).toFixed(0));
-  set('core-universe', (POLICY.coreUniverse || ['VTI','VEU','IEF','BNDX']).join(', '));
-  set('sat-universe',  (POLICY.satUniverse  || []).join(', '));
-  POLICY.ddScale.forEach((v,i) => { const e=el.querySelector(`#mt-p-dd${i+1}`); if(e) e.value=v.toFixed(2); });
-  const pv = el.querySelector('#mt-policy-version'); if(pv) pv.textContent=POLICY.version;
-  const pu = el.querySelector('#mt-policy-updated'); if(pu) pu.textContent=POLICY.updatedAt?new Date(POLICY.updatedAt).toLocaleString('es-ES'):'—';
+  const set = (id, v) => { const e=el.querySelector('#'+id); if(e) e.value=v; };
+  const corePct = Math.round(POLICY.corePct*100);
+  const satPct  = 100 - corePct;
+  const slider = el.querySelector('#mt-p-core-slider');
+  if (slider) slider.value = corePct;
+  const cp = el.querySelector('#mt-p-core-bar-pct'); if (cp) cp.textContent = corePct;
+  const sp = el.querySelector('#mt-p-sat-bar-pct');  if (sp) sp.textContent = satPct;
+  const cb = el.querySelector('#mt-p-core-bar');     if (cb) cb.style.width = corePct + '%';
+  const sb = el.querySelector('#mt-p-sat-bar');      if (sb) sb.style.width = satPct + '%';
+  set('mt-p-core',           corePct);
+  set('mt-p-sat',            satPct);
+  set('mt-p-asset',          (POLICY.maxAssetNav*100).toFixed(0));
+  set('mt-p-sector',         (POLICY.maxSectorNav*100).toFixed(0));
+  set('mt-p-core-universe',  (POLICY.coreUniverse||[]).join(', '));
+  set('mt-p-core-threshold', POLICY.coreScoreThreshold ?? 6);
+  set('mt-p-core-maxw',      ((POLICY.coreMaxWeight??0.40)*100).toFixed(0));
+  set('mt-p-vol-window',     POLICY.volWindow ?? 60);
+  set('mt-p-trade',          (POLICY.tradeRisk*100).toFixed(2));
+  set('mt-p-port',           (POLICY.portRisk*100).toFixed(0));
+  set('mt-p-crisk',          (POLICY.coreRisk*100).toFixed(2));
+  set('mt-p-srisk',          (POLICY.satRisk*100).toFixed(2));
+  POLICY.ddScale.forEach((v,i) => set(`mt-p-dd${i+1}`, v.toFixed(2)));
+  const pv = el.querySelector('#mt-policy-version'); if(pv) pv.textContent = POLICY.version;
+  const pu = el.querySelector('#mt-policy-updated'); if(pu) pu.textContent = POLICY.updatedAt ? new Date(POLICY.updatedAt).toLocaleString('es-ES') : 'Sin guardar';
+  // DD status
+  const ddSt = el.querySelector('#mt-p-dd-status');
+  if (ddSt && STATE) {
+    const dd = STATE.drawdownActual || 0;
+    const mult = getDDMult(dd);
+    const base = POLICY.tradeRisk*100;
+    ddSt.innerHTML = `<strong>Situación actual:</strong> DD ${(dd*100).toFixed(1)}% → multiplicador <strong>×${mult.toFixed(2)}</strong> → riesgo base efectivo <strong style="color:var(--amber);">${(base*mult).toFixed(2)}% NAV</strong>`;
+  }
 }
 
 function renderAll(el) {
