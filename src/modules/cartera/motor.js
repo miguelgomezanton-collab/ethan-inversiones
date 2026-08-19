@@ -571,102 +571,139 @@ async function runAllocationEngine(el) {
   renderCoreEngine(el, { coreData, decision, decisionLabel, rvScore, rfScore, coreThreshold, cashPct, investedPct, corePositions, scoreMedio, coreBudget, nav });
 }
 
+// ── Helpers visuales idénticos al módulo AA antiguo ─────────────
+const AA_PALETTE = { RV:'#40d9c0', RF:'#5fa8e0', REIT:'#a78bfa', GOLD:'#fbbf24', SILVER:'#9ca3af', OIL:'#f47174', Cash:'#3d6460' };
+const AA_CAT_COLORS = { RV:'#40d9c0', RF:'#5fa8e0', REIT:'#a78bfa', Commodity:'#fbbf24', Otro:'#9ca3af', Cash:'#3d6460' };
+const AA_CAT_LABELS = { RV:'RV', RF:'RF', REIT:'REIT', Commodity:'Commodities', Otro:'Otro', Cash:'Cash' };
+
+function aaScoreClass(s) { return s>=6?'s-high':s>=4?'s-mid':'s-low'; }
+
+function aaCondRow(a) {
+  if (!a.mensual) return '';
+  return `<div class="aa-cond-row">
+    <span class="aa-cond-mini ${a.mensual.macd?'ok':''}">M·MACD</span>
+    <span class="aa-cond-mini ${a.mensual.s89?'ok':''}">M·S89</span>
+    <span class="aa-cond-mini ${a.mensual.rsi?'ok':''}">M·RSI</span>
+    <span class="aa-cond-mini ${a.mensual.precio?'ok':''}">M·P>EMA</span>
+    <span class="aa-cond-mini ${a.semanal.macd?'ok':''}">W·MACD</span>
+    <span class="aa-cond-mini ${a.semanal.s89?'ok':''}">W·S89</span>
+    <span class="aa-cond-mini ${a.semanal.rsi?'ok':''}">W·RSI</span>
+    <span class="aa-cond-mini ${a.semanal.precio?'ok':''}">W·P>EMA</span>
+  </div>`;
+}
+
+function aaAssetCard(a, selected) {
+  return `<div class="aa-asset-card ${selected?'selected':''}">
+    <div class="aa-asset-top">
+      <div>
+        <div class="aa-asset-ticker">${a.ticker.replace('=X','')}</div>
+        <div class="aa-asset-region">${a.type||''}</div>
+      </div>
+      <div class="aa-asset-score ${aaScoreClass(a.score)}">${a.score}<span class="aa-asset-score-max">/8</span></div>
+    </div>
+    ${aaCondRow(a)}
+  </div>`;
+}
+
+function aaSizingBlock(sizing, coreBudget, nav) {
+  if (!sizing || sizing.positions.length === 0) {
+    return `<div class="aa-sizing-block">
+      <div class="section-title">Cartera CORE <span class="count">inversa de volatilidad</span></div>
+      <div class="aa-cash-banner">
+        <div class="aa-cash-icon">💵</div>
+        <div>
+          <div class="aa-cash-title">100% Cash · En espera de señal</div>
+          <div class="aa-cash-desc">Ningún activo alcanza score ≥${POLICY.coreScoreThreshold??6}/8. Mantener liquidez hasta que mejoren las condiciones.</div>
+        </div>
+      </div>
+    </div>`;
+  }
+  const segments = [
+    ...sizing.positions.map(p => ({ label:p.ticker, pct:p.weightPct, color:AA_PALETTE[p.type]||'var(--teal)' })),
+    ...(sizing.cashPct>0.5 ? [{ label:'CASH', pct:sizing.cashPct, color:AA_PALETTE.Cash }] : [])
+  ];
+  const barHTML = segments.map(s =>
+    `<div class="aa-sizing-seg" style="width:${s.pct.toFixed(1)}%;background:${s.color};" title="${s.label}: ${s.pct.toFixed(1)}%"></div>`
+  ).join('');
+  const cardsHTML = sizing.positions.map(p => `
+    <div class="aa-sizing-card">
+      <div class="aa-sizing-card-top">
+        <span class="aa-sizing-dot" style="background:${AA_PALETTE[p.type]||'var(--teal)'}"></span>
+        <span class="aa-sizing-ticker">${p.ticker}</span>
+      </div>
+      <div class="aa-sizing-pct">${p.weightPct.toFixed(1)}<span class="aa-sizing-pct-sym">%</span></div>
+      <div style="font-family:var(--mono);font-size:10px;color:var(--teal);margin-top:3px;">${fmtE(coreBudget*p.weightPct/100)}</div>
+      <div class="aa-sizing-meta">score ${p.score}/8</div>
+      <div class="aa-sizing-meta-vol">vol 60d: ${p.vol?(p.vol*100).toFixed(2)+'%/día':'—'}</div>
+    </div>`
+  ).join('') + (sizing.cashPct>0.5 ? `
+    <div class="aa-sizing-card cash">
+      <div class="aa-sizing-card-top">
+        <span class="aa-sizing-dot" style="background:var(--text3)"></span>
+        <span class="aa-sizing-ticker">CASH</span>
+      </div>
+      <div class="aa-sizing-pct" style="color:var(--text3)">${sizing.cashPct.toFixed(1)}<span class="aa-sizing-pct-sym">%</span></div>
+      <div style="font-family:var(--mono);font-size:10px;color:var(--text3);margin-top:3px;">${fmtE(coreBudget*sizing.cashPct/100)}</div>
+      <div class="aa-sizing-meta">convicción media ${sizing.scoreMedio.toFixed(1)}/8</div>
+    </div>` : '');
+  return `<div class="aa-sizing-block">
+    <div class="section-title">Cartera CORE <span class="count">inversa de volatilidad · score≥${POLICY.coreScoreThreshold??6}</span></div>
+    <div class="aa-sizing-layout">
+      <div class="aa-sizing-main">
+        <div class="aa-sizing-bar">${barHTML}</div>
+        <div class="aa-sizing-grid">${cardsHTML}</div>
+        <div class="aa-sizing-note">Menos volátil → más peso (desviación estándar 60 sesiones). Cash% = (8 − score medio) / 8. Tope: ${Math.round((POLICY.coreMaxWeight||0.4)*100)}% por activo. Budget CORE: ${fmtE(coreBudget)}</div>
+      </div>
+    </div>
+  </div>`;
+}
+
 function renderCoreEngine(el, { coreData, decision, decisionLabel, rvScore, rfScore, coreThreshold, cashPct, investedPct, corePositions, scoreMedio, coreBudget, nav }) {
   const coreEl = el.querySelector('#mt-aa-core-results');
   if (!coreEl) return;
 
-  const decColor = decision==='RV' ? 'var(--teal)' : 'var(--blue)';
-  const cashEur  = coreBudget * cashPct / 100;
-  const palette  = { RV:'#40d9c0', RF:'#5fa8e0', REIT:'#a78bfa', GOLD:'#fbbf24', SILVER:'#9ca3af', OIL:'#f47174' };
+  const decColor = decision==='RV' ? 'var(--green)' : 'var(--blue)';
+  const decClass = decision==='RV' ? 'green' : decision==='RF' ? 'blue' : 'amber';
 
-  // Barra de distribución
-  const segments = [
-    ...corePositions.map(p => ({ label:p.ticker, pct:p.weightPct, color:palette[p.type]||'var(--teal)' })),
-    ...(cashPct > 0.5 ? [{ label:'CASH', pct:cashPct, color:'var(--text3)' }] : [])
-  ];
-  const barHTML = segments.map(s =>
-    `<div class="mt-aa-seg" style="width:${s.pct.toFixed(1)}%;background:${s.color};" title="${s.label}: ${s.pct.toFixed(1)}%"></div>`
-  ).join('');
+  // Activos de allocation (RV/RF)
+  const allocationAssets = coreData.filter(a => !a.error);
+  const top2 = [...allocationAssets].sort((a,b)=>b.score-a.score).slice(0,2);
+  const rvCount = top2.filter(a=>a.type==='RV').length;
+  const rfCount = top2.filter(a=>a.type==='RF').length;
+  let rec;
+  if (rvCount===2)      rec = { label:'Renta Variable', class:'green', desc:'Los 2 más fuertes son RV' };
+  else if (rfCount===2) rec = { label:'Renta Fija',     class:'blue',  desc:'Los 2 más fuertes son RF' };
+  else                  rec = { label:'Mixto',           class:'amber', desc:'1 RF + 1 RV' };
 
-  // Cards de activos
-  const cardsHTML = corePositions.map(p => `
-    <div class="mt-aa-card">
-      <div class="mt-aa-card-top">
-        <div class="mt-aa-dot" style="background:${palette[p.type]||'var(--teal)'}"></div>
-        <span class="mt-aa-ticker">${p.ticker}</span>
-      </div>
-      <div class="mt-aa-pct">${p.weightPct.toFixed(1)}<span class="mt-aa-pct-sym">%</span></div>
-      <div style="font-family:var(--mono);font-size:10px;color:var(--teal);margin-top:5px;">${fmtE(coreBudget*p.weightPct/100)}</div>
-      <div class="mt-aa-meta">score ${p.score}/8 · vol ${p.vol?(p.vol*100).toFixed(2)+'%':'—'}</div>
-    </div>`
-  ).join('') + (cashPct > 0.5 ? `
-    <div class="mt-aa-card cash">
-      <div class="mt-aa-card-top">
-        <div class="mt-aa-dot" style="background:var(--text3)"></div>
-        <span class="mt-aa-ticker">CASH</span>
-      </div>
-      <div class="mt-aa-pct" style="color:var(--text3)">${cashPct.toFixed(1)}<span class="mt-aa-pct-sym">%</span></div>
-      <div style="font-family:var(--mono);font-size:10px;color:var(--text3);margin-top:5px;">${fmtE(cashEur)}</div>
-      <div class="mt-aa-meta">convicción media ${scoreMedio.toFixed(1)}/8</div>
-    </div>` : '');
-
-  // Señales por activo
-  const scoresHTML = coreData.map(a => {
-    if (a.error) return `<div class="mt-aa-score-card"><div class="mt-aa-card-top"><span class="mt-aa-ticker">${a.ticker}</span></div><div style="font-family:var(--mono);font-size:10px;color:var(--red);">Sin datos</div></div>`;
-    const eligible = a.type===decision && a.score>=coreThreshold;
-    const sc = a.score;
-    const scColor = sc>=6?'var(--green)':sc>=4?'var(--amber)':'var(--red)';
-    return `<div class="mt-aa-score-card ${eligible?'eligible':''}">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-        <div style="font-weight:700;">${a.ticker} <span style="font-family:var(--mono);font-size:9px;color:var(--text3);">${a.type}</span></div>
-        <span class="mt-badge ${eligible?'mt-pass':a.type===decision?'mt-warn':'mt-info'}" style="font-size:8px;">${eligible?'ELEGIBLE':a.type===decision?'BAJO SCORE':'OTRO TIPO'}</span>
-      </div>
-      <div style="font-family:var(--serif);font-size:28px;font-style:italic;font-weight:600;color:${scColor};line-height:1;">${sc}/8</div>
-      <div class="mt-aa-signal-grid" style="margin-top:8px;">
-        ${['macd','s89','rsi','precio'].flatMap(k => [
-          `<div class="mt-aa-signal ${a.mensual?.[k]?'ok':'no'}">M:${k.toUpperCase().slice(0,4)}</div>`,
-          `<div class="mt-aa-signal ${a.semanal?.[k]?'ok':'no'}">S:${k.toUpperCase().slice(0,4)}</div>`
-        ]).join('')}
-      </div>
-    </div>`;
-  }).join('');
+  const sizing = { positions: corePositions, cashPct, scoreMedio };
+  const sizingHTML = aaSizingBlock(sizing, coreBudget, nav);
 
   coreEl.innerHTML = `
-    <!-- Banner de decisión -->
-    <div class="mt-aa-decision-banner" style="background:${decColor}10;border:1px solid ${decColor}33;">
-      <div>
-        <div style="font-family:var(--mono);font-size:9px;color:var(--text3);text-transform:uppercase;margin-bottom:4px;">Decisión del motor</div>
-        <div style="font-family:var(--serif);font-size:26px;font-style:italic;font-weight:600;color:${decColor};">${decisionLabel}</div>
-        <div style="font-family:var(--mono);font-size:10px;color:var(--text2);margin-top:3px;">RV score ${rvScore.toFixed(1)}/8 · RF score ${rfScore.toFixed(1)}/8</div>
+    <div class="aa-tab-panel">
+      ${sizingHTML}
+      <div class="aa-decision-row">
+        <div class="aa-decision-card ${rec.class}">
+          <div class="aa-decision-label">Decisión de Inversión</div>
+          <div class="aa-decision-value ${rec.class}">${rec.label}</div>
+          <div class="aa-decision-desc">${rec.desc}</div>
+        </div>
+        <div class="aa-decision-card">
+          <div class="aa-decision-label">Score medio elegibles</div>
+          <div class="aa-decision-value">${scoreMedio.toFixed(1)}/8</div>
+          <div class="aa-decision-desc">Cash convicción: ${cashPct.toFixed(1)}%</div>
+        </div>
+        <div class="aa-decision-card">
+          <div class="aa-decision-label">Budget CORE disponible</div>
+          <div class="aa-decision-value" style="font-size:18px;">${fmtE(coreBudget)}</div>
+          <div class="aa-decision-desc">${(coreBudget/nav*100).toFixed(1)}% del NAV</div>
+        </div>
       </div>
-      <div style="text-align:right;">
-        <div style="font-family:var(--mono);font-size:9px;color:var(--text3);">Score medio elegibles</div>
-        <div style="font-family:var(--serif);font-size:36px;font-style:italic;font-weight:600;">${scoreMedio.toFixed(1)}<span style="font-size:18px;">/8</span></div>
-        <div style="font-family:var(--mono);font-size:9px;color:var(--text3);">Cash por convicción: ${cashPct.toFixed(1)}%</div>
+      <div class="section-title">Renta Variable vs Renta Fija <span class="count">8 señales M/S por activo</span></div>
+      <div class="aa-asset-grid">
+        ${allocationAssets.map(a => aaAssetCard(a, top2.includes(a))).join('')}
+        ${coreData.filter(a=>a.error).map(a => `<div class="aa-asset-card" style="opacity:0.4;"><div class="aa-asset-top"><div class="aa-asset-ticker">${a.ticker}</div></div><div style="font-size:10px;color:var(--red);">Sin datos</div></div>`).join('')}
       </div>
-    </div>
-
-    <!-- Scores por activo -->
-    <div class="mt-sdiv"><div class="mt-sdiv-lbl">Señales por activo (8 condiciones M/S)</div><div class="mt-sdiv-line"></div></div>
-    <div style="display:grid;grid-template-columns:repeat(${Math.min(coreData.filter(a=>!a.error).length,4)},1fr);gap:10px;margin-bottom:16px;">
-      ${scoresHTML}
-    </div>
-
-    <!-- Cartera CORE recomendada -->
-    <div class="mt-sdiv"><div class="mt-sdiv-lbl">Cartera CORE · Inversa de volatilidad</div><div class="mt-sdiv-line"></div></div>
-    ${corePositions.length === 0 ? `
-      <div style="background:var(--surface2);border-radius:10px;padding:20px;text-align:center;">
-        <div style="font-size:24px;margin-bottom:8px;">💵</div>
-        <div style="font-size:13px;font-weight:600;margin-bottom:4px;">100% Cash · En espera de señal</div>
-        <div style="font-size:11px;color:var(--text3);">Ningún activo alcanza score ≥${coreThreshold}/8. Mantener liquidez.</div>
-      </div>
-    ` : `
-      <div class="mt-aa-bar">${barHTML}</div>
-      <div class="mt-aa-cards">${cardsHTML}</div>
-      <div style="font-family:var(--mono);font-size:9px;color:var(--text3);margin-top:4px;">
-        Menos volátil → más peso (60 sesiones). Cash% = (8 − score medio) / 8. Tope: ${Math.round((POLICY.coreMaxWeight||0.4)*100)}% por activo. Budget CORE: ${fmtE(coreBudget)}
-      </div>
-    `}`;
+    </div>`;
 }
 
 function renderSatEngine(el, { satData, satPositions, satBudget, satUniverse, nav }) {
@@ -674,48 +711,51 @@ function renderSatEngine(el, { satData, satPositions, satBudget, satUniverse, na
   if (!satEl) return;
 
   if (!satUniverse.length) {
-    satEl.innerHTML = `<div style="padding:24px;text-align:center;font-family:var(--mono);font-size:11px;color:var(--text3);">Introduce tickers arriba y pulsa Calcular SAT.</div>`;
+    satEl.innerHTML = `<div class="empty" style="padding:30px 20px;"><div class="empty-title">Cartera Satélite vacía</div><div class="empty-desc">Añade al menos 2 tickers y pulsa Calcular pesos.</div></div>`;
     return;
   }
 
   if (!satPositions.length) {
-    satEl.innerHTML = `<div style="padding:24px;text-align:center;font-family:var(--mono);font-size:11px;color:var(--red);">Sin datos suficientes para calcular pesos.</div>`;
+    satEl.innerHTML = `<div class="empty" style="padding:30px 20px;"><div class="empty-title">No se pudo calcular</div><div class="empty-desc">Revisa los tickers o inténtalo de nuevo.</div></div>`;
     return;
   }
 
-  // Colores por posición
   const palette = ['#40d9c0','#a78bfa','#fbbf24','#5fa8e0','#4ade80','#f47174','#9ca3af','#fb923c'];
   const colorMap = {};
-  satPositions.forEach((p,i) => colorMap[p.ticker] = palette[i % palette.length]);
+  satPositions.forEach((p,i) => colorMap[p.ticker] = palette[i%palette.length]);
 
-  // Barra
   const barHTML = satPositions.map(p =>
-    `<div class="mt-aa-seg" style="width:${p.weightPct.toFixed(1)}%;background:${colorMap[p.ticker]};" title="${p.ticker}: ${p.weightPct.toFixed(1)}%"></div>`
+    `<div class="aa-sizing-seg" style="width:${p.weightPct.toFixed(1)}%;background:${colorMap[p.ticker]};" title="${p.ticker}: ${p.weightPct.toFixed(1)}%"></div>`
   ).join('');
 
-  // Cards
   const cardsHTML = satPositions.map(p => `
-    <div class="mt-aa-card">
-      <div class="mt-aa-card-top">
-        <div class="mt-aa-dot" style="background:${colorMap[p.ticker]}"></div>
-        <span class="mt-aa-ticker">${p.ticker}</span>
+    <div class="aa-sizing-card">
+      <div class="aa-sizing-card-top">
+        <span class="aa-sizing-dot" style="background:${colorMap[p.ticker]}"></span>
+        <span class="aa-sizing-ticker">${p.ticker}</span>
       </div>
-      <div class="mt-aa-pct">${p.weightPct.toFixed(1)}<span class="mt-aa-pct-sym">%</span></div>
-      <div style="font-family:var(--mono);font-size:10px;color:var(--purple);margin-top:5px;">${fmtE(satBudget*p.weightPct/100)}</div>
-      <div class="mt-aa-meta">vol 60d: ${p.vol?(p.vol*100).toFixed(2)+'%/día':'—'}</div>
+      <div class="aa-sizing-pct">${p.weightPct.toFixed(1)}<span class="aa-sizing-pct-sym">%</span></div>
+      <div style="font-family:var(--mono);font-size:10px;color:var(--purple);margin-top:3px;">${fmtE(satBudget*p.weightPct/100)}</div>
+      <div class="aa-sizing-meta-vol">vol 60d: ${p.vol?(p.vol*100).toFixed(2)+'%/día':'—'}</div>
     </div>`
   ).join('');
 
-  // Errores
   const failed = satData.filter(a=>a.error);
 
   satEl.innerHTML = `
-    <div class="mt-aa-bar">${barHTML}</div>
-    <div class="mt-aa-cards">${cardsHTML}</div>
-    <div style="font-family:var(--mono);font-size:9px;color:var(--text3);margin-top:4px;">
-      Inversa de volatilidad · 100% invertido · Tope ${Math.round((POLICY.satMaxWeight||0.4)*100)}% por activo · Budget SAT: ${fmtE(satBudget)}
-    </div>
-    ${failed.length ? `<div style="margin-top:8px;font-family:var(--mono);font-size:10px;color:var(--amber);">⚠ Sin datos: ${failed.map(a=>a.ticker).join(', ')}</div>` : ''}`;
+    <div class="aa-tab-panel">
+      <div class="aa-sizing-block">
+        <div class="section-title">Reparto Sugerido <span class="count">inversa de volatilidad · 100% invertido, sin cash</span></div>
+        <div class="aa-sizing-layout">
+          <div class="aa-sizing-main">
+            <div class="aa-sizing-bar">${barHTML}</div>
+            <div class="aa-sizing-grid">${cardsHTML}</div>
+            <div class="aa-sizing-note">Menos volátil → más peso (60 sesiones). Tope ${Math.round((POLICY.satMaxWeight||0.4)*100)}% por activo. Sin filtro de score. Budget SAT: ${fmtE(satBudget)}</div>
+            ${failed.length ? `<div class="aa-sizing-note" style="color:var(--amber);margin-top:6px;">⚠ Sin datos: ${failed.map(a=>a.ticker).join(', ')}</div>` : ''}
+          </div>
+        </div>
+      </div>
+    </div>`;
 }
 
 function renderAllocation(el) {
