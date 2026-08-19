@@ -149,9 +149,9 @@ async function loadState() {
       return ema;
     }
 
-    // 6. Precios actuales + stop calculado
+    // 6. Precios actuales + stop inicial vs stop activo
     const positions = await Promise.all(rawPos.map(async p => {
-      // Precio actual: misma fuente que Posiciones
+      // Precio actual: ethan_px_latest (única fuente de verdad)
       let current = p.entry || 0;
       try {
         const px = await UserData.get(`ethan_px_latest_${p.ticker}`);
@@ -161,10 +161,13 @@ async function loadState() {
         if (p.currentPrice && p.currentPrice > 0) current = p.currentPrice;
       }
 
-      // Stop activo — calcular EMA10 desde histórico de precios
-      let stop = 0;
+      // Stop inicial — el que se fijó al abrir la operación
+      const initialStop = p.entryStop || p.stopManual || 0;
+
+      // Stop activo — EMA10 calculada desde histórico (igual que Posiciones)
+      let activeStop = 0;
       if (p.stopType === 'manual' && p.stopManual > 0) {
-        stop = p.stopManual;
+        activeStop = p.stopManual;
       } else {
         try {
           const hist = await UserData.get(`ethan_px_hist_${p.ticker}`);
@@ -175,11 +178,9 @@ async function loadState() {
               const ema10d = calcEMA(closes, 10);
               const stopDiario = ema10d[ema10d.length - 1];
               if (p.stopType === 'semanal') {
-                // Resample semanal simplificado — último cierre de cada semana
                 const weeklyCloses = [];
                 let lastWeek = null;
                 dates.forEach((d, i) => {
-                  const week = d.slice(0, 7); // mes como proxy de semana
                   const monday = new Date(d);
                   const w = `${monday.getFullYear()}-W${Math.ceil(monday.getDate()/7)}`;
                   if (w !== lastWeek) { weeklyCloses.push(closes[i]); lastWeek = w; }
@@ -187,18 +188,17 @@ async function loadState() {
                 });
                 if (weeklyCloses.length >= 10) {
                   const ema10w = calcEMA(weeklyCloses, 10);
-                  stop = ema10w[ema10w.length - 1];
+                  activeStop = ema10w[ema10w.length - 1];
                 } else {
-                  stop = stopDiario;
+                  activeStop = stopDiario;
                 }
               } else {
-                stop = stopDiario;
+                activeStop = stopDiario;
               }
             }
           }
         } catch {}
-        // Fallback: entryStop si existe
-        if (!stop && p.entryStop > 0) stop = p.entryStop;
+        if (!activeStop && initialStop > 0) activeStop = initialStop;
       }
 
       const dir    = p.direction || 'alcista';
@@ -210,15 +210,47 @@ async function loadState() {
         : (current - p.entry) * shares;
       const pnlPct = cost > 0 ? pnlAbs / cost : 0;
 
-      // Bucket: usar el guardado (no inferir de direction)
+      // Riesgo inicial = distancia entrada → stop inicial × shares
+      const initialRisk = initialStop > 0
+        ? Math.abs(p.entry - initialStop) * shares
+        : 0;
+
+      // Capital actualmente en riesgo:
+      // LONG: si activeStop >= entry → €0 (stop en beneficio, capital protegido)
+      //       si activeStop <  entry → (entry - activeStop) × shares
+      // SHORT: si activeStop <= entry → €0
+      //        si activeStop >  entry → (activeStop - entry) × shares
+      let capitalAtRisk = 0;
+      if (activeStop > 0) {
+        if (dir === 'bajista') {
+          capitalAtRisk = activeStop > p.entry ? (activeStop - p.entry) * shares : 0;
+        } else {
+          capitalAtRisk = activeStop < p.entry ? (p.entry - activeStop) * shares : 0;
+        }
+      }
+
+      // P&L at Risk = beneficio/valor actual que retrocedería hasta el stop
+      // LONG: (current - activeStop) × shares  (siempre ≥ 0 si stop < current)
+      // SHORT: (activeStop - current) × shares
+      let pnlAtRisk = 0;
+      if (activeStop > 0 && current > 0) {
+        if (dir === 'bajista') {
+          pnlAtRisk = Math.max(0, (activeStop - current) * shares);
+        } else {
+          pnlAtRisk = Math.max(0, (current - activeStop) * shares);
+        }
+      }
+
       const bucket = p.bucket || 'sat';
+      const sector = p.sector || sectorMap[p.ticker?.toUpperCase()] || 'desconocido';
 
-      // Sector: posición → watchlist → desconocido
-      const sector = p.sector
-        || sectorMap[p.ticker?.toUpperCase()]
-        || 'desconocido';
-
-      return { ...p, current, pnlPct, pnlAbs, cost, mktVal, bucket, sector, stop, dir, shares };
+      return {
+        ...p, current, pnlPct, pnlAbs, cost, mktVal,
+        bucket, sector, dir, shares,
+        initialStop, activeStop, initialRisk, capitalAtRisk, pnlAtRisk,
+        // stop para compatibilidad con el resto del código
+        stop: activeStop,
+      };
     }));
 
     // 7. NAV = capital inicial + P&L realizado + P&L no realizado
@@ -235,16 +267,9 @@ async function loadState() {
       sectors[p.sector] = (sectors[p.sector]||0) + p.mktVal;
     });
 
-    // 8. Riesgo abierto = pérdida potencial desde precio actual hasta stop
-    const openRisk = positions.reduce((s,p) => {
-      if (!p.stop || p.stop <= 0 || !p.current || p.current <= 0) return s;
-      // LONG: riesgo = (current - stop) × shares si stop < current
-      // SHORT: riesgo = (stop - current) × shares si stop > current
-      const riskPerShare = p.dir === 'bajista'
-        ? Math.max(0, p.stop - p.current)
-        : Math.max(0, p.current - p.stop);
-      return s + riskPerShare * p.shares;
-    }, 0);
+    // 8. Riesgo abierto = suma de capitalAtRisk de todas las posiciones
+    // Si stop >= entry (LONG) o stop <= entry (SHORT): capital en riesgo = 0
+    const openRisk = positions.reduce((s,p) => s + (p.capitalAtRisk||0), 0);
 
     // 9. Drawdown desde el fondo — HWM = max(hwmHistórico, navActual)
     const fondo  = await UserData.get('ethan_fondo');
@@ -308,26 +333,30 @@ function renderState(el) {
   const posEl = el.querySelector('#mt-positions');
   posEl.innerHTML = !positions.length
     ? `<div style="text-align:center;padding:24px;font-family:var(--mono);font-size:11px;color:var(--text3);">Sin posiciones abiertas · Cash ${(cash/nav*100).toFixed(1)}%</div>`
-    : `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:11px;min-width:680px;">
+    : `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:11px;min-width:860px;">
         <thead><tr style="border-bottom:1px solid var(--border);">
-          ${['TICKER','DIR','ENTRADA','ACTUAL','P&L%','STOP','RIESGO€','% NAV','BUCKET'].map(h=>
-            `<th style="font-family:var(--mono);font-size:9px;text-transform:uppercase;color:var(--text3);padding:7px 10px;text-align:${['TICKER','DIR','BUCKET'].includes(h)?'left':'right'};">${h}</th>`
+          ${['TICKER','DIR','ENTRADA','ACTUAL','P&L%','STOP INICIAL','STOP ACTIVO','CAP. EN RIESGO','P&L AT RISK','% NAV','BUCKET'].map(h=>
+            `<th style="font-family:var(--mono);font-size:8px;text-transform:uppercase;color:var(--text3);padding:7px 8px;text-align:${['TICKER','DIR','BUCKET'].includes(h)?'left':'right'};">${h}</th>`
           ).join('')}
         </tr></thead>
         <tbody>
           ${positions.map(p => {
-            const riskE = p.stop>0 ? Math.abs(p.current-p.stop)/p.current*p.mktVal : 0;
-            const pctN  = p.mktVal/nav;
+            const pctN = p.mktVal/nav;
+            const stopColor = p.activeStop>0
+              ? (p.dir==='bajista'?(p.activeStop<=p.current?'var(--green)':'var(--red)'):(p.activeStop>=p.entry?'var(--green)':'var(--red)'))
+              : 'var(--text3)';
             return `<tr style="border-bottom:1px solid var(--border);">
-              <td style="padding:8px 10px;font-weight:700;">${p.ticker}</td>
-              <td style="padding:8px 10px;"><span class="mt-badge ${p.dir==='bajista'?'mt-fail':'mt-pass'}" style="font-size:8px;">${p.dir==='bajista'?'SHORT':'LONG'}</span></td>
-              <td style="padding:8px 10px;text-align:right;font-family:var(--mono);">$${p.entry.toFixed(2)}</td>
-              <td style="padding:8px 10px;text-align:right;font-family:var(--mono);">$${p.current.toFixed(2)}</td>
-              <td style="padding:8px 10px;text-align:right;font-family:var(--mono);color:${col(p.pnlPct)};">${fmtP(p.pnlPct,2)}</td>
-              <td style="padding:8px 10px;text-align:right;font-family:var(--mono);color:var(--red);">${p.stop>0?'$'+p.stop.toFixed(2):'—'}</td>
-              <td style="padding:8px 10px;text-align:right;font-family:var(--mono);color:var(--red);">${p.stop>0?fmtE(riskE):'—'}</td>
-              <td style="padding:8px 10px;text-align:right;font-family:var(--mono);">${(pctN*100).toFixed(1)}%</td>
-              <td style="padding:8px 10px;"><span style="font-family:var(--mono);font-size:9px;color:${p.bucket==='core'?'var(--teal)':'var(--purple)'};">${p.bucket.toUpperCase()}</span></td>
+              <td style="padding:8px;font-weight:700;">${p.ticker}</td>
+              <td style="padding:8px;"><span class="mt-badge ${p.dir==='bajista'?'mt-fail':'mt-pass'}" style="font-size:8px;">${p.dir==='bajista'?'SHORT':'LONG'}</span></td>
+              <td style="padding:8px;text-align:right;font-family:var(--mono);">$${p.entry.toFixed(2)}</td>
+              <td style="padding:8px;text-align:right;font-family:var(--mono);">$${p.current.toFixed(2)}</td>
+              <td style="padding:8px;text-align:right;font-family:var(--mono);color:${col(p.pnlPct)};">${fmtP(p.pnlPct,2)}</td>
+              <td style="padding:8px;text-align:right;font-family:var(--mono);color:var(--text3);">${p.initialStop>0?'$'+p.initialStop.toFixed(2):'—'}</td>
+              <td style="padding:8px;text-align:right;font-family:var(--mono);color:${stopColor};">${p.activeStop>0?'$'+p.activeStop.toFixed(2):'—'}</td>
+              <td style="padding:8px;text-align:right;font-family:var(--mono);color:${p.capitalAtRisk>0?'var(--red)':'var(--green)'};">${p.capitalAtRisk>0?fmtE(p.capitalAtRisk):'€0 ✓'}</td>
+              <td style="padding:8px;text-align:right;font-family:var(--mono);color:var(--amber);">${p.pnlAtRisk>0?fmtE(p.pnlAtRisk):'—'}</td>
+              <td style="padding:8px;text-align:right;font-family:var(--mono);">${(pctN*100).toFixed(1)}%</td>
+              <td style="padding:8px;"><span style="font-family:var(--mono);font-size:9px;color:${p.bucket==='core'?'var(--teal)':'var(--purple)'};">${p.bucket.toUpperCase()}</span></td>
             </tr>`;
           }).join('')}
         </tbody>
