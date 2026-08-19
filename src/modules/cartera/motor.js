@@ -22,12 +22,9 @@ const POLICY_DEFAULT = {
   maxAssetNav: 0.20, maxSectorNav: 0.35,
   tradeRisk: 0.015, portRisk: 0.06, coreRisk: 0.03, satRisk: 0.04,
   ddScale: [1.00, 0.80, 0.60, 0.40, 0.25],
-  // Asset Allocation — universo CORE y parámetros
   coreUniverse: ['VTI','VEU','IEF','BNDX'],
   coreScoreThreshold: 6,
   coreMaxWeight: 0.40,
-  // Asset Allocation — universo Satélite
-  satUniverse: [],
   satMaxWeight: 0.40,
   updatedAt: null,
 };
@@ -537,28 +534,11 @@ async function runAllocationEngine(el) {
   };
   await saveAASnapshot(snapshot);
 
-  // ── SATÉLITE ENGINE ───────────────────────────────────────────
-  const satUniverse = POLICY.satUniverse || [];
-  const satMaxW = POLICY.satMaxWeight ?? 0.40;
-  let satData = [];
-  if (satUniverse.length > 0) {
-    const satEl2 = el.querySelector('#mt-aa-sat-results');
-    if (satEl2) satEl2.innerHTML = `<div class="mt-loader"><div class="mt-loader-ring"></div>Calculando señales Satélite (${satUniverse.join(', ')})...</div>`;
-    for (const ticker of satUniverse) {
-      try {
-        const raw = await mtFetchData(ticker);
-        const analysis = mtAnalyzeAsset(raw);
-        satData.push({ ticker, ...analysis });
-      } catch(e) {
-        satData.push({ ticker, error: e.message, score: 0 });
-      }
-    }
-  }
-  const satPositions = mtInverseVol(satData.filter(a=>!a.error), satMaxW, 100);
+  // ── SATÉLITE ENGINE — se ejecuta por separado desde el botón inline ──
+  // (no se ejecuta aquí, el usuario introduce los tickers manualmente)
 
-  // ── RENDER ────────────────────────────────────────────────────
+  // ── RENDER CORE ────────────────────────────────────────────────
   renderCoreEngine(el, { coreData, decision, decisionLabel, rvScore, rfScore, coreThreshold, cashPct, investedPct, corePositions, scoreMedio, coreBudget, nav });
-  renderSatEngine(el, { satData, satPositions, satBudget, satUniverse, nav });
 }
 
 function renderCoreEngine(el, { coreData, decision, decisionLabel, rvScore, rfScore, coreThreshold, cashPct, investedPct, corePositions, scoreMedio, coreBudget, nav }) {
@@ -1144,8 +1124,15 @@ export async function render(container, { actionsSlot, savedState } = {}) {
       </div>
 
       <div class="mt-sdiv"><div class="mt-sdiv-lbl">Satélite Engine · Pesos por Inversa de Volatilidad</div><div class="mt-sdiv-line"></div></div>
+      <div style="background:var(--surface2);border-radius:10px;padding:14px 16px;margin-bottom:12px;">
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
+          <input type="text" id="mt-aa-sat-input" class="mt-input" placeholder="EXPD, XLI, XLV, VLO (separados por coma)" style="flex:1;text-transform:uppercase;">
+          <button class="btn btn-primary" id="mt-aa-sat-btn" style="white-space:nowrap;">▶ Calcular SAT</button>
+        </div>
+        <div style="font-size:9px;color:var(--text3);font-family:var(--mono);">Introduce los tickers de tu universo Satélite. Se calculan pesos por inversa de volatilidad con tope del ${Math.round((POLICY.satMaxWeight??0.40)*100)}% por activo. 100% invertido.</div>
+      </div>
       <div id="mt-aa-sat-results" style="font-family:var(--mono);font-size:11px;color:var(--text3);padding:20px;text-align:center;">
-        Pulsa Calcular para ejecutar el motor Satélite.
+        Introduce tickers y pulsa Calcular SAT.
       </div>
     </div>
 
@@ -1241,12 +1228,12 @@ export async function render(container, { actionsSlot, savedState } = {}) {
         <div class="mt-field">
           <label>Universo CORE (tickers separados por coma)</label>
           <input type="text" id="mt-p-core-universe" class="mt-input" placeholder="VTI, VEU, IEF, BNDX" value="VTI, VEU, IEF, BNDX">
-          <div style="font-size:9px;color:var(--text3);margin-top:3px;">Por defecto: VTI, VEU, IEF, BNDX. Los que terminan en bond/BND/IEF/TLT se tratan como RF, el resto como RV.</div>
+          <div style="font-size:9px;color:var(--text3);margin-top:3px;">Por defecto: VTI, VEU, IEF, BNDX. Los que terminan en BND/IEF/TLT se tratan como RF, el resto como RV.</div>
         </div>
         <div class="mt-field">
-          <label>Universo Satélite (tickers separados por coma)</label>
-          <input type="text" id="mt-p-sat-universe" class="mt-input" placeholder="EXPD, XLI, XLV, VLO">
-          <div style="font-size:9px;color:var(--text3);margin-top:3px;">Selección libre. 100% invertido por inversa de volatilidad con tope por activo.</div>
+          <label>Máx. peso por activo CORE (%)</label>
+          <input type="number" id="mt-p-core-maxw" class="mt-input" value="40">
+          <div style="font-size:9px;color:var(--text3);margin-top:3px;">Tope de concentración por activo en la cartera CORE.</div>
         </div>
       </div>
       <div class="mt-sdiv"><div class="mt-sdiv-lbl">Risk Management</div><div class="mt-sdiv-line"></div></div>
@@ -1284,9 +1271,37 @@ export async function render(container, { actionsSlot, savedState } = {}) {
     });
   });
 
-  // ── Botón Calcular AA ─────────────────────────────────────────
+  // ── Botón Calcular AA CORE ────────────────────────────────────
   wrap.querySelector('#mt-aa-run-btn')?.addEventListener('click', () => {
     runAllocationEngine(wrap);
+  });
+
+  // ── Botón Calcular SAT inline ─────────────────────────────────
+  wrap.querySelector('#mt-aa-sat-btn')?.addEventListener('click', async () => {
+    const input = wrap.querySelector('#mt-aa-sat-input')?.value || '';
+    const tickers = input.split(',').map(s=>s.trim().toUpperCase()).filter(Boolean);
+    if (!tickers.length) { alert('Introduce al menos un ticker.'); return; }
+    const satEl = wrap.querySelector('#mt-aa-sat-results');
+    if (satEl) satEl.innerHTML = `<div class="mt-loader"><div class="mt-loader-ring"></div>Calculando señales Satélite (${tickers.join(', ')})...</div>`;
+    const satBudget = (STATE?.nav||0) * POLICY.satPct;
+    const satMaxW   = POLICY.satMaxWeight ?? 0.40;
+    const satData = [];
+    for (const ticker of tickers) {
+      try {
+        const raw = await mtFetchData(ticker);
+        const analysis = mtAnalyzeAsset(raw);
+        satData.push({ ticker, ...analysis });
+      } catch(e) {
+        satData.push({ ticker, error: e.message });
+      }
+    }
+    const satPositions = mtInverseVol(satData.filter(a=>!a.error), satMaxW, 100);
+    renderSatEngine(wrap, { satData, satPositions, satBudget, satUniverse: tickers, nav: STATE?.nav||0 });
+  });
+
+  // Enter en el input SAT
+  wrap.querySelector('#mt-aa-sat-input')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') wrap.querySelector('#mt-aa-sat-btn')?.click();
   });
 
   // ── Sizing button ─────────────────────────────────────────────
@@ -1308,7 +1323,6 @@ export async function render(container, { actionsSlot, savedState } = {}) {
     POLICY.coreMaxWeight    = g('core-maxw')/100;
     POLICY.satMaxWeight     = g('sat-maxw')/100;
     POLICY.coreUniverse     = gs('core-universe');
-    POLICY.satUniverse      = gs('sat-universe');
     POLICY.ddScale          = [1,2,3,4,5].map(i => parseFloat(wrap.querySelector(`#mt-p-dd${i}`)?.value)||0);
     await UserData.set(POLICY_KEY, POLICY);
     renderAll(wrap);
