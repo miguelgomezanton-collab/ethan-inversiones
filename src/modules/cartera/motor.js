@@ -151,15 +151,9 @@ async function loadState() {
 
     // 6. Precios actuales + stop inicial vs stop activo
     const positions = await Promise.all(rawPos.map(async p => {
-      // Precio actual: ethan_px_latest (única fuente de verdad)
-      let current = p.entry || 0;
-      try {
-        const px = await UserData.get(`ethan_px_latest_${p.ticker}`);
-        if (px?.close && px.close > 0) current = px.close;
-        else if (p.currentPrice && p.currentPrice > 0) current = p.currentPrice;
-      } catch {
-        if (p.currentPrice && p.currentPrice > 0) current = p.currentPrice;
-      }
+      // Precio actual: leer el que calculó y persistió cartera.js (única fuente de verdad)
+      // Prioridad: currentPrice persistido → entry como fallback
+      let current = p.currentPrice > 0 ? p.currentPrice : (p.entry || 0);
 
       // Stop inicial — el que se fijó al abrir la operación
       const initialStop = p.entryStop || p.stopManual || 0;
