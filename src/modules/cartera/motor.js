@@ -876,28 +876,34 @@ function renderAllocation(el) {
 
 function renderRiskBudget(el) {
   if (!STATE) return;
-  const { nav, openRisk, drawdownActual, positions } = STATE;
-  const openRiskPct = nav>0?openRisk/nav:0;
-  const ddMult      = getDDMult(drawdownActual);
+  const { nav, drawdownActual, positions } = STATE;
+  const ddMult     = getDDMult(drawdownActual);
+  const effectRisk = POLICY.tradeRisk * ddMult;
+
+  // ── Fuente única: capitalAtRisk por posición ──────────────────
+  const openRiskCore   = positions.filter(p=>p.bucket==='core').reduce((s,p)=>s+(p.capitalAtRisk||0),0);
+  const openRiskSat    = positions.filter(p=>p.bucket==='sat').reduce((s,p)=>s+(p.capitalAtRisk||0),0);
+  const openRiskGlobal = openRiskCore + openRiskSat;
+
+  const openRiskPct    = nav>0 ? openRiskGlobal/nav : 0;
+  const openCorePct    = nav>0 ? openRiskCore/nav   : 0;
+  const openSatPct     = nav>0 ? openRiskSat/nav    : 0;
+
   const availGlobal = Math.max(0, POLICY.portRisk - openRiskPct);
-  const effectRisk  = POLICY.tradeRisk * ddMult;
 
   const set = (id, v, c) => { const e=el.querySelector('#mt-'+id); if(!e)return; e.textContent=v; if(c)e.style.color=c; };
-  set('rb-global-used',  (openRiskPct*100).toFixed(2)+'%', openRiskPct>POLICY.portRisk?'var(--red)':'var(--green)');
+  set('rb-global-used',  (openRiskPct*100).toFixed(2)+'%', openRiskPct>POLICY.portRisk?'var(--red)':openRiskPct>POLICY.portRisk*0.7?'var(--amber)':'var(--green)');
   set('rb-global-avail', (availGlobal*100).toFixed(2)+'%', 'var(--green)');
   set('rb-global-limit', 'Límite: '+(POLICY.portRisk*100).toFixed(0)+'% NAV');
   set('rb-per-trade',    (effectRisk*100).toFixed(2)+'%',  'var(--amber)');
   set('rb-dd-mult',      `×${ddMult.toFixed(2)} · DD: ${fmtP(drawdownActual)} · Base: ${(POLICY.tradeRisk*100).toFixed(2)}%`);
   const globalBar = el.querySelector('#mt-rb-global-bar');
-  if (globalBar) { globalBar.style.width=clamp(openRiskPct/POLICY.portRisk*100,0,100).toFixed(1)+'%'; globalBar.style.background=openRiskPct>POLICY.portRisk?'var(--red)':'var(--green)'; }
+  if (globalBar) { globalBar.style.width=clamp(openRiskPct/POLICY.portRisk*100,0,100).toFixed(1)+'%'; globalBar.style.background=openRiskPct>POLICY.portRisk?'var(--red)':openRiskPct>POLICY.portRisk*0.7?'var(--amber)':'var(--green)'; }
 
-  // Por bucket
-  ['core','sat'].forEach(b => {
-    const rl = b==='core'?POLICY.coreRisk:POLICY.satRisk;
-    const orb = positions.filter(p=>p.bucket===b).reduce((s,p)=>s+(p.stop>0?Math.abs(p.current-p.stop)/p.current*p.mktVal:0),0);
-    const orPct = nav>0?orb/nav:0;
-    const avb = Math.max(0, rl-orPct);
-    const clr = b==='core'?'var(--teal)':'var(--purple)';
+  // Por bucket — desglose del mismo cálculo global
+  [['core', openCorePct, POLICY.coreRisk, 'var(--teal)'],
+   ['sat',  openSatPct,  POLICY.satRisk,  'var(--purple)']].forEach(([b, orPct, rl, clr]) => {
+    const avb = Math.max(0, rl - orPct);
     set(`rb-${b}-used`,  (orPct*100).toFixed(2)+'%');
     set(`rb-${b}-avail`, (avb*100).toFixed(2)+'%', 'var(--green)');
     set(`rb-${b}-limit`, 'Límite: '+(rl*100).toFixed(0)+'% NAV');
@@ -939,7 +945,7 @@ function renderRiskBudget(el) {
             ).join('')}
           </tr></thead>
           <tbody>${positions.map(p => {
-            const re = p.stop>0?Math.abs(p.current-p.stop)/p.current*p.mktVal:0;
+            const re = p.capitalAtRisk || 0;
             const rp = nav>0?re/nav:0;
             return `<tr style="border-bottom:1px solid var(--border);">
               <td style="padding:8px 10px;font-weight:700;">${p.ticker}</td>
