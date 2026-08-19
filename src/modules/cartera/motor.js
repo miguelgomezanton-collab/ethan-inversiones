@@ -45,8 +45,9 @@ const CSS = `
 .mt-panel.active{display:block;animation:mtFade 0.2s ease;}
 @keyframes mtFade{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:translateY(0)}}
 
-.mt-strip{display:grid;grid-template-columns:repeat(6,1fr);gap:1px;background:var(--border);border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:14px;}
-.mt-cell{background:var(--surface);padding:13px 15px;}
+.mt-strip{display:grid;grid-template-columns:repeat(6,1fr);border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:14px;}
+.mt-cell{background:var(--surface);padding:13px 15px;border-right:1px solid var(--border);}
+.mt-cell:last-child{border-right:none;}
 .mt-lbl{font-family:var(--mono);font-size:8px;color:var(--text3);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:5px;}
 .mt-val{font-family:var(--mono);font-size:14px;font-weight:700;}
 .mt-sub{font-family:var(--mono);font-size:8px;color:var(--text3);margin-top:3px;}
@@ -887,6 +888,10 @@ export async function render(container, { actionsSlot, savedState } = {}) {
   }
 
   renderAll(wrap);
+
+  return {
+    destroy() { document.getElementById('mt-css')?.remove(); }
+  };
 }
 
 function renderParamsForm(el) {
