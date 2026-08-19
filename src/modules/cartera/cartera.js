@@ -510,12 +510,20 @@ export async function render(container, { actionsSlot }) {
       try {
         const data = await fetchData(pos.ticker);
         const analysis = analyzePosition(pos, data);
-        // Persistir currentPrice para que Métricas lo lea sin llamadas de red
+        // Persistir currentPrice, stopDiario y stopSemanal para que el Motor los lea
+        let changed = false;
         if (analysis.currentPrice && analysis.currentPrice !== pos.currentPrice) {
           pos.currentPrice = analysis.currentPrice;
           pos.prevPrice = data.closes?.[data.closes.length - 2] || analysis.currentPrice;
-          await savePositions();
+          changed = true;
         }
+        if (analysis.stopDiario && analysis.stopDiario !== pos.stopDiario) {
+          pos.stopDiario  = analysis.stopDiario;
+          pos.stopSemanal = analysis.stopSemanal;
+          pos.activeStop  = analysis.activeStop;
+          changed = true;
+        }
+        if (changed) await savePositions();
         const card = document.getElementById(`poscard-${pos.ticker}`);
         if (card) card.outerHTML = renderCard(pos, analysis);
       } catch {

@@ -164,41 +164,19 @@ async function loadState() {
       // Stop inicial — el que se fijó al abrir la operación
       const initialStop = p.entryStop || p.stopManual || 0;
 
-      // Stop activo — EMA10 calculada desde histórico (igual que Posiciones)
+      // Stop activo — leer el que calculó y persistió cartera.js
+      // Prioridad: manual → activeStop persistido → stopDiario/semanal persistido → initialStop
       let activeStop = 0;
       if (p.stopType === 'manual' && p.stopManual > 0) {
         activeStop = p.stopManual;
-      } else {
-        try {
-          const hist = await UserData.get(`ethan_px_hist_${p.ticker}`);
-          if (hist && typeof hist === 'object') {
-            const dates  = Object.keys(hist).sort();
-            const closes = dates.map(d => hist[d]).filter(v => v > 0);
-            if (closes.length >= 10) {
-              const ema10d = calcEMA(closes, 10);
-              const stopDiario = ema10d[ema10d.length - 1];
-              if (p.stopType === 'semanal') {
-                const weeklyCloses = [];
-                let lastWeek = null;
-                dates.forEach((d, i) => {
-                  const monday = new Date(d);
-                  const w = `${monday.getFullYear()}-W${Math.ceil(monday.getDate()/7)}`;
-                  if (w !== lastWeek) { weeklyCloses.push(closes[i]); lastWeek = w; }
-                  else weeklyCloses[weeklyCloses.length-1] = closes[i];
-                });
-                if (weeklyCloses.length >= 10) {
-                  const ema10w = calcEMA(weeklyCloses, 10);
-                  activeStop = ema10w[ema10w.length - 1];
-                } else {
-                  activeStop = stopDiario;
-                }
-              } else {
-                activeStop = stopDiario;
-              }
-            }
-          }
-        } catch {}
-        if (!activeStop && initialStop > 0) activeStop = initialStop;
+      } else if (p.activeStop > 0) {
+        activeStop = p.activeStop;
+      } else if (p.stopType === 'semanal' && p.stopSemanal > 0) {
+        activeStop = p.stopSemanal;
+      } else if (p.stopDiario > 0) {
+        activeStop = p.stopDiario;
+      } else if (initialStop > 0) {
+        activeStop = initialStop;
       }
 
       const dir    = p.direction || 'alcista';
