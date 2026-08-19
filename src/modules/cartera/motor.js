@@ -122,10 +122,10 @@ async function loadState() {
     const savedPolicy = await UserData.get(POLICY_KEY);
     if (savedPolicy) POLICY = { ...POLICY_DEFAULT, ...savedPolicy };
 
-    // 2. Capital
+    // 2. Capital inicial por bucket
     const capA = (await UserData.get('ethan_capital_alcista')) || 0;
     const capB = (await UserData.get('ethan_capital_bajista')) || 0;
-    const nav  = capA + capB;
+    const capitalInicial = capA + capB;
 
     // 3. Posiciones abiertas
     const rawPos = (await UserData.get('ethan_positions')) || [];
@@ -134,64 +134,91 @@ async function loadState() {
     const history = (await UserData.get('ethan_positions_history')) || [];
     const pnlReal = history.reduce((s,h) => s + (h.pnlAbs||0), 0);
 
-    // 5. Precios actuales
+    // 5. Watchlist para sectores
+    const watchlist = (await UserData.get('ethan_watchlist')) || [];
+    const sectorMap = {};
+    watchlist.forEach(w => { if (w.ticker && w.sector) sectorMap[w.ticker.toUpperCase()] = w.sector; });
+
+    // 6. Precios actuales — misma fuente que Posiciones (ethan_px_latest_TICKER)
     const positions = await Promise.all(rawPos.map(async p => {
-      let current = p.currentPrice || p.entry || 0;
+      // Precio: 1º ethan_px_latest (mismo que usa Posiciones), 2º currentPrice guardado, 3º entry
+      let current = p.entry || 0;
       try {
         const px = await UserData.get(`ethan_px_latest_${p.ticker}`);
-        if (px?.close) current = px.close;
-      } catch {}
+        if (px?.close && px.close > 0) current = px.close;
+        else if (p.currentPrice && p.currentPrice > 0) current = p.currentPrice;
+      } catch {
+        if (p.currentPrice && p.currentPrice > 0) current = p.currentPrice;
+      }
+
       const dir    = p.direction || 'alcista';
-      const pnlPct = dir === 'bajista'
-        ? (p.entry - current) / p.entry
-        : (current - p.entry) / p.entry;
       const shares = p.shares || (p.cost && p.entry ? Math.round(p.cost/p.entry) : 0);
       const cost   = shares * p.entry;
       const mktVal = shares * current;
-      const pnlAbs = pnlPct * cost;
-      const bucket = p.bucket || 'sat';
-      const sector = p.sector || 'desconocido';
-      const stop   = p.stopManual || p.stopDiario || 0;
+      const pnlAbs = dir === 'bajista'
+        ? (p.entry - current) * shares
+        : (current - p.entry)  * shares;
+      const pnlPct = cost > 0 ? pnlAbs / cost : 0;
+
+      // Bucket: usar el guardado o inferir de direction
+      const bucket = p.bucket || (dir === 'bajista' ? 'sat' : 'core');
+
+      // Sector: 1º dato guardado en posición, 2º watchlist, 3º 'desconocido'
+      const sector = p.sector
+        || sectorMap[p.ticker?.toUpperCase()]
+        || 'desconocido';
+
+      // Stop: leer en orden de prioridad
+      const stop = p.stopManual > 0
+        ? p.stopManual
+        : p.stopDiario > 0 ? p.stopDiario
+        : p.stopSemanal > 0 ? p.stopSemanal
+        : 0;
+
       return { ...p, current, pnlPct, pnlAbs, cost, mktVal, bucket, sector, stop, dir, shares };
     }));
 
-    // 6. Exposiciones
-    const invested = positions.reduce((s,p) => s + p.mktVal, 0);
-    const cash     = Math.max(0, nav - invested);
-    const unrealPnl= positions.reduce((s,p) => s + p.pnlAbs, 0);
-    const buckets  = { core:0, sat:0 };
-    const sectors  = {};
+    // 7. NAV = capital inicial + P&L realizado + P&L no realizado
+    // (no usar capA+capB como NAV ya que es el capital inicial, no el valor actual)
+    const unrealPnl  = positions.reduce((s,p) => s + p.pnlAbs, 0);
+    const navActual   = capitalInicial + pnlReal + unrealPnl;
+    const invested    = positions.reduce((s,p) => s + p.mktVal, 0);
+    const cash        = Math.max(0, navActual - invested);
+
+    const buckets = { core:0, sat:0 };
+    const sectors = {};
     positions.forEach(p => {
       buckets[p.bucket] = (buckets[p.bucket]||0) + p.mktVal;
       sectors[p.sector] = (sectors[p.sector]||0) + p.mktVal;
     });
 
-    // 7. Riesgo abierto (distancia al stop)
+    // 8. Riesgo abierto = pérdida potencial desde precio actual hasta stop
     const openRisk = positions.reduce((s,p) => {
-      if (!p.stop || p.stop <= 0 || !p.current) return s;
-      const riskPct = p.dir === 'bajista'
-        ? Math.abs(p.stop - p.current) / p.current
-        : Math.abs(p.current - p.stop) / p.current;
-      return s + riskPct * p.mktVal;
+      if (!p.stop || p.stop <= 0 || !p.current || p.current <= 0) return s;
+      // LONG: riesgo = (current - stop) × shares si stop < current
+      // SHORT: riesgo = (stop - current) × shares si stop > current
+      const riskPerShare = p.dir === 'bajista'
+        ? Math.max(0, p.stop - p.current)
+        : Math.max(0, p.current - p.stop);
+      return s + riskPerShare * p.shares;
     }, 0);
 
-    // 8. Drawdown desde el fondo
-    const fondo = await UserData.get('ethan_fondo');
-    const VL0   = 100;
-    const parts = fondo?.participaciones || (nav / VL0);
-    const vlActual = parts > 0 ? nav / parts : VL0;
-    let hwmVL = VL0;
+    // 9. Drawdown desde el fondo
+    const fondo  = await UserData.get('ethan_fondo');
+    const VL0    = 100;
+    const parts  = fondo?.participaciones || (capitalInicial / VL0);
+    const vlActual = parts > 0 ? navActual / parts : VL0;
+    let hwmVL    = VL0;
     if (fondo?.movimientos) {
-      // Simplificado — el HWM real viene de la serie completa (fondo.js)
       hwmVL = Math.max(VL0, ...fondo.movimientos.map(m => m.vl||VL0));
     }
     const drawdownActual = hwmVL > 0 ? (vlActual - hwmVL) / hwmVL : 0;
     const hwm = hwmVL * parts;
 
     STATE = {
-      nav, cash, invested, unrealPnl, pnlReal,
+      nav: navActual, capitalInicial, cash, invested, unrealPnl, pnlReal,
       positions, buckets, sectors,
-      openRisk, openRiskPct: nav > 0 ? openRisk / nav : 0,
+      openRisk, openRiskPct: navActual > 0 ? openRisk / navActual : 0,
       drawdownActual, hwm, vlActual,
       timestamp: new Date().toISOString(),
     };
