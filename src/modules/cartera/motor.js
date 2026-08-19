@@ -139,9 +139,19 @@ async function loadState() {
     const sectorMap = {};
     watchlist.forEach(w => { if (w.ticker && w.sector) sectorMap[w.ticker.toUpperCase()] = w.sector; });
 
-    // 6. Precios actuales — misma fuente que Posiciones (ethan_px_latest_TICKER)
+    // Función EMA igual que cartera.js
+    function calcEMA(closes, period) {
+      const k = 2 / (period + 1);
+      const ema = [closes[0]];
+      for (let i = 1; i < closes.length; i++) {
+        ema.push(closes[i] * k + ema[i-1] * (1-k));
+      }
+      return ema;
+    }
+
+    // 6. Precios actuales + stop calculado
     const positions = await Promise.all(rawPos.map(async p => {
-      // Precio: 1º ethan_px_latest (mismo que usa Posiciones), 2º currentPrice guardado, 3º entry
+      // Precio actual: misma fuente que Posiciones
       let current = p.entry || 0;
       try {
         const px = await UserData.get(`ethan_px_latest_${p.ticker}`);
@@ -151,29 +161,62 @@ async function loadState() {
         if (p.currentPrice && p.currentPrice > 0) current = p.currentPrice;
       }
 
+      // Stop activo — calcular EMA10 desde histórico de precios
+      let stop = 0;
+      if (p.stopType === 'manual' && p.stopManual > 0) {
+        stop = p.stopManual;
+      } else {
+        try {
+          const hist = await UserData.get(`ethan_px_hist_${p.ticker}`);
+          if (hist && typeof hist === 'object') {
+            const dates  = Object.keys(hist).sort();
+            const closes = dates.map(d => hist[d]).filter(v => v > 0);
+            if (closes.length >= 10) {
+              const ema10d = calcEMA(closes, 10);
+              const stopDiario = ema10d[ema10d.length - 1];
+              if (p.stopType === 'semanal') {
+                // Resample semanal simplificado — último cierre de cada semana
+                const weeklyCloses = [];
+                let lastWeek = null;
+                dates.forEach((d, i) => {
+                  const week = d.slice(0, 7); // mes como proxy de semana
+                  const monday = new Date(d);
+                  const w = `${monday.getFullYear()}-W${Math.ceil(monday.getDate()/7)}`;
+                  if (w !== lastWeek) { weeklyCloses.push(closes[i]); lastWeek = w; }
+                  else weeklyCloses[weeklyCloses.length-1] = closes[i];
+                });
+                if (weeklyCloses.length >= 10) {
+                  const ema10w = calcEMA(weeklyCloses, 10);
+                  stop = ema10w[ema10w.length - 1];
+                } else {
+                  stop = stopDiario;
+                }
+              } else {
+                stop = stopDiario;
+              }
+            }
+          }
+        } catch {}
+        // Fallback: entryStop si existe
+        if (!stop && p.entryStop > 0) stop = p.entryStop;
+      }
+
       const dir    = p.direction || 'alcista';
       const shares = p.shares || (p.cost && p.entry ? Math.round(p.cost/p.entry) : 0);
       const cost   = shares * p.entry;
       const mktVal = shares * current;
       const pnlAbs = dir === 'bajista'
         ? (p.entry - current) * shares
-        : (current - p.entry)  * shares;
+        : (current - p.entry) * shares;
       const pnlPct = cost > 0 ? pnlAbs / cost : 0;
 
-      // Bucket: usar el guardado o inferir de direction
-      const bucket = p.bucket || (dir === 'bajista' ? 'sat' : 'core');
+      // Bucket: usar el guardado (no inferir de direction)
+      const bucket = p.bucket || 'sat';
 
-      // Sector: 1º dato guardado en posición, 2º watchlist, 3º 'desconocido'
+      // Sector: posición → watchlist → desconocido
       const sector = p.sector
         || sectorMap[p.ticker?.toUpperCase()]
         || 'desconocido';
-
-      // Stop: leer en orden de prioridad
-      const stop = p.stopManual > 0
-        ? p.stopManual
-        : p.stopDiario > 0 ? p.stopDiario
-        : p.stopSemanal > 0 ? p.stopSemanal
-        : 0;
 
       return { ...p, current, pnlPct, pnlAbs, cost, mktVal, bucket, sector, stop, dir, shares };
     }));
@@ -203,17 +246,21 @@ async function loadState() {
       return s + riskPerShare * p.shares;
     }, 0);
 
-    // 9. Drawdown desde el fondo
+    // 9. Drawdown desde el fondo — HWM = max(hwmHistórico, navActual)
     const fondo  = await UserData.get('ethan_fondo');
     const VL0    = 100;
     const parts  = fondo?.participaciones || (capitalInicial / VL0);
     const vlActual = parts > 0 ? navActual / parts : VL0;
-    let hwmVL    = VL0;
+    // HWM histórico desde los movimientos del fondo
+    let hwmVL = VL0;
     if (fondo?.movimientos) {
       hwmVL = Math.max(VL0, ...fondo.movimientos.map(m => m.vl||VL0));
     }
-    const drawdownActual = hwmVL > 0 ? (vlActual - hwmVL) / hwmVL : 0;
+    // HWM nunca puede ser menor que el VL actual
+    hwmVL = Math.max(hwmVL, vlActual);
     const hwm = hwmVL * parts;
+    // Drawdown = navActual/hwm - 1, siempre ≤ 0
+    const drawdownActual = hwm > 0 ? Math.min(0, navActual / hwm - 1) : 0;
 
     STATE = {
       nav: navActual, capitalInicial, cash, invested, unrealPnl, pnlReal,
