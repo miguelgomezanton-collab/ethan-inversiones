@@ -72,7 +72,7 @@ const CSS = `
 .mt-input:focus{outline:none;border-color:var(--teal);}
 .mt-select{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:8px 11px;color:var(--text1);font-family:var(--mono);font-size:11px;width:100%;cursor:pointer;}
 
-.mt-bar-track{height:7px;background:var(--surface2);border-radius:4px;overflow:hidden;margin:4px 0;}
+.mt-bar-track{height:7px;background:var(--surface2);border-radius:4px;overflow:hidden;margin:4px 0;position:relative;}
 .mt-bar-fill{height:100%;border-radius:4px;transition:width 0.4s ease;}
 
 .mt-badge{font-family:var(--mono);font-size:8px;font-weight:700;padding:2px 7px;border-radius:8px;display:inline-block;}
