@@ -1503,8 +1503,9 @@ export async function render(container, { actionsSlot, savedState } = {}) {
                 <input type="number" id="mt-p-srisk" class="mt-input" step="0.25" style="width:70px;padding:4px 8px;font-size:12px;">
                 <span style="font-family:var(--mono);font-size:9px;color:var(--text3);">% NAV</span>
               </div>
-              <div style="margin-top:8px;font-size:9px;color:var(--text3);border-top:1px solid var(--border);padding-top:8px;">
-                CORE + SAT no son aditivos: manda el límite de cartera.
+              <div style="margin-top:8px;border-top:1px solid var(--border);padding-top:8px;">
+                <div style="font-size:9px;color:var(--text3);margin-bottom:6px;">CORE + SAT no son aditivos: manda el límite de cartera.</div>
+                <div id="mt-p-risk-status" style="font-size:9px;color:var(--text2);line-height:1.6;">—</div>
               </div>
             </div>
           </div>
@@ -1662,20 +1663,64 @@ export async function render(container, { actionsSlot, savedState } = {}) {
   wrap.querySelector('#mt-params-save')?.addEventListener('click', async () => {
     const g  = id => parseFloat(wrap.querySelector('#'+id)?.value)||0;
     const gs = id => (wrap.querySelector('#'+id)?.value||'').split(',').map(s=>s.trim().toUpperCase()).filter(Boolean);
-    const corePct = g('mt-p-core');
+
+    // Leer valores
+    const corePct   = g('mt-p-core');
+    const satPct    = 100 - corePct;
+    const asset     = g('mt-p-asset')/100;
+    const sector    = g('mt-p-sector')/100;
+    const coreMaxW  = g('mt-p-core-maxw')/100;
+    const volWin    = g('mt-p-vol-window');
+    const trade     = g('mt-p-trade')/100;
+    const port      = g('mt-p-port')/100;
+    const coreRisk  = g('mt-p-crisk')/100;
+    const satRisk   = g('mt-p-srisk')/100;
+    const ddScale   = [1,2,3,4,5].map(i => parseFloat(wrap.querySelector(`#mt-p-dd${i}`)?.value)||0);
+
+    // ── Validaciones HARD ────────────────────────────────────────
+    const errors = [];
+    if (Math.abs(corePct + satPct - 100) > 0.1)        errors.push('CORE + SAT debe sumar exactamente 100%.');
+    if (trade > port)                                   errors.push(`Riesgo base/op. (${(trade*100).toFixed(2)}%) no puede superar el riesgo máximo de cartera (${(port*100).toFixed(2)}%).`);
+    if (coreRisk > port)                                errors.push(`Riesgo máx. CORE (${(coreRisk*100).toFixed(2)}%) no puede superar el riesgo máximo de cartera (${(port*100).toFixed(2)}%).`);
+    if (satRisk > port)                                 errors.push(`Riesgo máx. SAT (${(satRisk*100).toFixed(2)}%) no puede superar el riesgo máximo de cartera (${(port*100).toFixed(2)}%).`);
+    if (coreMaxW <= 0 || coreMaxW > 1)                 errors.push('Peso máximo CORE debe estar entre 1% y 100%.');
+    if (asset > sector)                                 errors.push(`Límite por activo (${(asset*100).toFixed(0)}% NAV) no puede superar el límite sectorial (${(sector*100).toFixed(0)}% NAV).`);
+    if (volWin < 10 || volWin > 252)                   errors.push('Ventana de volatilidad debe estar entre 10 y 252 sesiones.');
+    for (let i=1; i<ddScale.length; i++) {
+      if (ddScale[i] > ddScale[i-1] + 0.001)           errors.push(`DD Scaling debe ser decreciente: banda ${i+1} (×${ddScale[i]}) > banda ${i} (×${ddScale[i-1]}).`);
+    }
+    if (ddScale[0] > 1.001)                             errors.push('El primer multiplicador DD no puede ser mayor que 1.');
+
+    if (errors.length > 0) {
+      // Mostrar errores sin versionar
+      const errHTML = errors.map(e => `<div style="display:flex;gap:8px;"><span style="color:var(--red);">✗</span><span>${e}</span></div>`).join('');
+      const existingErr = wrap.querySelector('#mt-params-errors');
+      if (existingErr) existingErr.remove();
+      const errDiv = document.createElement('div');
+      errDiv.id = 'mt-params-errors';
+      errDiv.style.cssText = 'background:rgba(244,113,116,0.08);border:1px solid rgba(244,113,116,0.3);border-radius:8px;padding:12px 16px;margin-bottom:14px;font-size:11px;color:var(--text2);line-height:1.8;';
+      errDiv.innerHTML = `<div style="font-weight:700;color:var(--red);margin-bottom:8px;">⚠ Política no válida — no se ha guardado:</div>${errHTML}`;
+      wrap.querySelector('#mt-params-save').insertAdjacentElement('beforebegin', errDiv);
+      return;
+    }
+
+    // Limpiar errores anteriores
+    wrap.querySelector('#mt-params-errors')?.remove();
+
+    // Guardar
     POLICY.corePct            = corePct/100;
-    POLICY.satPct             = (100-corePct)/100;
-    POLICY.maxAssetNav        = g('mt-p-asset')/100;
-    POLICY.maxSectorNav       = g('mt-p-sector')/100;
+    POLICY.satPct             = satPct/100;
+    POLICY.maxAssetNav        = asset;
+    POLICY.maxSectorNav       = sector;
     POLICY.coreUniverse       = gs('mt-p-core-universe');
     POLICY.coreScoreThreshold = g('mt-p-core-threshold');
-    POLICY.coreMaxWeight      = g('mt-p-core-maxw')/100;
-    POLICY.volWindow          = g('mt-p-vol-window');
-    POLICY.tradeRisk          = g('mt-p-trade')/100;
-    POLICY.portRisk           = g('mt-p-port')/100;
-    POLICY.coreRisk           = g('mt-p-crisk')/100;
-    POLICY.satRisk            = g('mt-p-srisk')/100;
-    POLICY.ddScale            = [1,2,3,4,5].map(i => parseFloat(wrap.querySelector(`#mt-p-dd${i}`)?.value)||0);
+    POLICY.coreMaxWeight      = coreMaxW;
+    POLICY.volWindow          = volWin;
+    POLICY.tradeRisk          = trade;
+    POLICY.portRisk           = port;
+    POLICY.coreRisk           = coreRisk;
+    POLICY.satRisk            = satRisk;
+    POLICY.ddScale            = ddScale;
     await UserData.set(POLICY_KEY, POLICY);
     renderAll(wrap);
     const btn = wrap.querySelector('#mt-params-save');
@@ -1730,6 +1775,38 @@ function renderParamsForm(el) {
     const mult = getDDMult(dd);
     const base = POLICY.tradeRisk*100;
     ddSt.innerHTML = `<strong>Situación actual:</strong> DD ${(dd*100).toFixed(1)}% → multiplicador <strong>×${mult.toFixed(2)}</strong> → riesgo base efectivo <strong style="color:var(--amber);">${(base*mult).toFixed(2)}% NAV</strong>`;
+  }
+
+  // Límite efectivo CORE (mínimo entre límite interno y límite global)
+  const effEl = el.querySelector('#mt-p-effective-limit');
+  if (effEl) {
+    const corePctV  = POLICY.corePct;
+    const maxCoreW  = POLICY.coreMaxWeight ?? 0.40;
+    const maxAsset  = POLICY.maxAssetNav;
+    const limitInterno = maxCoreW * corePctV;       // ej. 40% × 65% = 26% NAV
+    const limitEfect   = Math.min(limitInterno, maxAsset);
+    const manda = limitEfect === maxAsset ? 'límite global' : 'límite interno CORE';
+    const nav = STATE?.nav || 0;
+    effEl.innerHTML = `Límite efectivo por activo CORE: <strong style="color:var(--teal);">${(limitEfect*100).toFixed(1)}% NAV</strong> (${fmtE(nav*limitEfect)}) · manda ${manda}`;
+  }
+
+  // Risk status — riesgo abierto vs límites
+  const riskSt = el.querySelector('#mt-p-risk-status');
+  if (riskSt && STATE) {
+    const { nav, openRisk, positions } = STATE;
+    const openRiskPct = nav > 0 ? openRisk/nav : 0;
+    const openCORE = positions.filter(p=>p.bucket==='core').reduce((s,p)=>s+(p.capitalAtRisk||0),0);
+    const openSAT  = positions.filter(p=>p.bucket==='sat').reduce((s,p)=>s+(p.capitalAtRisk||0),0);
+    const openCorePct = nav>0 ? openCORE/nav : 0;
+    const openSatPct  = nav>0 ? openSAT/nav  : 0;
+    const availGlobal = Math.max(0, POLICY.portRisk - openRiskPct);
+    const availCORE   = Math.max(0, POLICY.coreRisk  - openCorePct);
+    const availSAT    = Math.max(0, POLICY.satRisk   - openSatPct);
+    const col = (used, lim) => used > lim ? 'var(--red)' : used > lim*0.7 ? 'var(--amber)' : 'var(--green)';
+    riskSt.innerHTML = `
+      Riesgo abierto cartera: <strong style="color:${col(openRiskPct, POLICY.portRisk)}">${(openRiskPct*100).toFixed(2)}%</strong> · disponible: <strong style="color:var(--green);">${(availGlobal*100).toFixed(2)}%</strong><br>
+      CORE abierto: <strong style="color:${col(openCorePct, POLICY.coreRisk)}">${(openCorePct*100).toFixed(2)}%</strong> · disponible: <strong>${(availCORE*100).toFixed(2)}%</strong> &nbsp;|&nbsp;
+      SAT abierto: <strong style="color:${col(openSatPct, POLICY.satRisk)}">${(openSatPct*100).toFixed(2)}%</strong> · disponible: <strong>${(availSAT*100).toFixed(2)}%</strong>`;
   }
 }
 
