@@ -393,27 +393,33 @@ function renderAllocation(el) {
     if (s('occ'))    s('occ').textContent = (occ*100).toFixed(1)+'% ocupado';
   });
 
-  // Target vs Actual
-  const totalInv = (buckets.core||0)+(buckets.sat||0);
+  // Target vs Actual — límites máximos, no targets obligatorios
+  const totalInv = (buckets.core||0) + (buckets.sat||0);
   const rows = [
-    { dim:'CORE',      tgt:POLICY.corePct, act:(buckets.core||0)/nav, tol:0.05 },
-    { dim:'SATÉLITE',  tgt:POLICY.satPct,  act:(buckets.sat||0)/nav,  tol:0.05 },
-    { dim:'RV Total',  tgt:POLICY.corePct+POLICY.satPct, act:totalInv/nav, tol:0.10 },
-    { dim:'Cash',      tgt:0, act:cash/nav, tol:0.20 },
+    { dim:'CORE',     label:'Límite máx.',  lim:POLICY.corePct, act:(buckets.core||0)/nav, tol:POLICY.corePct },
+    { dim:'SATÉLITE', label:'Límite máx.',  lim:POLICY.satPct,  act:(buckets.sat||0)/nav,  tol:POLICY.satPct  },
+    { dim:'RV Total', label:'Invertido',    lim:null,           act:totalInv/nav,           tol:null           },
+    { dim:'Cash',     label:'No desplegado',lim:null,           act:cash/nav,              tol:null           },
   ];
   const tbody = el.querySelector('#mt-alloc-table');
   if (tbody) tbody.innerHTML = rows.map(r => {
-    const d = r.act - r.tgt;
-    const ad = Math.abs(d);
-    const sc = ad<r.tol?'var(--green)':ad<r.tol*1.5?'var(--amber)':'var(--red)';
-    const st = ad<r.tol?'✓ En rango':ad<r.tol*1.5?'⚠ Cerca':'✗ Fuera';
-    const dc = d===0?'mt-delta-nu':d>0?'mt-delta-up':'mt-delta-dn';
+    // Estado: solo FAIL si se supera el límite; nunca FAIL por tener cash
+    let statusColor, statusTxt;
+    if (r.lim !== null) {
+      const over = r.act > r.lim + 0.001; // supera el límite
+      statusColor = over ? 'var(--red)' : 'var(--green)';
+      statusTxt   = over ? '✗ Supera límite' : '✓ Dentro límite';
+    } else {
+      statusColor = 'var(--text3)';
+      statusTxt   = '— informativo';
+    }
+    const limTxt = r.lim !== null ? fmtP(r.lim) : '—';
     return `<tr style="border-bottom:1px solid var(--border);">
       <td style="padding:9px 12px;font-weight:700;">${r.dim}</td>
-      <td style="padding:9px 12px;text-align:right;font-family:var(--mono);">${r.tgt>0?fmtP(r.tgt):'—'}</td>
+      <td style="padding:9px 12px;text-align:right;font-family:var(--mono);font-size:10px;color:var(--text3);">${r.label}</td>
+      <td style="padding:9px 12px;text-align:right;font-family:var(--mono);">${limTxt}</td>
       <td style="padding:9px 12px;text-align:right;font-family:var(--mono);">${fmtP(r.act)}</td>
-      <td style="padding:9px 12px;text-align:right;"><span class="mt-delta ${dc}">${d===0?'—':(d>0?'+':'')}${(d*100).toFixed(1)} pp</span></td>
-      <td style="padding:9px 12px;text-align:right;font-size:10px;color:${sc};">${st}</td>
+      <td style="padding:9px 12px;text-align:right;font-size:10px;color:${statusColor};">${statusTxt}</td>
     </tr>`;
   }).join('');
 
@@ -800,7 +806,7 @@ export async function render(container, { actionsSlot, savedState } = {}) {
       <div class="mt-card mb12">
         <table style="width:100%;border-collapse:collapse;">
           <thead><tr style="border-bottom:1px solid var(--border);">
-            ${['Dimensión','Target','Actual','Delta','Estado'].map((h,i)=>
+            ${['Dimensión','Concepto','Límite máx.','Actual','Estado'].map((h,i)=>
               `<th style="font-family:var(--mono);font-size:9px;text-transform:uppercase;color:var(--text3);padding:8px 12px;text-align:${i===0?'left':'right'};">${h}</th>`).join('')}
           </tr></thead>
           <tbody id="mt-alloc-table"></tbody>
