@@ -244,9 +244,21 @@ async function saveAASnapshot(snapshot) {
   } catch {}
 }
 
-// ════════════════════════════════════════════════════════════════
-// LOAD — carga de datos desde Firestore via UserData
-// ════════════════════════════════════════════════════════════════
+// ── Universo base fijo — idéntico al módulo AA antiguo ───────────
+const AA_UNIVERSE_BASE = [
+  { ticker:'VTI',      name:'Vanguard Total Stock Market',       type:'RV',      category:'allocation' },
+  { ticker:'VEU',      name:'Vanguard FTSE All-World ex-US',     type:'RV',      category:'allocation' },
+  { ticker:'IEF',      name:'iShares 7-10Y Treasury Bond',       type:'RF',      category:'allocation' },
+  { ticker:'BNDX',     name:'Vanguard Total Intl Bond',          type:'RF',      category:'allocation' },
+  { ticker:'VNQ',      name:'Vanguard Real Estate ETF',          type:'REIT',    category:'reit'       },
+  { ticker:'VNQI',     name:'Vanguard Global ex-US Real Estate', type:'REIT',    category:'reit'       },
+  { ticker:'GLD',      name:'SPDR Gold Trust',                   type:'GOLD',    category:'commodity'  },
+  { ticker:'SLV',      name:'iShares Silver Trust',              type:'SILVER',  category:'commodity'  },
+  { ticker:'USO',      name:'United States Oil Fund',            type:'OIL',     category:'commodity'  },
+  { ticker:'SPY',      name:'S&P 500 ETF',                       type:'INDEX',   category:'indicator'  },
+  { ticker:'HYG',      name:'iShares High Yield Corp Bond',      type:'HY',      category:'indicator'  },
+  { ticker:'EURUSD=X', name:'Euro/Dólar',                        type:'FX',      category:'indicator'  },
+];
 async function loadState() {
   try {
     // 1. Política
@@ -510,65 +522,88 @@ async function runAllocationEngine(el) {
   const nav = STATE?.nav || 0;
   const coreBudget = nav * POLICY.corePct;
   const satBudget  = nav * POLICY.satPct;
-
-  // ── CORE ENGINE ──────────────────────────────────────────────
-  const coreUniverse = POLICY.coreUniverse || ['VTI','VEU','IEF','BNDX'];
   const coreThreshold = POLICY.coreScoreThreshold ?? 6;
   const coreMaxW = POLICY.coreMaxWeight ?? 0.40;
 
-  const coreEl = el.querySelector('#mt-aa-core-results');
-  if (coreEl) coreEl.innerHTML = `<div class="mt-loader"><div class="mt-loader-ring"></div>Calculando señales CORE (${coreUniverse.join(', ')})...</div>`;
+  // Universo completo = base fijo + tickers extra de Parámetros
+  const extraTickers = (POLICY.coreUniverse || [])
+    .filter(t => !AA_UNIVERSE_BASE.find(b => b.ticker === t));
+  const fullUniverse = [
+    ...AA_UNIVERSE_BASE,
+    ...extraTickers.map(t => ({ ticker:t, name:t, type:'RV', category:'allocation' }))
+  ];
 
-  let coreData = [];
-  for (const ticker of coreUniverse) {
+  const coreEl = el.querySelector('#mt-aa-core-results');
+  if (coreEl) coreEl.innerHTML = `<div class="mt-loader"><div class="mt-loader-ring"></div>Calculando señales para ${fullUniverse.length} activos...</div>`;
+
+  // Fetch y análisis de todos los activos (con stagger para no saturar proxies)
+  const allData = [];
+  for (let i = 0; i < fullUniverse.length; i++) {
+    const asset = fullUniverse[i];
+    await new Promise(r => setTimeout(r, i * 150));
     try {
-      const raw = await mtFetchData(ticker);
+      const raw = await mtFetchData(asset.ticker);
       const analysis = mtAnalyzeAsset(raw);
-      // Inferir tipo desde ticker
-      const type = ['IEF','BNDX','TLT','BND','AGG'].includes(ticker) ? 'RF' : 'RV';
-      coreData.push({ ticker, type, ...analysis });
+      allData.push({ ...asset, ...analysis });
     } catch(e) {
-      coreData.push({ ticker, error: e.message, score: 0 });
+      allData.push({ ...asset, score: 0, error: e.message });
     }
   }
 
-  // Decisión RV vs RF
-  const rvAssets = coreData.filter(a => a.type==='RV' && !a.error);
-  const rfAssets = coreData.filter(a => a.type==='RF' && !a.error);
-  const rvScore  = rvAssets.reduce((s,a)=>s+a.score,0) / (rvAssets.length||1);
-  const rfScore  = rfAssets.reduce((s,a)=>s+a.score,0) / (rfAssets.length||1);
-  const decision = rvScore >= rfScore ? 'RV' : 'RF';
-  const decisionLabel = decision === 'RV' ? 'Renta Variable' : 'Renta Fija';
+  // Separar por categoría — igual que el módulo antiguo
+  const allocationAssets = allData.filter(a => a.category === 'allocation').sort((a,b) => b.score - a.score);
+  const reitAssets       = allData.filter(a => a.category === 'reit');
+  const commodityAssets  = allData.filter(a => a.category === 'commodity');
+  const indicators       = allData.filter(a => a.category === 'indicator');
+  const gold   = commodityAssets.find(a => a.ticker === 'GLD');
+  const silver = commodityAssets.find(a => a.ticker === 'SLV');
+  const oil    = commodityAssets.find(a => a.ticker === 'USO');
+  const hy     = indicators.find(a => a.ticker === 'HYG');
+  const fx     = indicators.find(a => a.ticker === 'EURUSD=X');
+  const spy    = indicators.find(a => a.ticker === 'SPY');
 
-  // Candidatos elegibles (tipo ganador + score ≥ threshold)
-  const eligible = coreData.filter(a => !a.error && a.type===decision && a.score>=coreThreshold);
+  // Decisión RV vs RF (top 2 de allocation)
+  const top2   = allocationAssets.slice(0, 2);
+  const rvCount = top2.filter(a => a.type === 'RV').length;
+  const rfCount = top2.filter(a => a.type === 'RF').length;
+  let recommendation;
+  if (rvCount === 2)      recommendation = { type:'RV', label:'Renta Variable', class:'green', desc:'Los 2 más fuertes son RV' };
+  else if (rfCount === 2) recommendation = { type:'RF', label:'Renta Fija',     class:'blue',  desc:'Los 2 más fuertes son RF' };
+  else                    recommendation = { type:'NEUTRO', label:'Mixto',       class:'amber', desc:'1 RF + 1 RV' };
 
-  // Si no hay elegibles, incluir todos los del tipo ganador
-  const candidates = eligible.length > 0 ? eligible : coreData.filter(a => !a.error && a.type===decision);
+  const decision = recommendation.type === 'NEUTRO' ? 'RV' : recommendation.type;
 
-  // Score medio y cash
-  const scoreMedio = candidates.length > 0 ? candidates.reduce((s,a)=>s+a.score,0)/candidates.length : 0;
-  const cashPct = Math.max(0, Math.min(100, ((8 - scoreMedio) / 8) * 100));
+  // Elegibles para sizing CORE
+  const eligible   = allocationAssets.filter(a => !a.error && a.type === decision && a.score >= coreThreshold);
+  const candidates = eligible.length > 0 ? eligible : allocationAssets.filter(a => !a.error && a.type === decision);
+  const scoreMedio = candidates.length > 0 ? candidates.reduce((s,a) => s+a.score, 0)/candidates.length : 0;
+  const cashPct    = Math.max(0, Math.min(100, ((8 - scoreMedio) / 8) * 100));
   const investedPct = 100 - cashPct;
-
-  // Inverse volatility
   const corePositions = mtInverseVol(candidates, coreMaxW, investedPct);
 
-  // Guardar snapshot
-  const snapshot = {
+  // Scores RV / RF para el banner
+  const rvAssets = allocationAssets.filter(a => a.type === 'RV' && !a.error);
+  const rfAssets = allocationAssets.filter(a => a.type === 'RF' && !a.error);
+  const rvScore  = rvAssets.reduce((s,a) => s+a.score, 0) / (rvAssets.length||1);
+  const rfScore  = rfAssets.reduce((s,a) => s+a.score, 0) / (rfAssets.length||1);
+
+  // Snapshot
+  await saveAASnapshot({
     date: new Date().toISOString().slice(0,10),
-    decision, decisionLabel, rvScore, rfScore, scoreMedio, cashPct,
-    scores: coreData.map(a=>({ticker:a.ticker,score:a.score,type:a.type})),
-    positions: corePositions.map(p=>({ticker:p.ticker,weightPct:p.weightPct})),
+    decision, recommendation: recommendation.label, rvScore, rfScore, scoreMedio, cashPct,
+    scores: allData.map(a => ({ ticker:a.ticker, score:a.score, type:a.type, category:a.category })),
+    positions: corePositions.map(p => ({ ticker:p.ticker, weightPct:p.weightPct })),
     nav, coreBudget,
-  };
-  await saveAASnapshot(snapshot);
+  });
 
-  // ── SATÉLITE ENGINE — se ejecuta por separado desde el botón inline ──
-  // (no se ejecuta aquí, el usuario introduce los tickers manualmente)
-
-  // ── RENDER CORE ────────────────────────────────────────────────
-  renderCoreEngine(el, { coreData, decision, decisionLabel, rvScore, rfScore, coreThreshold, cashPct, investedPct, corePositions, scoreMedio, coreBudget, nav });
+  // Render
+  renderCoreEngine(el, {
+    allocationAssets, top2, recommendation, reitAssets,
+    gold, silver, oil, hy, fx, spy,
+    corePositions, scoreMedio, cashPct, investedPct,
+    coreThreshold, coreBudget, nav,
+    rvScore, rfScore,
+  });
 }
 
 // ── Helpers visuales idénticos al módulo AA antiguo ─────────────
@@ -658,50 +693,72 @@ function aaSizingBlock(sizing, coreBudget, nav) {
   </div>`;
 }
 
-function renderCoreEngine(el, { coreData, decision, decisionLabel, rvScore, rfScore, coreThreshold, cashPct, investedPct, corePositions, scoreMedio, coreBudget, nav }) {
+function renderCoreEngine(el, { allocationAssets, top2, recommendation, reitAssets, gold, silver, oil, hy, fx, spy, corePositions, scoreMedio, cashPct, investedPct, coreThreshold, coreBudget, nav, rvScore, rfScore }) {
   const coreEl = el.querySelector('#mt-aa-core-results');
   if (!coreEl) return;
-
-  const decColor = decision==='RV' ? 'var(--green)' : 'var(--blue)';
-  const decClass = decision==='RV' ? 'green' : decision==='RF' ? 'blue' : 'amber';
-
-  // Activos de allocation (RV/RF)
-  const allocationAssets = coreData.filter(a => !a.error);
-  const top2 = [...allocationAssets].sort((a,b)=>b.score-a.score).slice(0,2);
-  const rvCount = top2.filter(a=>a.type==='RV').length;
-  const rfCount = top2.filter(a=>a.type==='RF').length;
-  let rec;
-  if (rvCount===2)      rec = { label:'Renta Variable', class:'green', desc:'Los 2 más fuertes son RV' };
-  else if (rfCount===2) rec = { label:'Renta Fija',     class:'blue',  desc:'Los 2 más fuertes son RF' };
-  else                  rec = { label:'Mixto',           class:'amber', desc:'1 RF + 1 RV' };
 
   const sizing = { positions: corePositions, cashPct, scoreMedio };
   const sizingHTML = aaSizingBlock(sizing, coreBudget, nav);
 
+  // Warnings — idénticos al módulo antiguo
+  const warnings = [];
+  if (gold && gold.score >= 7) warnings.push({ type:'caution', icon:'🥇', text:'<strong>Oro en máximos:</strong> mercado buscando refugio, incertidumbre elevada.' });
+  if (silver && gold && silver.score >= 7 && gold.score >= 7) warnings.push({ type:'caution', icon:'🥈', text:'<strong>Oro y plata fuertes:</strong> señal de refugio amplificada.' });
+  if (recommendation.type === 'RV' && hy && hy.score <= 4) warnings.push({ type:'alert', icon:'⚠️', text:'<strong>Divergencia:</strong> RV fuerte pero High Yield débil. Extrema precaución.' });
+  if (oil && oil.score >= 7) warnings.push({ type:'caution', icon:'🛢️', text:'<strong>Petróleo muy fuerte:</strong> posible presión inflacionaria.' });
+  if (recommendation.type === 'RV' && hy && hy.score >= 6 && gold && gold.score <= 4) warnings.push({ type:'ok', icon:'✓', text:'<strong>Entorno favorable:</strong> RV fuerte, crédito sano, sin búsqueda de refugio.' });
+  if (recommendation.type === 'RF' && gold && gold.score >= 6) warnings.push({ type:'alert', icon:'🛡️', text:'<strong>Modo defensivo total:</strong> RF + Oro fuertes. Máxima aversión al riesgo.' });
+  if (fx && fx.score >= 7) warnings.push({ type:'alert', icon:'💱', text:'<strong>Euro muy fuerte:</strong> impacto negativo en inversiones USD sin cobertura.' });
+  if (hy && hy.score <= 2) warnings.push({ type:'alert', icon:'🚨', text:'<strong>Alerta crítica:</strong> High Yield colapsando. Reducir exposición a riesgo.' });
+
+  // Recesión y cobertura
+  const recessionClass = hy && hy.score <= 3 ? 'red' : hy && hy.score <= 5 ? 'amber' : 'green';
+  const recessionLabel = hy && hy.score <= 3 ? 'Alto' : hy && hy.score <= 5 ? 'Moderado' : 'Bajo';
+  const hedgeClass = fx && fx.score >= 6 ? 'red' : fx && fx.score >= 4 ? 'amber' : 'green';
+  const hedgeLabel = fx && fx.score >= 6 ? 'Sí cubrir' : fx && fx.score >= 4 ? 'Vigilar' : 'No cubrir';
+
   coreEl.innerHTML = `
     <div class="aa-tab-panel">
       ${sizingHTML}
+
+      ${warnings.length ? `<div class="aa-warnings">
+        ${warnings.map(w => `<div class="aa-warning-item ${w.type}"><div class="aa-warning-icon">${w.icon}</div><div class="aa-warning-text">${w.text}</div></div>`).join('')}
+      </div>` : ''}
+
       <div class="aa-decision-row">
-        <div class="aa-decision-card ${rec.class}">
+        <div class="aa-decision-card ${recommendation.class}">
           <div class="aa-decision-label">Decisión de Inversión</div>
-          <div class="aa-decision-value ${rec.class}">${rec.label}</div>
-          <div class="aa-decision-desc">${rec.desc}</div>
+          <div class="aa-decision-value ${recommendation.class}">${recommendation.label}</div>
+          <div class="aa-decision-desc">${recommendation.desc}</div>
         </div>
-        <div class="aa-decision-card">
-          <div class="aa-decision-label">Score medio elegibles</div>
-          <div class="aa-decision-value">${scoreMedio.toFixed(1)}/8</div>
-          <div class="aa-decision-desc">Cash convicción: ${cashPct.toFixed(1)}%</div>
+        <div class="aa-decision-card ${recessionClass}">
+          <div class="aa-decision-label">Riesgo de Recesión</div>
+          <div class="aa-decision-value ${recessionClass}">${recessionLabel}</div>
+          <div class="aa-decision-desc">${hy ? 'HYG Score: ' + hy.score + '/8' : '—'}</div>
         </div>
-        <div class="aa-decision-card">
-          <div class="aa-decision-label">Budget CORE disponible</div>
-          <div class="aa-decision-value" style="font-size:18px;">${fmtE(coreBudget)}</div>
-          <div class="aa-decision-desc">${(coreBudget/nav*100).toFixed(1)}% del NAV</div>
+        <div class="aa-decision-card ${hedgeClass}">
+          <div class="aa-decision-label">Cobertura Cambiaria</div>
+          <div class="aa-decision-value ${hedgeClass}">${hedgeLabel}</div>
+          <div class="aa-decision-desc">${fx ? 'EUR/USD Score: ' + fx.score + '/8' : '—'}</div>
         </div>
       </div>
-      <div class="section-title">Renta Variable vs Renta Fija <span class="count">8 señales M/S por activo</span></div>
+
+      <div class="section-title">Renta Variable vs Renta Fija <span class="count">decisión principal</span></div>
       <div class="aa-asset-grid">
         ${allocationAssets.map(a => aaAssetCard(a, top2.includes(a))).join('')}
-        ${coreData.filter(a=>a.error).map(a => `<div class="aa-asset-card" style="opacity:0.4;"><div class="aa-asset-top"><div class="aa-asset-ticker">${a.ticker}</div></div><div style="font-size:10px;color:var(--red);">Sin datos</div></div>`).join('')}
+      </div>
+
+      <div class="section-title" style="margin-top:24px;">Inmobiliario (REIT) <span class="count">satélite — informativo</span></div>
+      <div class="aa-asset-grid">
+        ${reitAssets.map(a => aaAssetCard(a, false)).join('')}
+      </div>
+
+      <div class="section-title" style="margin-top:24px;">Commodities &amp; Contexto <span class="count">satélite — informativo</span></div>
+      <div class="aa-asset-grid satellite">
+        ${[gold, silver, oil].filter(Boolean).map(a => aaAssetCard(a, false)).join('')}
+      </div>
+      <div class="aa-asset-grid satellite" style="margin-top:12px;">
+        ${[spy, hy, fx].filter(Boolean).map(a => aaAssetCard(a, false)).join('')}
       </div>
     </div>`;
 }
