@@ -22,6 +22,13 @@ const POLICY_DEFAULT = {
   maxAssetNav: 0.20, maxSectorNav: 0.35,
   tradeRisk: 0.015, portRisk: 0.06, coreRisk: 0.03, satRisk: 0.04,
   ddScale: [1.00, 0.80, 0.60, 0.40, 0.25],
+  // Asset Allocation — universo CORE y parámetros
+  coreUniverse: ['VTI','VEU','IEF','BNDX'],
+  coreScoreThreshold: 6,
+  coreMaxWeight: 0.40,
+  // Asset Allocation — universo Satélite
+  satUniverse: [],
+  satMaxWeight: 0.40,
   updatedAt: null,
 };
 let POLICY = { ...POLICY_DEFAULT };
@@ -112,6 +119,103 @@ const CSS = `
 .mt-loader-ring{width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--teal);border-radius:50%;animation:spin 0.7s linear infinite;flex-shrink:0;}
 @keyframes spin{to{transform:rotate(360deg)}}
 `;
+
+// ════════════════════════════════════════════════════════════════
+// MOTOR TÉCNICO — funciones puras reutilizadas de allocation.js
+// ════════════════════════════════════════════════════════════════
+function mtEma(arr, p) {
+  const k=2/(p+1), out=new Array(arr.length).fill(null);
+  let s=arr.findIndex(v=>v!=null&&!isNaN(v));
+  if(s<0)return out; out[s]=arr[s];
+  for(let i=s+1;i<arr.length;i++){const v=(arr[i]!=null&&!isNaN(arr[i]))?arr[i]:out[i-1];out[i]=v*k+out[i-1]*(1-k);}
+  return out;
+}
+function mtMacd(c){const ef=mtEma(c,12),es=mtEma(c,26);const m=ef.map((v,i)=>(v!=null&&es[i]!=null)?v-es[i]:null);return{m,sl:mtEma(m.map(v=>v??0),9)};}
+function mtRsi(c,p=14){const out=new Array(c.length).fill(null);if(c.length<p+1)return out;let g=0,l=0;for(let i=1;i<=p;i++){const d=c[i]-c[i-1];d>0?g+=d:l-=d;}let ag=g/p,al=l/p;out[p]=al===0?100:100-(100/(1+ag/al));for(let i=p+1;i<c.length;i++){const d=c[i]-c[i-1];ag=(ag*(p-1)+(d>0?d:0))/p;al=(al*(p-1)+(d<0?-d:0))/p;out[i]=al===0?100:100-(100/(1+ag/al));}return out;}
+function mtStoch(H,L,C,p){const rK=C.map((c,i)=>{if(i<p-1)return null;const hh=Math.max(...H.slice(i-p+1,i+1)),ll=Math.min(...L.slice(i-p+1,i+1));return hh===ll?50:(c-ll)/(hh-ll)*100;});const k=mtEma(rK,3);return{k,d:mtEma(k.map(v=>v??0),3)};}
+function mtResample(ts,opens,highs,lows,closes,vols,freq){
+  const groups={};
+  ts.forEach((t,i)=>{const dd=new Date(t*1000);let key;
+    if(freq==='W'){const day=dd.getDay();const diff=dd.getDate()-day+(day===0?-6:1);const mo=new Date(+dd);mo.setDate(diff);key=mo.toISOString().slice(0,10);}
+    else key=`${dd.getFullYear()}-${String(dd.getMonth()+1).padStart(2,'0')}`;
+    if(!groups[key])groups[key]={o:opens[i],h:highs[i],l:lows[i],c:closes[i],v:vols[i]};
+    else{groups[key].h=Math.max(groups[key].h,highs[i]);groups[key].l=Math.min(groups[key].l,lows[i]);groups[key].c=closes[i];groups[key].v+=vols[i];}
+  });
+  const keys=Object.keys(groups).sort();
+  return{dates:keys,opens:keys.map(k=>groups[k].o),highs:keys.map(k=>groups[k].h),lows:keys.map(k=>groups[k].l),closes:keys.map(k=>groups[k].c),vols:keys.map(k=>groups[k].v)};
+}
+
+function mtDailyVol(closes){
+  if(!closes||closes.length<2)return null;
+  const rets=[];for(let i=1;i<closes.length;i++)rets.push((closes[i]/closes[i-1])-1);
+  const mean=rets.reduce((a,b)=>a+b,0)/rets.length;
+  return Math.sqrt(rets.reduce((a,b)=>a+Math.pow(b-mean,2),0)/rets.length);
+}
+
+const AA_PROXIES = [
+  u=>`https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+  u=>`https://soft-field-156f.miguel-gomez-anton.workers.dev/?url=${encodeURIComponent(u)}`,
+];
+
+async function mtFetchData(ticker) {
+  const yUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=2y&events=history`;
+  for(const fn of AA_PROXIES){
+    try{
+      const ctrl=new AbortController();setTimeout(()=>ctrl.abort(),8000);
+      const r=await fetch(fn(yUrl),{signal:ctrl.signal});if(!r.ok)continue;
+      const text=await r.text();let j;try{j=JSON.parse(text);}catch{continue;}
+      const res=j?.chart?.result?.[0];if(!res)continue;
+      const q=res.indicators?.quote?.[0];if(!q)continue;
+      const adj=res.indicators.adjclose?.[0]?.adjclose||q.close;
+      const ratio=adj.map((a,i)=>(q.close[i]&&a)?a/q.close[i]:1);
+      return{timestamps:res.timestamp,opens:q.open.map((v,i)=>v*ratio[i]),highs:q.high.map((v,i)=>v*ratio[i]),lows:q.low.map((v,i)=>v*ratio[i]),closes:adj,vols:q.volume};
+    }catch{}
+  }
+  throw new Error(`Sin datos: ${ticker}`);
+}
+
+function mtAnalyzeAsset(raw) {
+  const{timestamps,opens,highs,lows,closes,vols}=raw;
+  const W=mtResample(timestamps,opens,highs,lows,closes,vols,'W');
+  const M=mtResample(timestamps,opens,highs,lows,closes,vols,'M');
+  const mm=mtMacd(M.closes),ms89=mtStoch(M.highs,M.lows,M.closes,89),mrsi=mtRsi(M.closes,14),mEma=mtEma(M.closes,10);
+  const mi=M.closes.length-1;
+  const wm=mtMacd(W.closes),ws89=mtStoch(W.highs,W.lows,W.closes,89),wrsi=mtRsi(W.closes,14),wEma=mtEma(W.closes,20);
+  const wi=W.closes.length-1;
+  const mc={macd:mm.m[mi]>0&&mm.m[mi]>mm.sl[mi],s89:(ms89.k[mi]>80&&ms89.k[mi]>ms89.d[mi])||ms89.k[mi]>92,rsi:mrsi[mi]>65,precio:mEma[mi]&&M.closes[mi]>mEma[mi]};
+  const sc={macd:wm.m[wi]>0&&wm.m[wi]>wm.sl[wi],s89:(ws89.k[wi]>85&&ws89.k[wi]>ws89.d[wi])||ws89.k[wi]>92,rsi:wrsi[wi]>67,precio:wEma[wi]&&W.closes[wi]>wEma[wi]};
+  const score=Object.values(mc).filter(x=>x).length+Object.values(sc).filter(x=>x).length;
+  const last52=closes.slice(-252),cur=closes[closes.length-1];
+  const min52=Math.min(...last52),max52=Math.max(...last52);
+  const percentile=((cur-min52)/(max52-min52))*100;
+  return{score,mensual:mc,semanal:sc,price:cur,closes:closes.slice(-60),percentile,min52,max52};
+}
+
+function mtInverseVol(candidates, maxWeight, totalPct=100) {
+  const withVol=candidates.map(a=>({...a,vol:mtDailyVol(a.closes)})).filter(a=>a.vol&&a.vol>0);
+  if(!withVol.length)return[];
+  const invVols=withVol.map(a=>1/a.vol),sumIV=invVols.reduce((a,b)=>a+b,0);
+  let pos=withVol.map((a,i)=>({...a,weightPct:(invVols[i]/sumIV)*totalPct}));
+  const effMax=Math.max(maxWeight,1/pos.length)*totalPct;
+  for(let iter=0;iter<10;iter++){
+    const over=pos.filter(p=>p.weightPct>effMax);if(!over.length)break;
+    let excess=0;pos.forEach(p=>{if(p.weightPct>effMax){excess+=p.weightPct-effMax;p.weightPct=effMax;}});
+    const under=pos.filter(p=>p.weightPct<effMax),underSum=under.reduce((s,p)=>s+p.weightPct,0);
+    if(!underSum||!under.length)break;
+    under.forEach(p=>{p.weightPct+=p.weightPct/underSum*excess;});
+  }
+  return pos.sort((a,b)=>b.weightPct-a.weightPct);
+}
+
+// Guardar snapshot de decisión AA en Firestore
+async function saveAASnapshot(snapshot) {
+  try {
+    const user = getCurrentUser();
+    if (!user) return;
+    const key = `ethan_aa_snapshot_${new Date().toISOString().slice(0,10)}`;
+    await UserData.set(key, { ...snapshot, savedAt: new Date().toISOString() });
+  } catch {}
+}
 
 // ════════════════════════════════════════════════════════════════
 // LOAD — carga de datos desde Firestore via UserData
@@ -370,6 +474,219 @@ function renderState(el) {
   }).join('') : `<div style="font-family:var(--mono);font-size:11px;color:var(--text3);">Sin posiciones abiertas</div>`;
 
   el.querySelector('#mt-timestamp').textContent = new Date(STATE.timestamp).toLocaleString('es-ES');
+}
+
+// ════════════════════════════════════════════════════════════════
+// ASSET ALLOCATION ENGINE
+// ════════════════════════════════════════════════════════════════
+async function runAllocationEngine(el) {
+  const nav = STATE?.nav || 0;
+  const coreBudget = nav * POLICY.corePct;
+  const satBudget  = nav * POLICY.satPct;
+
+  // ── CORE ENGINE ──────────────────────────────────────────────
+  const coreUniverse = POLICY.coreUniverse || ['VTI','VEU','IEF','BNDX'];
+  const coreThreshold = POLICY.coreScoreThreshold ?? 6;
+  const coreMaxW = POLICY.coreMaxWeight ?? 0.40;
+
+  const coreEl = el.querySelector('#mt-aa-core-results');
+  if (coreEl) coreEl.innerHTML = `<div class="mt-loader"><div class="mt-loader-ring"></div>Calculando señales CORE (${coreUniverse.join(', ')})...</div>`;
+
+  let coreData = [];
+  for (const ticker of coreUniverse) {
+    try {
+      const raw = await mtFetchData(ticker);
+      const analysis = mtAnalyzeAsset(raw);
+      // Inferir tipo desde ticker
+      const type = ['IEF','BNDX','TLT','BND','AGG'].includes(ticker) ? 'RF' : 'RV';
+      coreData.push({ ticker, type, ...analysis });
+    } catch(e) {
+      coreData.push({ ticker, error: e.message, score: 0 });
+    }
+  }
+
+  // Decisión RV vs RF
+  const rvAssets = coreData.filter(a => a.type==='RV' && !a.error);
+  const rfAssets = coreData.filter(a => a.type==='RF' && !a.error);
+  const rvScore  = rvAssets.reduce((s,a)=>s+a.score,0) / (rvAssets.length||1);
+  const rfScore  = rfAssets.reduce((s,a)=>s+a.score,0) / (rfAssets.length||1);
+  const decision = rvScore >= rfScore ? 'RV' : 'RF';
+  const decisionLabel = decision === 'RV' ? 'Renta Variable' : 'Renta Fija';
+
+  // Candidatos elegibles (tipo ganador + score ≥ threshold)
+  const eligible = coreData.filter(a => !a.error && a.type===decision && a.score>=coreThreshold);
+
+  // Si no hay elegibles, incluir todos los del tipo ganador
+  const candidates = eligible.length > 0 ? eligible : coreData.filter(a => !a.error && a.type===decision);
+
+  // Score medio y cash
+  const scoreMedio = candidates.length > 0 ? candidates.reduce((s,a)=>s+a.score,0)/candidates.length : 0;
+  const cashPct = Math.max(0, Math.min(100, ((8 - scoreMedio) / 8) * 100));
+  const investedPct = 100 - cashPct;
+
+  // Inverse volatility
+  const corePositions = mtInverseVol(candidates, coreMaxW, investedPct);
+
+  // Guardar snapshot
+  const snapshot = {
+    date: new Date().toISOString().slice(0,10),
+    decision, decisionLabel, rvScore, rfScore, scoreMedio, cashPct,
+    scores: coreData.map(a=>({ticker:a.ticker,score:a.score,type:a.type})),
+    positions: corePositions.map(p=>({ticker:p.ticker,weightPct:p.weightPct})),
+    nav, coreBudget,
+  };
+  await saveAASnapshot(snapshot);
+
+  // ── SATÉLITE ENGINE ───────────────────────────────────────────
+  const satUniverse = POLICY.satUniverse || [];
+  const satMaxW = POLICY.satMaxWeight ?? 0.40;
+  let satData = [];
+  if (satUniverse.length > 0) {
+    const satEl2 = el.querySelector('#mt-aa-sat-results');
+    if (satEl2) satEl2.innerHTML = `<div class="mt-loader"><div class="mt-loader-ring"></div>Calculando señales Satélite (${satUniverse.join(', ')})...</div>`;
+    for (const ticker of satUniverse) {
+      try {
+        const raw = await mtFetchData(ticker);
+        const analysis = mtAnalyzeAsset(raw);
+        satData.push({ ticker, ...analysis });
+      } catch(e) {
+        satData.push({ ticker, error: e.message, score: 0 });
+      }
+    }
+  }
+  const satPositions = mtInverseVol(satData.filter(a=>!a.error), satMaxW, 100);
+
+  // ── RENDER ────────────────────────────────────────────────────
+  renderCoreEngine(el, { coreData, decision, decisionLabel, rvScore, rfScore, coreThreshold, cashPct, investedPct, corePositions, scoreMedio, coreBudget, nav });
+  renderSatEngine(el, { satData, satPositions, satBudget, satUniverse, nav });
+}
+
+function renderCoreEngine(el, { coreData, decision, decisionLabel, rvScore, rfScore, coreThreshold, cashPct, investedPct, corePositions, scoreMedio, coreBudget, nav }) {
+  const coreEl = el.querySelector('#mt-aa-core-results');
+  if (!coreEl) return;
+
+  const decColor = decision==='RV' ? 'var(--teal)' : 'var(--blue)';
+  const cashEur  = coreBudget * cashPct / 100;
+  const invEur   = coreBudget * investedPct / 100;
+
+  coreEl.innerHTML = `
+    <!-- Decisión RV vs RF -->
+    <div style="background:${decColor}12;border:1px solid ${decColor}33;border-radius:10px;padding:16px 18px;margin-bottom:14px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div>
+          <div style="font-family:var(--mono);font-size:9px;color:var(--text3);text-transform:uppercase;margin-bottom:6px;">Decisión del motor</div>
+          <div style="font-family:var(--serif);font-size:24px;font-style:italic;font-weight:600;color:${decColor};">${decisionLabel}</div>
+          <div style="font-family:var(--mono);font-size:10px;color:var(--text2);margin-top:4px;">Score RV ${rvScore.toFixed(1)}/8 · Score RF ${rfScore.toFixed(1)}/8</div>
+        </div>
+        <div style="text-align:right;">
+          <div style="font-family:var(--mono);font-size:9px;color:var(--text3);">Score medio elegibles</div>
+          <div style="font-family:var(--serif);font-size:32px;font-style:italic;font-weight:600;">${scoreMedio.toFixed(1)}/8</div>
+          <div style="font-family:var(--mono);font-size:9px;color:var(--text3);">Cash convicción: ${cashPct.toFixed(1)}%</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Scores por activo -->
+    <div style="margin-bottom:14px;">
+      <div class="mt-sdiv"><div class="mt-sdiv-lbl">Señales por activo</div><div class="mt-sdiv-line"></div></div>
+      <div style="display:grid;grid-template-columns:repeat(${Math.min(coreData.length,4)},1fr);gap:8px;">
+        ${coreData.map(a => {
+          if (a.error) return `<div class="mt-kpi" style="opacity:0.5;"><div class="mt-kpi-lbl">${a.ticker}</div><div style="font-family:var(--mono);font-size:10px;color:var(--red);">Error</div></div>`;
+          const sc = a.score;
+          const scColor = sc>=6?'var(--green)':sc>=4?'var(--amber)':'var(--red)';
+          const isWinner = a.type===decision;
+          const isEligible = isWinner && sc>=coreThreshold;
+          return `<div class="mt-kpi" style="border-color:${isEligible?decColor+'44':'var(--border)'};">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+              <div class="mt-kpi-lbl">${a.ticker}</div>
+              <span class="mt-badge ${isEligible?'mt-pass':isWinner?'mt-warn':'mt-info'}">${isEligible?'ELEGIBLE':isWinner?'BAJO SCORE':'OTRO TIPO'}</span>
+            </div>
+            <div style="font-family:var(--serif);font-size:28px;font-style:italic;font-weight:600;color:${scColor};">${sc}/8</div>
+            <div style="font-family:var(--mono);font-size:9px;color:var(--text3);margin-top:4px;">${a.type} · ${a.price?.toFixed(2)||'—'}</div>
+            <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
+              ${['macd','s89','rsi','precio'].map(k => {
+                const mOk = a.mensual?.[k], wOk = a.semanal?.[k];
+                return `<span style="font-family:var(--mono);font-size:8px;padding:1px 5px;border-radius:4px;background:${mOk?'rgba(74,222,128,0.1)':'rgba(244,113,116,0.08)'};color:${mOk?'var(--green)':'var(--text3)'};">M:${k.slice(0,4).toUpperCase()}</span>
+                        <span style="font-family:var(--mono);font-size:8px;padding:1px 5px;border-radius:4px;background:${wOk?'rgba(74,222,128,0.1)':'rgba(244,113,116,0.08)'};color:${wOk?'var(--green)':'var(--text3)'};">S:${k.slice(0,4).toUpperCase()}</span>`;
+              }).join('')}
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+
+    <!-- Pesos CORE recomendados -->
+    <div class="mt-sdiv"><div class="mt-sdiv-lbl">Target CORE</div><div class="mt-sdiv-line"></div></div>
+    <div style="background:var(--surface2);border-radius:10px;overflow:hidden;margin-bottom:12px;">
+      ${corePositions.length === 0 ? `
+        <div style="padding:20px;text-align:center;font-family:var(--mono);font-size:11px;color:var(--text3);">Sin activos elegibles — Cash 100%</div>
+      ` : corePositions.map(p => {
+        const eur = coreBudget * p.weightPct / 100;
+        const pctNav = nav>0 ? eur/nav*100 : 0;
+        return `<div style="display:flex;align-items:center;gap:12px;padding:11px 16px;border-bottom:1px solid var(--border);">
+          <div style="font-weight:700;font-size:13px;width:60px;">${p.ticker}</div>
+          <div style="flex:1;">
+            <div style="height:6px;background:var(--surface);border-radius:3px;overflow:hidden;">
+              <div style="height:100%;width:${p.weightPct.toFixed(1)}%;background:${decColor};border-radius:3px;"></div>
+            </div>
+          </div>
+          <div style="font-family:var(--mono);font-size:12px;font-weight:700;min-width:50px;text-align:right;">${p.weightPct.toFixed(1)}%</div>
+          <div style="font-family:var(--mono);font-size:11px;color:var(--teal);min-width:80px;text-align:right;">${fmtE(eur)}</div>
+          <div style="font-family:var(--mono);font-size:10px;color:var(--text3);min-width:60px;text-align:right;">${pctNav.toFixed(1)}% NAV</div>
+        </div>`;
+      }).join('')}
+      <div style="display:flex;align-items:center;gap:12px;padding:11px 16px;background:rgba(64,217,192,0.04);">
+        <div style="font-size:11px;color:var(--text3);width:60px;">Cash</div>
+        <div style="flex:1;"></div>
+        <div style="font-family:var(--mono);font-size:12px;font-weight:700;min-width:50px;text-align:right;color:var(--text3);">${cashPct.toFixed(1)}%</div>
+        <div style="font-family:var(--mono);font-size:11px;color:var(--text3);min-width:80px;text-align:right;">${fmtE(cashEur)}</div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--text3);min-width:60px;text-align:right;">${(cashEur/nav*100).toFixed(1)}% NAV</div>
+      </div>
+      <div style="padding:10px 16px;font-family:var(--mono);font-size:9px;color:var(--text3);">
+        Budget CORE total: ${fmtE(coreBudget)} · Invertible: ${fmtE(invEur)} · Cash táctico: ${fmtE(cashEur)}
+      </div>
+    </div>`;
+}
+
+function renderSatEngine(el, { satData, satPositions, satBudget, satUniverse, nav }) {
+  const satEl = el.querySelector('#mt-aa-sat-results');
+  if (!satEl) return;
+
+  if (!satUniverse.length) {
+    satEl.innerHTML = `<div style="padding:24px;text-align:center;font-family:var(--mono);font-size:11px;color:var(--text3);">
+      Sin universo Satélite configurado. Añade tickers en Parámetros → Universo Satélite.
+    </div>`;
+    return;
+  }
+
+  satEl.innerHTML = `
+    <div style="background:var(--surface2);border-radius:10px;overflow:hidden;">
+      ${satPositions.length === 0
+        ? `<div style="padding:20px;text-align:center;font-family:var(--mono);font-size:11px;color:var(--text3);">Sin datos suficientes</div>`
+        : satPositions.map(p => {
+          const eur = satBudget * p.weightPct / 100;
+          const pctNav = nav>0 ? eur/nav*100 : 0;
+          return `<div style="display:flex;align-items:center;gap:12px;padding:11px 16px;border-bottom:1px solid var(--border);">
+            <div style="font-weight:700;font-size:13px;width:70px;">${p.ticker}</div>
+            <div style="flex:1;">
+              <div style="height:6px;background:var(--surface);border-radius:3px;overflow:hidden;">
+                <div style="height:100%;width:${p.weightPct.toFixed(1)}%;background:var(--purple);border-radius:3px;"></div>
+              </div>
+            </div>
+            <div style="font-family:var(--mono);font-size:12px;font-weight:700;min-width:50px;text-align:right;">${p.weightPct.toFixed(1)}%</div>
+            <div style="font-family:var(--mono);font-size:11px;color:var(--purple);min-width:80px;text-align:right;">${fmtE(eur)}</div>
+            <div style="font-family:var(--mono);font-size:10px;color:var(--text3);min-width:60px;text-align:right;">${pctNav.toFixed(1)}% NAV</div>
+            <div style="font-family:var(--mono);font-size:9px;color:var(--text3);min-width:50px;text-align:right;">Vol: ${p.vol?(p.vol*100).toFixed(1)+'%':'—'}</div>
+          </div>`;
+        }).join('')}
+      <div style="padding:10px 16px;font-family:var(--mono);font-size:9px;color:var(--text3);">
+        Budget SAT total: ${fmtE(satBudget)} · 100% invertido (sin cash táctico en Satélite)
+      </div>
+    </div>
+    ${satData.filter(a=>a.error).length ? `
+      <div style="margin-top:8px;font-family:var(--mono);font-size:10px;color:var(--amber);">
+        ⚠ Sin datos: ${satData.filter(a=>a.error).map(a=>a.ticker).join(', ')}
+      </div>` : ''}`;
 }
 
 function renderAllocation(el) {
@@ -818,6 +1135,18 @@ export async function render(container, { actionsSlot, savedState } = {}) {
         <div class="mt-kpi"><div class="mt-kpi-lbl">Cash Táctico CORE</div><div class="mt-kpi-val" id="mt-cash-core" style="color:var(--teal)">—</div><div class="mt-kpi-sub">Budget CORE sin desplegar</div></div>
         <div class="mt-kpi"><div class="mt-kpi-lbl">Cash Táctico Satélite</div><div class="mt-kpi-val" id="mt-cash-sat" style="color:var(--purple)">—</div><div class="mt-kpi-sub">Budget Satélite sin desplegar</div></div>
       </div>
+
+      <div class="mt-sdiv"><div class="mt-sdiv-lbl">CORE Engine · Señales y Pesos</div><div class="mt-sdiv-line"></div>
+        <button class="btn mt-badge" id="mt-aa-run-btn" style="font-size:10px;padding:5px 12px;margin-left:8px;">▶ Calcular</button>
+      </div>
+      <div id="mt-aa-core-results" style="font-family:var(--mono);font-size:11px;color:var(--text3);padding:20px;text-align:center;">
+        Pulsa Calcular para ejecutar el motor de señales CORE.
+      </div>
+
+      <div class="mt-sdiv"><div class="mt-sdiv-lbl">Satélite Engine · Pesos por Inversa de Volatilidad</div><div class="mt-sdiv-line"></div></div>
+      <div id="mt-aa-sat-results" style="font-family:var(--mono);font-size:11px;color:var(--text3);padding:20px;text-align:center;">
+        Pulsa Calcular para ejecutar el motor Satélite.
+      </div>
     </div>
 
     <!-- POSITION SIZING -->
@@ -903,6 +1232,23 @@ export async function render(container, { actionsSlot, savedState } = {}) {
         <div class="mt-field"><label>Máx. activo (% NAV)</label><input type="number" id="mt-p-asset" class="mt-input" value="20"></div>
         <div class="mt-field"><label>Máx. sector (% NAV)</label><input type="number" id="mt-p-sector" class="mt-input" value="35"></div>
       </div>
+      <div class="mt-g4 mb12">
+        <div class="mt-field"><label>Score mínimo CORE</label><input type="number" id="mt-p-core-threshold" class="mt-input" value="6" min="0" max="8"></div>
+        <div class="mt-field"><label>Máx. peso CORE (%)</label><input type="number" id="mt-p-core-maxw" class="mt-input" value="40"></div>
+        <div class="mt-field"><label>Máx. peso SAT (%)</label><input type="number" id="mt-p-sat-maxw" class="mt-input" value="40"></div>
+      </div>
+      <div class="mt-g2 mb12">
+        <div class="mt-field">
+          <label>Universo CORE (tickers separados por coma)</label>
+          <input type="text" id="mt-p-core-universe" class="mt-input" placeholder="VTI, VEU, IEF, BNDX" value="VTI, VEU, IEF, BNDX">
+          <div style="font-size:9px;color:var(--text3);margin-top:3px;">Por defecto: VTI, VEU, IEF, BNDX. Los que terminan en bond/BND/IEF/TLT se tratan como RF, el resto como RV.</div>
+        </div>
+        <div class="mt-field">
+          <label>Universo Satélite (tickers separados por coma)</label>
+          <input type="text" id="mt-p-sat-universe" class="mt-input" placeholder="EXPD, XLI, XLV, VLO">
+          <div style="font-size:9px;color:var(--text3);margin-top:3px;">Selección libre. 100% invertido por inversa de volatilidad con tope por activo.</div>
+        </div>
+      </div>
       <div class="mt-sdiv"><div class="mt-sdiv-lbl">Risk Management</div><div class="mt-sdiv-line"></div></div>
       <div class="mt-g4 mb12">
         <div class="mt-field"><label>Riesgo base/op. (% NAV)</label><input type="number" id="mt-p-trade" class="mt-input" step="0.25"></div>
@@ -938,21 +1284,32 @@ export async function render(container, { actionsSlot, savedState } = {}) {
     });
   });
 
+  // ── Botón Calcular AA ─────────────────────────────────────────
+  wrap.querySelector('#mt-aa-run-btn')?.addEventListener('click', () => {
+    runAllocationEngine(wrap);
+  });
+
   // ── Sizing button ─────────────────────────────────────────────
   wrap.querySelector('#mt-sz-btn')?.addEventListener('click', () => calcSizing(wrap));
 
   // ── Params save ───────────────────────────────────────────────
   wrap.querySelector('#mt-params-save')?.addEventListener('click', async () => {
-    const g = id => parseFloat(wrap.querySelector('#mt-p-'+id)?.value)||0;
-    POLICY.corePct      = g('core')/100;
-    POLICY.satPct       = g('sat')/100;
-    POLICY.maxAssetNav  = g('asset')/100;
-    POLICY.maxSectorNav = g('sector')/100;
-    POLICY.tradeRisk    = g('trade')/100;
-    POLICY.portRisk     = g('port')/100;
-    POLICY.coreRisk     = g('crisk')/100;
-    POLICY.satRisk      = g('srisk')/100;
-    POLICY.ddScale      = [1,2,3,4,5].map(i => parseFloat(wrap.querySelector(`#mt-p-dd${i}`)?.value)||0);
+    const g  = id => parseFloat(wrap.querySelector('#mt-p-'+id)?.value)||0;
+    const gs = id => (wrap.querySelector('#mt-p-'+id)?.value||'').split(',').map(s=>s.trim().toUpperCase()).filter(Boolean);
+    POLICY.corePct          = g('core')/100;
+    POLICY.satPct           = g('sat')/100;
+    POLICY.maxAssetNav      = g('asset')/100;
+    POLICY.maxSectorNav     = g('sector')/100;
+    POLICY.tradeRisk        = g('trade')/100;
+    POLICY.portRisk         = g('port')/100;
+    POLICY.coreRisk         = g('crisk')/100;
+    POLICY.satRisk          = g('srisk')/100;
+    POLICY.coreScoreThreshold = g('core-threshold');
+    POLICY.coreMaxWeight    = g('core-maxw')/100;
+    POLICY.satMaxWeight     = g('sat-maxw')/100;
+    POLICY.coreUniverse     = gs('core-universe');
+    POLICY.satUniverse      = gs('sat-universe');
+    POLICY.ddScale          = [1,2,3,4,5].map(i => parseFloat(wrap.querySelector(`#mt-p-dd${i}`)?.value)||0);
     await UserData.set(POLICY_KEY, POLICY);
     renderAll(wrap);
     const btn = wrap.querySelector('#mt-params-save');
@@ -985,6 +1342,11 @@ function renderParamsForm(el) {
   set('port',  (POLICY.portRisk*100).toFixed(0));
   set('crisk', (POLICY.coreRisk*100).toFixed(2));
   set('srisk', (POLICY.satRisk*100).toFixed(2));
+  set('core-threshold', POLICY.coreScoreThreshold ?? 6);
+  set('core-maxw',     ((POLICY.coreMaxWeight ?? 0.40)*100).toFixed(0));
+  set('sat-maxw',      ((POLICY.satMaxWeight  ?? 0.40)*100).toFixed(0));
+  set('core-universe', (POLICY.coreUniverse || ['VTI','VEU','IEF','BNDX']).join(', '));
+  set('sat-universe',  (POLICY.satUniverse  || []).join(', '));
   POLICY.ddScale.forEach((v,i) => { const e=el.querySelector(`#mt-p-dd${i+1}`); if(e) e.value=v.toFixed(2); });
   const pv = el.querySelector('#mt-policy-version'); if(pv) pv.textContent=POLICY.version;
   const pu = el.querySelector('#mt-policy-updated'); if(pu) pu.textContent=POLICY.updatedAt?new Date(POLICY.updatedAt).toLocaleString('es-ES'):'—';
