@@ -169,21 +169,9 @@ registerPage('car-motor', {
   title: 'Motor Integrado',
   loader: () => import('./modules/cartera/motor.js')
 });
-registerPage('car-allocation', {
-  crumb: '4. Cartera <span>›</span> 4.3 Asset Allocation',
-  title: 'Asset Allocation',
-  loader: () => import('./modules/cartera/allocation.js')
-});
-registerPage('car-money', {
-  crumb: '4. Cartera <span>›</span> 4.4 Money Management',
-  title: 'Money Management',
-  loader: () => import('./modules/cartera/money.js')
-});
-registerPage('car-risk', {
-  crumb: '4. Cartera <span>›</span> 4.5 Risk Management',
-  title: 'Risk Management',
-  loader: () => import('./modules/cartera/risk.js')
-});
+
+
+
 registerPage('car-backtest', {
   crumb: '4. Cartera <span>›</span> 4.7 Backtesting',
   title: 'Backtesting',
