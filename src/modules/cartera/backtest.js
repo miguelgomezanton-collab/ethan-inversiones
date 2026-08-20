@@ -1338,11 +1338,7 @@ export async function render(container, { actionsSlot }) {
       resEl.innerHTML = `<div style="display:flex;align-items:center;gap:10px;padding:32px;font-family:var(--mono);font-size:11px;color:var(--text3);"><div class="bt-loader"></div>Descargando datos para ${[...tickersRaw, bench].join(', ')}...</div>`;
 
       try {
-        const { getCurrentUser } = await import('../../auth.js');
-        const user = getCurrentUser();
-        if (!user) throw new Error('No autenticado');
-
-        // Descargar datos via market-history (lazy cache)
+        // Descargar datos via backfill-ticker (Yahoo directo)
         const allTickers = [...new Set([...tickersRaw, bench])];
         const universeData = {};
         let loaded = 0;
@@ -1351,7 +1347,7 @@ export async function render(container, { actionsSlot }) {
           const r2 = await fetch('/api/backfill-ticker', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-ethan-client': 'true' },
-            body: JSON.stringify({ action: 'market-history', ticker, startDate, endDate, uid: user.uid }),
+            body: JSON.stringify({ action: 'market-history', ticker, startDate, endDate }),
           });
           if (!r2.ok) throw new Error(`Error descargando ${ticker}: HTTP ${r2.status}`);
           const d = await r2.json();

@@ -90,64 +90,19 @@ export default async function handler(req, res) {
   const body = req.body || {};
   const action = body.action || 'backfill';
 
-  // ── Acción market-history ─────────────────────────────────────
+  // ── Acción market-history — Yahoo directo, sin Firestore ─────
   if (action === 'market-history') {
-    const { ticker, startDate, endDate, uid, forceRefresh = false } = body;
-    if (!ticker || !startDate || !endDate || !uid) {
-      return res.status(400).json({ error: 'ticker, startDate, endDate, uid requeridos' });
+    const { ticker, startDate, endDate } = body;
+    if (!ticker || !startDate || !endDate) {
+      return res.status(400).json({ error: 'ticker, startDate, endDate requeridos' });
     }
-    const db = getDB();
-    const years = yearsInRange(startDate, endDate);
-    const result = { ticker, cachedYears: [], fetchedYears: [], years: {} };
     try {
-      const yearDocs = await Promise.all(
-        years.map(y => db.collection('users').doc(uid)
-          .collection('ethan_market_history').doc(`${ticker}_${y}`).get())
-      );
-      const toFetch = [];
-      for (let i = 0; i < years.length; i++) {
-        const y = years[i], snap = yearDocs[i];
-        if (!forceRefresh && snap.exists) {
-          result.cachedYears.push(y);
-          result.years[y] = snap.data().rows || [];
-        } else {
-          result.fetchedYears.push(y);
-          toFetch.push(y);
-        }
-      }
-      if (toFetch.length > 0) {
-        const fetchStart = `${Math.min(...toFetch)}-01-01`;
-        const fetchEnd   = `${Math.max(...toFetch)}-12-31`;
-        const rows = await fetchYahooOHLCV(ticker, fetchStart, fetchEnd);
-        const byYear = {};
-        for (const row of rows) {
-          const y = parseInt(row.date.slice(0, 4));
-          if (!byYear[y]) byYear[y] = [];
-          byYear[y].push(row);
-        }
-        const batch = db.batch();
-        for (const y of toFetch) {
-          const yearRows = byYear[y] || [];
-          const docRef = db.collection('users').doc(uid)
-            .collection('ethan_market_history').doc(`${ticker}_${y}`);
-          batch.set(docRef, {
-            ticker, year: y, timeframe: '1D', source: 'yahoo_finance',
-            fetchedAt: new Date().toISOString(),
-            firstDate: yearRows[0]?.date || null,
-            lastDate:  yearRows[yearRows.length - 1]?.date || null,
-            dataVersion: '1.0', rows: yearRows,
-          });
-          result.years[y] = yearRows;
-        }
-        await batch.commit();
-      }
-      const allRows = years.flatMap(y => result.years[y] || [])
-        .filter(r => r.date >= startDate && r.date <= endDate)
-        .sort((a, b) => a.date.localeCompare(b.date));
+      const rows = await fetchYahooOHLCV(ticker, startDate, endDate);
+      if (!rows.length) throw new Error('Sin datos de Yahoo Finance');
       return res.status(200).json({
         ticker, startDate, endDate,
-        cachedYears: result.cachedYears, fetchedYears: result.fetchedYears,
-        totalRows: allRows.length, rows: allRows,
+        cachedYears: [], fetchedYears: [],
+        totalRows: rows.length, rows,
       });
     } catch(e) {
       console.error('[market-history]', ticker, e.message);
