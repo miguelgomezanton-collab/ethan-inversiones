@@ -14,7 +14,7 @@
 import { UserData } from '../../userdata.js';
 import { getCurrentUser } from '../../auth.js';
 import { db } from '../../firebase.js';
-import { collection, addDoc, query, orderBy, limit, getDocs, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, query, orderBy, limit, getDocs, serverTimestamp, doc, updateDoc, getDoc } from 'firebase/firestore';
 
 // ── Helpers ──────────────────────────────────────────────────────
 const fmtE  = n => (n<0?'−':'') + '€' + Math.abs(n).toLocaleString('es-ES',{minimumFractionDigits:0,maximumFractionDigits:0});
@@ -33,6 +33,7 @@ const POLICY_DEFAULT = {
   coreScoreThreshold: 6,
   coreMaxWeight: 0.40,
   satMaxWeight: 0.40,
+  authorizationTTLhours: 24,
   updatedAt: null,
 };
 let POLICY = { ...POLICY_DEFAULT };
@@ -968,7 +969,7 @@ function renderRiskBudget(el) {
   }
 }
 
-function calcSizing(el) {
+async function calcSizing(el) {
   if (!STATE) return;
   const g = id => el.querySelector('#mt-sz-'+id);
   const ticker = (g('ticker')?.value||'').trim().toUpperCase();
@@ -1147,25 +1148,243 @@ function calcSizing(el) {
       }).join('')}
     </div>`;
 
-  // Guardar siempre en audit log — tanto AUTORIZADO como BLOQUEADO
+  // Guardar en audit log — tanto AUTORIZADO como BLOQUEADO
   const finalStatus = hardFail ? 'BLOQUEADO' : hasWarn ? 'WARN' : 'AUTORIZADO';
-  saveProposal({ ticker, bucket, side, sector, entry, stop, qtyFinal, capInv, initRiskE, initRiskP, pctNav, ddMult, limitingRule:limiting.label, finalStatus, policyVersion:POLICY.version, nav:STATE.nav });
+  const sizingPayload = {
+    ticker, bucket, side, sector,
+    referencePrice: entry, referenceStop: stop,
+    authorizedShares: qtyFinal, authorizedCapital: capInv,
+    estimatedRiskEUR: initRiskE, estimatedRiskPctNAV: initRiskP,
+    capInv, initRiskE, initRiskP, pctNav, ddMult,
+    limitingRule: limiting.label, finalStatus,
+    policyVersion: POLICY.version, nav: STATE.nav,
+    sizingTimestamp: new Date().toISOString(),
+    preTradeChecks: checks.map(c=>({rule:c.rule,result:c.result,type:c.type})),
+  };
+  const proposalId = await saveProposal(sizingPayload);
+
+  // Botón "Registrar ejecución" solo si AUTORIZADO
+  if (approved && proposalId) {
+    const btnContainer = document.createElement('div');
+    btnContainer.style.cssText = 'margin-top:16px;text-align:center;';
+    btnContainer.innerHTML = `
+      <button class="btn btn-primary" id="mt-sz-exec-btn"
+        style="padding:11px 28px;font-size:12px;font-weight:700;width:100%;">
+        📋 Registrar ejecución en IBKR
+      </button>
+      <div style="font-family:var(--mono);font-size:9px;color:var(--text3);margin-top:6px;">
+        Autorización válida ${POLICY.authorizationTTLhours||24}h · ID: ${proposalId.slice(0,8)}…
+      </div>`;
+    resEl.appendChild(btnContainer);
+
+    btnContainer.querySelector('#mt-sz-exec-btn').addEventListener('click', () => {
+      openExecutionForm(wrap, sizingPayload, proposalId);
+    });
+  }
+
   // Refrescar audit log
   const auditEl = wrap?.querySelector('#mt-proposals-list');
-  if (auditEl) setTimeout(() => loadAndRenderProposals(auditEl), 500);
+  if (auditEl) setTimeout(() => loadAndRenderProposals(auditEl), 600);
 }
 
 async function saveProposal(data) {
   try {
     const user = getCurrentUser();
-    if (!user) return;
-    await addDoc(collection(db, 'users', user.uid, 'trade_proposals'), {
-      ...data, timestamp: serverTimestamp()
+    if (!user) return null;
+    const ttlMs = (POLICY.authorizationTTLhours || 24) * 3600 * 1000;
+    const expiresAt = new Date(Date.now() + ttlMs).toISOString();
+    const docRef = await addDoc(collection(db, 'users', user.uid, 'trade_proposals'), {
+      ...data, timestamp: serverTimestamp(), expiresAt,
+      status: data.finalStatus === 'AUTORIZADO' ? 'AUTHORIZED' : 'BLOCKED'
     });
-    // Refrescar lista de propuestas si está visible
-    const el = document.getElementById('mt-proposals-list');
-    if (el) await loadAndRenderProposals(el);
-  } catch(e) { console.warn('saveProposal:', e.message); }
+    return docRef.id;
+  } catch(e) { console.warn('saveProposal:', e.message); return null; }
+}
+
+// ════════════════════════════════════════════════════════════════
+// FORMULARIO DE EJECUCIÓN — post-trade registration
+// ════════════════════════════════════════════════════════════════
+function openExecutionForm(wrap, sizing, proposalId) {
+  const overlay = document.createElement('div');
+  overlay.id = 'mt-exec-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(4,14,14,0.88);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;';
+  const today = new Date().toISOString().slice(0,10);
+  const dirLabel = sizing.side === 'long' ? 'LONG' : 'SHORT';
+  const isLong   = sizing.side === 'long';
+
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px 28px;max-width:640px;width:100%;max-height:90vh;overflow-y:auto;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;padding-bottom:14px;border-bottom:1px solid var(--border);">
+        <div>
+          <div style="font-family:var(--serif);font-size:20px;font-style:italic;font-weight:600;">Registrar ejecución IBKR</div>
+          <div style="font-family:var(--mono);font-size:9px;color:var(--text3);margin-top:3px;">${sizing.ticker} · ${dirLabel} · ${sizing.bucket.toUpperCase()} · ID ${proposalId.slice(0,8)}…</div>
+        </div>
+        <button id="mt-exec-close" style="background:transparent;border:none;color:var(--text3);cursor:pointer;font-size:20px;padding:4px;">✕</button>
+      </div>
+      <div style="background:var(--surface2);border-radius:8px;padding:12px 14px;margin-bottom:16px;">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--text3);text-transform:uppercase;margin-bottom:8px;">Autorización Position Sizing</div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;">
+          ${[['Ticker',sizing.ticker],['Dirección',dirLabel],['Bucket',sizing.bucket.toUpperCase()],
+             ['Acciones autorizadas',sizing.authorizedShares],['Precio referencia','$'+(sizing.referencePrice||0).toFixed(2)],
+             ['Stop sizing','$'+(sizing.referenceStop||0).toFixed(2)],['Riesgo estimado',fmtE(sizing.estimatedRiskEUR||0)],
+             ['% NAV',((sizing.estimatedRiskPctNAV||0)*100).toFixed(2)+'%'],['Policy v.',sizing.policyVersion]
+          ].map(([l,v]) => '<div><div style="font-family:var(--mono);font-size:8px;color:var(--text3);">'+l+'</div><div style="font-family:var(--mono);font-size:11px;font-weight:700;margin-top:2px;">'+v+'</div></div>').join('')}
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
+        <div class="mt-field"><label>Acciones ejecutadas *</label>
+          <input type="number" id="mt-exec-shares" class="mt-input" value="${sizing.authorizedShares}" min="1" max="${sizing.authorizedShares}">
+          <div style="font-size:9px;color:var(--text3);margin-top:2px;">Máx. autorizado: ${sizing.authorizedShares}</div>
+        </div>
+        <div class="mt-field"><label>Precio medio IBKR *</label>
+          <input type="number" id="mt-exec-price" class="mt-input" value="${(sizing.referencePrice||0).toFixed(2)}" step="0.01">
+        </div>
+        <div class="mt-field"><label>Fecha de ejecución *</label>
+          <input type="date" id="mt-exec-date" class="mt-input" value="${today}">
+        </div>
+        <div class="mt-field"><label>Stop inicial definitivo</label>
+          <input type="number" id="mt-exec-stop" class="mt-input" value="${(sizing.referenceStop||0).toFixed(2)}" step="0.01">
+        </div>
+        <div class="mt-field"><label>Tipo de stop</label>
+          <select id="mt-exec-stoptype" class="mt-select">
+            <option value="diario">EMA10 Diario</option>
+            <option value="semanal">EMA10 Semanal</option>
+            <option value="manual">Manual</option>
+          </select>
+        </div>
+        <div class="mt-field"><label>Notas</label>
+          <input type="text" id="mt-exec-notas" class="mt-input" placeholder="Contexto de la ejecución...">
+        </div>
+      </div>
+      <div id="mt-exec-error" style="display:none;background:rgba(244,113,116,0.08);border:1px solid rgba(244,113,116,0.3);border-radius:8px;padding:10px 14px;margin-bottom:12px;font-family:var(--mono);font-size:11px;color:var(--red);"></div>
+      <div id="mt-exec-comparison" style="margin-bottom:14px;"></div>
+      <div style="display:flex;gap:10px;">
+        <button class="btn" id="mt-exec-preview-btn" style="flex:1;">Vista previa</button>
+        <button class="btn btn-primary" id="mt-exec-confirm-btn" style="flex:1;display:none;">✓ Confirmar y crear posición</button>
+      </div>
+    </div>`;
+
+  document.body.appendChild(overlay);
+  overlay.querySelector('#mt-exec-close').addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+
+  overlay.querySelector('#mt-exec-preview-btn').addEventListener('click', () => {
+    const execShares = parseInt(overlay.querySelector('#mt-exec-shares').value) || 0;
+    const execPrice  = parseFloat(overlay.querySelector('#mt-exec-price').value) || 0;
+    const execStop   = parseFloat(overlay.querySelector('#mt-exec-stop').value) || sizing.referenceStop || 0;
+    const errEl      = overlay.querySelector('#mt-exec-error');
+    if (execShares > sizing.authorizedShares) {
+      errEl.textContent = 'ERROR — las acciones ejecutadas ('+execShares+') superan el máximo autorizado ('+sizing.authorizedShares+').';
+      errEl.style.display='block';
+      overlay.querySelector('#mt-exec-confirm-btn').style.display='none';
+      return;
+    }
+    if (!execShares || execShares<=0) { errEl.textContent='Introduce las acciones ejecutadas.'; errEl.style.display='block'; return; }
+    if (!execPrice  || execPrice<=0)  { errEl.textContent='Introduce el precio medio de IBKR.'; errEl.style.display='block'; return; }
+    errEl.style.display='none';
+    const nav = STATE?.nav || 0;
+    const actualRiskPerShare = isLong ? Math.max(0, execPrice-(execStop||0)) : Math.max(0, (execStop||0)-execPrice);
+    const actualRiskEUR = actualRiskPerShare * execShares;
+    const actualRiskPct = nav>0 ? actualRiskEUR/nav : 0;
+    const capitalAtRiskReal = isLong
+      ? Math.max(0, (execStop||0)<execPrice ? 0 : (execPrice-(execStop||0))*execShares)
+      : Math.max(0, (execStop||0)>execPrice ? 0 : ((execStop||0)-execPrice)*execShares);
+    const slippage = execPrice/(sizing.referencePrice||execPrice)-1;
+    const slippageColor = isLong ? (slippage>0?'var(--red)':'var(--green)') : (slippage<0?'var(--red)':'var(--green)');
+    const openRiskB = (STATE?.positions||[]).filter(p=>p.bucket===sizing.bucket).reduce((s,p)=>s+(p.capitalAtRisk||0),0);
+    const openRiskG = (STATE?.positions||[]).reduce((s,p)=>s+(p.capitalAtRisk||0),0);
+    const riskLimitB = sizing.bucket==='core' ? POLICY.coreRisk : POLICY.satRisk;
+    const newOpenRiskG = openRiskG+capitalAtRiskReal, newOpenRiskB = openRiskB+capitalAtRiskReal;
+    const newPctG = nav>0?newOpenRiskG/nav:0, newPctB = nav>0?newOpenRiskB/nav:0;
+    const chkSt = (u,l) => u>l?'BREACH':u>l*0.9?'WARN':'PASS';
+    const chkCl = s => s==='BREACH'?'var(--red)':s==='WARN'?'var(--amber)':'var(--green)';
+    const gChk=chkSt(newPctG,POLICY.portRisk), bChk=chkSt(newPctB,riskLimitB);
+    const ptStatus=gChk==='BREACH'||bChk==='BREACH'?'BREACH':gChk==='WARN'||bChk==='WARN'?'WARN':'PASS';
+    const ptColor=chkCl(ptStatus);
+    overlay.querySelector('#mt-exec-comparison').innerHTML =
+      '<div style="font-family:var(--mono);font-size:9px;color:var(--text2);text-transform:uppercase;margin-bottom:8px;">Comparativa autorización vs ejecución</div>'+
+      '<table style="width:100%;border-collapse:collapse;font-size:11px;margin-bottom:12px;"><thead><tr style="border-bottom:1px solid var(--border);">'+
+      '<th style="font-family:var(--mono);font-size:9px;color:var(--text3);padding:6px 10px;text-align:left;">Métrica</th>'+
+      '<th style="font-family:var(--mono);font-size:9px;color:var(--text3);padding:6px 10px;text-align:right;">Autorizado</th>'+
+      '<th style="font-family:var(--mono);font-size:9px;color:var(--text3);padding:6px 10px;text-align:right;">Ejecutado</th></tr></thead><tbody>'+
+      [['Acciones',sizing.authorizedShares,execShares],
+       ['Precio','$'+(sizing.referencePrice||0).toFixed(2),'$'+execPrice.toFixed(2)],
+       ['Capital',fmtE(sizing.authorizedCapital||0),fmtE(execShares*execPrice)],
+       ['Riesgo €',fmtE(sizing.estimatedRiskEUR||0),fmtE(actualRiskEUR)],
+       ['Riesgo %NAV',((sizing.estimatedRiskPctNAV||0)*100).toFixed(2)+'%',(actualRiskPct*100).toFixed(2)+'%'],
+       ['Slippage','—','<span style="color:'+slippageColor+';">'+(slippage>=0?'+':'')+(slippage*100).toFixed(2)+'%</span>'],
+      ].map(([l,a,e])=>'<tr style="border-bottom:1px solid var(--border);"><td style="padding:7px 10px;">'+l+'</td><td style="padding:7px 10px;text-align:right;font-family:var(--mono);color:var(--text3);">'+a+'</td><td style="padding:7px 10px;text-align:right;font-family:var(--mono);font-weight:700;">'+e+'</td></tr>').join('')+
+      '</tbody></table>'+
+      '<div style="background:'+ptColor+'12;border:1px solid '+ptColor+'33;border-radius:8px;padding:12px 14px;">'+
+      '<div style="font-family:var(--mono);font-size:10px;font-weight:700;color:'+ptColor+';margin-bottom:6px;">'+ptStatus+' — '+(ptStatus==='PASS'?'Ejecución dentro de los límites autorizados.':ptStatus==='WARN'?'La ejecución ha empeorado métricas pero sigue dentro de límites.':'La ejecución provoca incumplimiento de una o más reglas HARD.')+'</div>'+
+      '<div style="font-family:var(--mono);font-size:9px;color:var(--text2);line-height:1.6;">Risk Budget global: <span style="color:'+chkCl(gChk)+';">'+((newPctG*100).toFixed(2))+'% / '+(POLICY.portRisk*100).toFixed(0)+'% → '+gChk+'</span><br>Risk Budget '+sizing.bucket.toUpperCase()+': <span style="color:'+chkCl(bChk)+';">'+((newPctB*100).toFixed(2))+'% / '+(riskLimitB*100).toFixed(0)+'% → '+bChk+'</span></div></div>'+
+      '<div style="font-family:var(--mono);font-size:9px;color:var(--text3);margin-top:8px;">La posición se registrará aunque exista BREACH. ETHAN documenta la desviación para auditoría.</div>';
+    overlay._execData = {execShares,execPrice,execStop,actualRiskEUR,actualRiskPct,ptStatus,slippage,capitalAtRiskReal};
+    overlay.querySelector('#mt-exec-confirm-btn').style.display='block';
+  });
+
+  overlay.querySelector('#mt-exec-confirm-btn').addEventListener('click', async () => {
+    const d = overlay._execData;
+    if (!d) return;
+    const execDate = overlay.querySelector('#mt-exec-date').value || today;
+    const stopType = overlay.querySelector('#mt-exec-stoptype').value;
+    const notas    = overlay.querySelector('#mt-exec-notas').value;
+    const execStop = parseFloat(overlay.querySelector('#mt-exec-stop').value) || sizing.referenceStop;
+    const btn = overlay.querySelector('#mt-exec-confirm-btn');
+    btn.textContent='Registrando…'; btn.disabled=true;
+    try {
+      const positions = (await UserData.get('ethan_positions')) || [];
+      const newPos = {
+        ticker: sizing.ticker, direction: sizing.side==='long'?'alcista':'bajista',
+        bucket: sizing.bucket, sector: sizing.sector||'',
+        shares: d.execShares, entry: d.execPrice, cost: d.execShares*d.execPrice,
+        entryDate: execDate, initialStop: execStop, activeStop: execStop,
+        stopType, notas,
+        referencePrice: sizing.referencePrice, referenceStop: sizing.referenceStop,
+        authorizedShares: sizing.authorizedShares, executedShares: d.execShares,
+        estimatedRiskEUR: sizing.estimatedRiskEUR, estimatedRiskPctNAV: sizing.estimatedRiskPctNAV,
+        actualRiskEUR: d.actualRiskEUR, actualRiskPctNAV: d.actualRiskPct,
+        policyVersion: sizing.policyVersion, sizingTimestamp: sizing.sizingTimestamp,
+        executionTimestamp: new Date().toISOString(), limitingRule: sizing.limitingRule,
+        executionStatus: d.ptStatus, source: 'position_sizing', sizingId: proposalId,
+        addedAt: Date.now(),
+      };
+      positions.push(newPos);
+      await UserData.set('ethan_positions', positions);
+      await markProposalExecuted(proposalId, {
+        executedShares: d.execShares, executionPrice: d.execPrice,
+        executionTimestamp: new Date().toISOString(),
+        positionId: sizing.ticker+'_'+execDate,
+        executionStatus: d.ptStatus,
+      });
+      await loadState();
+      renderAll(wrap);
+      const auditEl = wrap.querySelector('#mt-proposals-list');
+      if (auditEl) await loadAndRenderProposals(auditEl);
+      overlay.remove();
+      const execBtn = wrap.querySelector('#mt-sz-exec-btn');
+      if (execBtn) { execBtn.textContent='✓ Ejecución registrada'; execBtn.disabled=true; execBtn.style.color='var(--green)'; }
+    } catch(e) {
+      btn.textContent='✓ Confirmar y crear posición'; btn.disabled=false;
+      const errEl=overlay.querySelector('#mt-exec-error');
+      errEl.textContent='Error al guardar: '+e.message; errEl.style.display='block';
+    }
+  });
+}
+
+async function markProposalExecuted(proposalId, execData) {
+  try {
+    const user = getCurrentUser();
+    if (!user || !proposalId) return;
+    await updateDoc(doc(db, 'users', user.uid, 'trade_proposals', proposalId), {
+      status: 'EXECUTED',
+      executedShares:     execData.executedShares,
+      executionPrice:     execData.executionPrice,
+      executionTimestamp: execData.executionTimestamp,
+      positionId:         execData.positionId,
+      executionStatus:    execData.executionStatus,
+    });
+  } catch(e) { console.warn('markProposalExecuted:', e.message); }
 }
 
 async function loadAndRenderProposals(el) {
@@ -1780,6 +1999,7 @@ function renderParamsForm(el) {
   set('mt-p-core-threshold', POLICY.coreScoreThreshold ?? 6);
   set('mt-p-core-maxw',      ((POLICY.coreMaxWeight??0.40)*100).toFixed(0));
   set('mt-p-vol-window',     POLICY.volWindow ?? 60);
+  set('mt-p-ttl',            POLICY.authorizationTTLhours ?? 24);
   set('mt-p-trade',          (POLICY.tradeRisk*100).toFixed(2));
   set('mt-p-port',           (POLICY.portRisk*100).toFixed(0));
   set('mt-p-crisk',          (POLICY.coreRisk*100).toFixed(2));
