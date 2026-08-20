@@ -994,12 +994,13 @@ function calcSizing(el) {
 
   const riskLimitB  = bucket==='core' ? POLICY.coreRisk : POLICY.satRisk;
   const openRiskB   = positions.filter(p=>p.bucket===bucket)
-    .reduce((s,p)=>s+(p.stop>0?Math.abs(p.current-p.stop)/p.current*p.mktVal:0),0);
+    .reduce((s,p)=>s+(p.capitalAtRisk||0),0);
   const availRiskB  = Math.max(0, nav*riskLimitB - openRiskB);
-  const availRiskG  = Math.max(0, nav*POLICY.portRisk - openRisk);
+  const openRiskG   = positions.reduce((s,p)=>s+(p.capitalAtRisk||0),0);
+  const availRiskG  = Math.max(0, nav*POLICY.portRisk - openRiskG);
 
+  // Riesgo/op. efectivo = base × DD multiplier (restricción independiente)
   const baseRiskEur = nav * POLICY.tradeRisk * ddMult;
-  const allowedRisk = Math.min(baseRiskEur, availRiskB, availRiskG);
 
   const riskPerShare = Math.abs(entry - stop);
   const assetExp   = positions.filter(p=>p.ticker===ticker).reduce((s,p)=>s+p.mktVal,0);
@@ -1008,13 +1009,13 @@ function calcSizing(el) {
   const availSector = Math.max(0, nav*POLICY.maxSectorNav - sectorExp);
 
   const limits = [
-    { id:'risk',    label:'Riesgo/op. efectivo',               type:'HARD', qty: allowedRisk>0 ? Math.floor(allowedRisk/riskPerShare)  : 0, limit:`${fmtE(allowedRisk)} (${(allowedRisk/nav*100).toFixed(2)}% NAV)` },
+    { id:'risk',    label:'Riesgo/op. efectivo',               type:'HARD', qty: baseRiskEur>0 ? Math.floor(baseRiskEur/riskPerShare)  : 0, limit:`${fmtE(baseRiskEur)} (${(POLICY.tradeRisk*ddMult*100).toFixed(2)}% NAV × ×${ddMult.toFixed(2)})` },
     { id:'bucket',  label:'Capital bucket '+bucket.toUpperCase(), type:'HARD', qty: availBucket>0 ? Math.floor(availBucket/entry)         : 0, limit:`${fmtE(availBucket)} disponible` },
     { id:'cash',    label:'Cash disponible real',               type:'HARD', qty: cash>0        ? Math.floor(cash/entry)                : 0, limit:`${fmtE(cash)} en cartera` },
     { id:'asset',   label:'Máximo por activo',                  type:'HARD', qty: availAsset>0  ? Math.floor(availAsset/entry)           : 0, limit:`${(POLICY.maxAssetNav*100).toFixed(0)}% NAV` },
     { id:'sector',  label:'Máximo sectorial',                   type:'SOFT', qty: availSector>0 ? Math.floor(availSector/entry)          : 0, limit:`${(POLICY.maxSectorNav*100).toFixed(0)}% NAV` },
-    { id:'rbucket', label:`Risk Budget ${bucket.toUpperCase()}`,type:'HARD', qty: availRiskB>0  ? Math.floor(availRiskB/riskPerShare)    : 0, limit:`${fmtE(availRiskB)} restante` },
-    { id:'rglobal', label:'Risk Budget global',                 type:'HARD', qty: availRiskG>0  ? Math.floor(availRiskG/riskPerShare)    : 0, limit:`${(POLICY.portRisk*100).toFixed(0)}% NAV` },
+    { id:'rbucket', label:`Risk Budget ${bucket.toUpperCase()}`,type:'HARD', qty: availRiskB>0  ? Math.floor(availRiskB/riskPerShare)    : 0, limit:`${fmtE(availRiskB)} restante (${(availRiskB/nav*100).toFixed(2)}% NAV)` },
+    { id:'rglobal', label:'Risk Budget global',                 type:'HARD', qty: availRiskG>0  ? Math.floor(availRiskG/riskPerShare)    : 0, limit:`${fmtE(availRiskG)} restante (${(POLICY.portRisk*100).toFixed(0)}% NAV)` },
   ];
 
   const hardQtys = limits.filter(l=>l.type==='HARD').map(l=>l.qty);
@@ -1025,11 +1026,11 @@ function calcSizing(el) {
     { rule:'Stop válido (dirección)',     type:'HARD', result:'PASS', note:`${side.toUpperCase()}: stop correcto` },
     { rule:'Capital bucket disponible',   type:'HARD', result: availBucket>=entry?'PASS':'FAIL', note:fmtE(availBucket) },
     { rule:'Cash disponible real',        type:'HARD', result: cash>=entry?'PASS':'FAIL',        note:fmtE(cash) },
-    { rule:'Risk Budget global',          type:'HARD', result: availRiskG>=riskPerShare?'PASS':'FAIL', note:(availRiskG/nav*100).toFixed(2)+'% NAV' },
-    { rule:`Risk Budget ${bucket.toUpperCase()}`, type:'HARD', result: availRiskB>=riskPerShare?'PASS':'FAIL', note:(availRiskB/nav*100).toFixed(2)+'% NAV' },
+    { rule:'Risk Budget global',          type:'HARD', result: availRiskG>=riskPerShare?'PASS':'FAIL', note:`${(availRiskG/nav*100).toFixed(2)}% NAV disponible` },
+    { rule:`Risk Budget ${bucket.toUpperCase()}`, type:'HARD', result: availRiskB>=riskPerShare?'PASS':'FAIL', note:`${(availRiskB/nav*100).toFixed(2)}% NAV disponible` },
     { rule:'Límite por activo',           type:'HARD', result: availAsset>=entry?'PASS':'FAIL',  note:fmtE(availAsset) },
     { rule:'Límite sectorial',            type:'SOFT', result: availSector>=entry?'PASS':'WARN', note:fmtE(availSector) },
-    { rule:'Drawdown scaling',            type:'INFO', result: ddMult<1?'WARN':'PASS',           note:`×${ddMult.toFixed(2)}` },
+    { rule:'Drawdown scaling',            type:'INFO', result: ddMult<1?'WARN':'PASS',           note:`×${ddMult.toFixed(2)} · base ${(POLICY.tradeRisk*100).toFixed(2)}% → efectivo ${(POLICY.tradeRisk*ddMult*100).toFixed(2)}%` },
     { rule:'Posición > 0 acciones',       type:'HARD', result: qtyFinal>0?'PASS':'FAIL',         note:qtyFinal+' acc.' },
   ];
 
