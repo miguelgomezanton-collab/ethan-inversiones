@@ -680,7 +680,8 @@ export async function render(container, { actionsSlot }) {
         exit:        closePrice,
         shares:      pos.shares || null,
         cost:        pos.cost || null,
-        entryStop:   pos.entryStop || pos.stopManual || null,
+        entryStop:   pos.initialStop || pos.entryStop || pos.stopManual || null,
+        initialStop: pos.initialStop || pos.entryStop || pos.stopManual || null,
         pnlPct:      pnlPct,
         pnlAbs:      pnlAbs,
         stopType:    pos.stopType,
@@ -692,7 +693,14 @@ export async function render(container, { actionsSlot }) {
         entryDateISO: entryDateISO,
         exitDateISO: closeDate,
         duration:    duration,
-        closedAt:    Date.now()
+        closedAt:    Date.now(),
+        // Trazabilidad desde Position Sizing
+        source:           pos.source || null,
+        sizingId:         pos.sizingId || null,
+        authorizedShares: pos.authorizedShares || null,
+        executedShares:   pos.executedShares || null,
+        policyVersion:    pos.policyVersion || null,
+        executionStatus:  pos.executionStatus || null,
       });
 
       positions = positions.filter(p => p.ticker !== ticker);

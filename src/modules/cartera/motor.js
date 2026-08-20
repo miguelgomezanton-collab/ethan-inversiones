@@ -307,7 +307,7 @@ async function loadState() {
       let current = p.currentPrice > 0 ? p.currentPrice : (p.entry || 0);
 
       // Stop inicial — el que se fijó al abrir la operación
-      const initialStop = p.entryStop || p.stopManual || 0;
+      const initialStop = p.initialStop || p.entryStop || p.stopManual || 0;
 
       // Stop activo — leer el que calculó y persistió cartera.js
       // Prioridad: manual → activeStop persistido → stopDiario/semanal persistido → initialStop
