@@ -1348,10 +1348,10 @@ export async function render(container, { actionsSlot }) {
         let loaded = 0;
         for (const ticker of allTickers) {
           btn.textContent = `⏳ Descargando ${ticker} (${++loaded}/${allTickers.length})...`;
-          const r2 = await fetch('/api/market-history', {
+          const r2 = await fetch('/api/backfill-ticker', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-ethan-client': 'true' },
-            body: JSON.stringify({ ticker, startDate, endDate, uid: user.uid }),
+            body: JSON.stringify({ action: 'market-history', ticker, startDate, endDate, uid: user.uid }),
           });
           if (!r2.ok) throw new Error(`Error descargando ${ticker}: HTTP ${r2.status}`);
           const d = await r2.json();
