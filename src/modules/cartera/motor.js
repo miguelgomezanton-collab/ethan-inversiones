@@ -1,4 +1,11 @@
 // ═══════════════════════════════════════════════════════════════════
+// MOTOR INTEGRADO v1.0 — Baseline estable agosto 2026
+// Nomenclatura canónica:
+//   Budget de Capital ≠ Risk Budget
+//   Capital en Riesgo ≠ P&L at Risk
+//   CORE (sistemático) / SATÉLITE (selección activa)
+// ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
 // MÓDULO: Motor Integrado de Cartera
 // Portfolio State · Asset Allocation · Risk Budget · Position Sizing
 // Pre-Trade Check · Propuestas · Parámetros
@@ -382,7 +389,7 @@ async function loadState() {
       sectors[p.sector] = (sectors[p.sector]||0) + p.mktVal;
     });
 
-    // 8. Riesgo abierto = suma de capitalAtRisk de todas las posiciones
+    // 8. Riesgo Abierto = suma de capitalAtRisk de todas las posiciones
     // Si stop >= entry (LONG) o stop <= entry (SHORT): capital en riesgo = 0
     const openRisk = positions.reduce((s,p) => s + (p.capitalAtRisk||0), 0);
 
@@ -841,8 +848,8 @@ function renderAllocation(el) {
   const rows = [
     { dim:'CORE',     label:'Límite máx.',  lim:POLICY.corePct, act:(buckets.core||0)/nav, tol:POLICY.corePct },
     { dim:'SATÉLITE', label:'Límite máx.',  lim:POLICY.satPct,  act:(buckets.sat||0)/nav,  tol:POLICY.satPct  },
-    { dim:'RV Total', label:'Invertido',    lim:null,           act:totalInv/nav,           tol:null           },
-    { dim:'Cash',     label:'No desplegado',lim:null,           act:cash/nav,              tol:null           },
+    { dim:'RV Total', label:'Capital Invertido',    lim:null,           act:totalInv/nav,           tol:null           },
+    { dim:'Cash',     label:'Cash Táctico',lim:null,           act:cash/nav,              tol:null           },
   ];
   const tbody = el.querySelector('#mt-alloc-table');
   if (tbody) tbody.innerHTML = rows.map(r => {
@@ -1101,7 +1108,7 @@ function calcSizing(el) {
     <div class="mt-ba-grid">
       <div class="mt-ba-col">
         <div style="font-family:var(--mono);font-size:9px;color:var(--text3);text-transform:uppercase;margin-bottom:8px;">Antes</div>
-        ${[['NAV',fmtE(nav)],['Cash',fmtE(cash)],['Invertido',fmtE(STATE.invested||0)],['Riesgo abierto',fmtE(openRisk)],['Bucket '+bucket.toUpperCase(),fmtE(buckets[bucket]||0)],['Sector',fmtE(sectors[sector]||0)]].map(([l,v])=>
+        ${[['NAV',fmtE(nav)],['Cash',fmtE(cash)],['Invertido',fmtE(STATE.invested||0)],['Riesgo Abierto',fmtE(openRisk)],['Bucket '+bucket.toUpperCase(),fmtE(buckets[bucket]||0)],['Sector',fmtE(sectors[sector]||0)]].map(([l,v])=>
           `<div class="mt-ba-row"><span style="font-size:10px;color:var(--text3);">${l}</span><span style="font-family:var(--mono);font-size:11px;font-weight:700;">${v}</span></div>`).join('')}
       </div>
       <div style="display:flex;align-items:center;justify-content:center;color:var(--text3);">→</div>
@@ -1245,7 +1252,7 @@ export async function render(container, { actionsSlot, savedState } = {}) {
 
       <!-- OVERVIEW -->
       <div class="mt-aa-subpanel active" id="mt-aa-panel-overview">
-        <div class="mt-sdiv"><div class="mt-sdiv-lbl">Capital Budgets</div><div class="mt-sdiv-line"></div></div>
+        <div class="mt-sdiv"><div class="mt-sdiv-lbl">Budget de Capital</div><div class="mt-sdiv-line"></div></div>
         <div class="mt-g2 mb12">
           ${['core','sat'].map(b => {
             const clr = b==='core'?'var(--teal)':'var(--purple)';
@@ -1802,7 +1809,7 @@ function renderParamsForm(el) {
     effEl.innerHTML = `Límite efectivo por activo CORE: <strong style="color:var(--teal);">${(limitEfect*100).toFixed(1)}% NAV</strong> (${fmtE(nav*limitEfect)}) · manda ${manda}`;
   }
 
-  // Risk status — riesgo abierto vs límites
+  // Risk status — Riesgo Abierto vs límites
   const riskSt = el.querySelector('#mt-p-risk-status');
   if (riskSt && STATE) {
     const { nav, openRisk, positions } = STATE;
@@ -1816,7 +1823,7 @@ function renderParamsForm(el) {
     const availSAT    = Math.max(0, POLICY.satRisk   - openSatPct);
     const col = (used, lim) => used > lim ? 'var(--red)' : used > lim*0.7 ? 'var(--amber)' : 'var(--green)';
     riskSt.innerHTML = `
-      Riesgo abierto cartera: <strong style="color:${col(openRiskPct, POLICY.portRisk)}">${(openRiskPct*100).toFixed(2)}%</strong> · disponible: <strong style="color:var(--green);">${(availGlobal*100).toFixed(2)}%</strong><br>
+      Riesgo Abierto cartera: <strong style="color:${col(openRiskPct, POLICY.portRisk)}">${(openRiskPct*100).toFixed(2)}%</strong> · disponible: <strong style="color:var(--green);">${(availGlobal*100).toFixed(2)}%</strong><br>
       CORE abierto: <strong style="color:${col(openCorePct, POLICY.coreRisk)}">${(openCorePct*100).toFixed(2)}%</strong> · disponible: <strong>${(availCORE*100).toFixed(2)}%</strong> &nbsp;|&nbsp;
       SAT abierto: <strong style="color:${col(openSatPct, POLICY.satRisk)}">${(openSatPct*100).toFixed(2)}%</strong> · disponible: <strong>${(availSAT*100).toFixed(2)}%</strong>`;
   }
