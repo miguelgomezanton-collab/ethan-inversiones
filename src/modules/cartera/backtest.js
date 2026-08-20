@@ -803,300 +803,199 @@ export async function render(container, { actionsSlot }) {
 
 
   // ════════════════════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════════════
   // BACKTESTING ETHAN — Motor temporal completo
-  // Arquitectura: Signal Close(t) → Execution Close(t+1)
-  // Reutiliza lógica del Motor Integrado (Policy, waterfall, stops)
+  // Señales EXACTAS del sistema (copiadas de runEngine)
+  // Filtros: Mensual + Semanal + Diario
+  // Convención: Signal Close(t) → Execution Close(t+1)
   // ════════════════════════════════════════════════════════════════
 
-  // ── Helpers técnicos (mismos que motor.js) ─────────────────────
-  function btEma(arr, p) {
-    const k=2/(p+1); let s=arr.findIndex(v=>v!=null&&!isNaN(v));
-    if(s<0)return arr.map(()=>null);
-    const out=arr.map(()=>null); out[s]=arr[s];
-    for(let i=s+1;i<arr.length;i++){const v=arr[i]??out[i-1]; out[i]=v*k+out[i-1]*(1-k);}
-    return out;
-  }
-  function btMacd(c){const e12=btEma(c,12),e26=btEma(c,26);const m=e12.map((v,i)=>v!=null&&e26[i]!=null?v-e26[i]:null);return{m,sl:btEma(m.map(v=>v??0),9)};}
-  function btRsi(c,p=14){const out=c.map(()=>null);if(c.length<p+1)return out;let g=0,l=0;for(let i=1;i<=p;i++){const d=c[i]-c[i-1];d>0?g+=d:l-=d;}let ag=g/p,al=l/p;out[p]=al===0?100:100-(100/(1+ag/al));for(let i=p+1;i<c.length;i++){const d=c[i]-c[i-1];ag=(ag*(p-1)+(d>0?d:0))/p;al=(al*(p-1)+(d<0?-d:0))/p;out[i]=al===0?100:100-(100/(1+ag/al));}return out;}
-  function btStoch(H,L,C,p=8){return C.map((c,i)=>{if(i<p-1)return null;const hh=Math.max(...H.slice(i-p+1,i+1)),ll=Math.min(...L.slice(i-p+1,i+1));return hh===ll?50:(c-ll)/(hh-ll)*100;});}
-  function btDDMult(dd, ddScale){const d=Math.abs(dd);if(d<=0.03)return ddScale[0];if(d<=0.05)return ddScale[1];if(d<=0.08)return ddScale[2];if(d<=0.10)return ddScale[3];return ddScale[4];}
+  function btEma(arr,p){const k=2/(p+1),out=new Array(arr.length).fill(null);let s=arr.findIndex(v=>v!=null&&!isNaN(v));if(s<0)return out;out[s]=arr[s];for(let i=s+1;i<arr.length;i++){const v=arr[i]!=null&&!isNaN(arr[i])?arr[i]:out[i-1];out[i]=v*k+out[i-1]*(1-k);}return out;}
+  function btMacd(c,f=12,s=26,sig=9){const ef=btEma(c,f),es=btEma(c,s);const m=ef.map((v,i)=>v!=null&&es[i]!=null?v-es[i]:null);return{m,sl:btEma(m.map(v=>v??0),sig)};}
+  function btRsi(c,p=14){const out=new Array(c.length).fill(null);if(c.length<p+1)return out;let g=0,l=0;for(let i=1;i<=p;i++){const d=c[i]-c[i-1];d>0?g+=d:l-=d;}let ag=g/p,al=l/p;out[p]=al===0?100:100-(100/(1+ag/al));for(let i=p+1;i<c.length;i++){const d=c[i]-c[i-1];ag=(ag*(p-1)+(d>0?d:0))/p;al=(al*(p-1)+(d<0?-d:0))/p;out[i]=al===0?100:100-(100/(1+ag/al));}return out;}
+  function btStoch(H,L,C,p=14){const rK=C.map((c,i)=>{if(i<p-1)return null;const hh=Math.max(...H.slice(i-p+1,i+1)),ll=Math.min(...L.slice(i-p+1,i+1));return hh===ll?50:(c-ll)/(hh-ll)*100;});const k=btEma(rK,3);return{k,d:btEma(k.map(v=>v??0),3)};}
+  function btResample(ts,opens,highs,lows,closes,vols,freq){const groups={};ts.forEach((t,i)=>{const d=new Date(t*1000);let key;if(freq==='W'){const day=d.getDay();const diff=d.getDate()-day+(day===0?-6:1);const mo=new Date(+d);mo.setDate(diff);key=mo.toISOString().slice(0,10);}else key=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;if(!groups[key])groups[key]={o:opens[i],h:highs[i],l:lows[i],c:closes[i],v:vols[i]};else{groups[key].h=Math.max(groups[key].h,highs[i]);groups[key].l=Math.min(groups[key].l,lows[i]);groups[key].c=closes[i];groups[key].v+=vols[i];}});const keys=Object.keys(groups).sort();return{dates:keys,opens:keys.map(k=>groups[k].o),highs:keys.map(k=>groups[k].h),lows:keys.map(k=>groups[k].l),closes:keys.map(k=>groups[k].c),vols:keys.map(k=>groups[k].v)};}
+  function btDDMult(dd,ddScale){const d=Math.abs(dd);if(d<=0.03)return ddScale[0];if(d<=0.05)return ddScale[1];if(d<=0.08)return ddScale[2];if(d<=0.10)return ddScale[3];return ddScale[4];}
   function btAnnVol(rets){if(rets.length<2)return 0;const m=rets.reduce((a,b)=>a+b,0)/rets.length;return Math.sqrt(rets.reduce((a,b)=>a+(b-m)**2,0)/rets.length)*Math.sqrt(252);}
   function btSharpe(rets,rf=0.05){const m=rets.reduce((a,b)=>a+b,0)/rets.length*252;const v=btAnnVol(rets);return v>0?(m-rf)/v:0;}
   function btSortino(rets,rf=0.05){const m=rets.reduce((a,b)=>a+b,0)/rets.length*252;const neg=rets.filter(r=>r<0);const dv=neg.length>0?Math.sqrt(neg.reduce((a,b)=>a+b**2,0)/neg.length)*Math.sqrt(252):0;return dv>0?(m-rf)/dv:0;}
   function btMaxDD(curve){let peak=curve[0],mdd=0;for(const v of curve){if(v>peak)peak=v;const dd=(v-peak)/peak;if(dd<mdd)mdd=dd;}return mdd;}
   function btCAGR(start,end,days){return days>0?Math.pow(end/start,365/days)-1:0;}
 
-  // ── Señales de entrada (mismas reglas que Backtesting Valores) ──
-  function btCheckEntry(closes, highs, lows, i, systems) {
-    if (i < 30) return null;
-    const c = closes; const H = highs; const L = lows;
-    const ema5  = btEma(c, 5);
-    const ema10 = btEma(c, 10);
-    const macd  = btMacd(c);
-    const rsi14 = btRsi(c, 14);
-    const rsi5  = btRsi(c, 5);
-    const stoch = btStoch(H, L, c, 8);
-
-    if (systems.sma5d && i >= 1 && ema5[i] != null && c[i] > ema5[i] && c[i-1] <= ema5[i-1]) return 'EMA5D';
-    if (systems.macd  && i >= 1 && macd.m[i] != null && macd.sl[i] != null &&
-        macd.m[i] > macd.sl[i] && macd.m[i-1] <= macd.sl[i-1] && rsi14[i] > 55) return 'MACD_RSI';
-    if (systems.rsi5_pullback && rsi5[i] != null && rsi5[i-1] != null &&
-        rsi5[i] > 40 && rsi5[i-1] < 40) return 'RSI5_PB';
-    return null;
-  }
-
-  // ── Señales de salida ───────────────────────────────────────────
-  function btCheckExit(pos, closePrice, ema10) {
-    // Stop por EMA10 diario
-    if (pos.direction === 'long' && ema10 != null && closePrice < ema10) return 'EMA10D';
-    // Stop fijo inicial
-    if (pos.direction === 'long' && pos.activeStop > 0 && closePrice < pos.activeStop) return 'STOP';
-    return null;
-  }
-
-  // ── Motor temporal principal ────────────────────────────────────
   function runEthanBacktest(universeData, config) {
-    const { policy, initialCapital, benchmark, costs, startDate, endDate, systems } = config;
-    const { tradeRisk, portRisk, ddScale, maxAssetNav, maxSectorNav,
-            corePct, satPct, coreRisk, satRisk } = policy;
+    const{policy,initialCapital,costs,startDate,endDate,systems}=config;
+    const{tradeRisk,portRisk,ddScale,maxAssetNav,maxSectorNav,corePct,satPct,coreRisk,satRisk}=policy;
 
-    // Unificar fechas del universo
-    const allDates = [...new Set(
-      Object.values(universeData).flatMap(d => d.map(r => r.date))
-    )].filter(d => d >= startDate && d <= endDate).sort();
-
-    if (allDates.length < 20) throw new Error('Datos insuficientes para el período seleccionado');
-
-    // Estado de la simulación
-    let nav = initialCapital;
-    let cash = initialCapital;
-    let hwm  = initialCapital;
-    let openPositions = [];
-    const closedTrades = [];
-    const navCurve = [{ date: allDates[0], nav: initialCapital }];
-    const dailyReturns = [];
-
-    // Precalcular indicadores para cada ticker
-    const indicators = {};
-    for (const [ticker, rows] of Object.entries(universeData)) {
-      const closes = rows.map(r => r.close);
-      const highs  = rows.map(r => r.high);
-      const lows   = rows.map(r => r.low);
-      indicators[ticker] = {
-        rows, closes, highs, lows,
-        ema5:  btEma(closes, 5),
-        ema10: btEma(closes, 10),
-        macd:  btMacd(closes),
-        rsi14: btRsi(closes, 14),
+    // Precalcular indicadores por ticker (mensual + semanal + diario)
+    const indByTicker={};
+    for(const[ticker,rows]of Object.entries(universeData)){
+      const timestamps=rows.map(r=>Math.floor(new Date(r.date).getTime()/1000));
+      const opens=rows.map(r=>r.open),highs=rows.map(r=>r.high),lows=rows.map(r=>r.low),closes=rows.map(r=>r.close),vols=rows.map(r=>r.volume||0);
+      const W=btResample(timestamps,opens,highs,lows,closes,vols,'W');
+      const M=btResample(timestamps,opens,highs,lows,closes,vols,'M');
+      indByTicker[ticker]={
+        rows,timestamps,opens,highs,lows,closes,vols,W,M,
+        m_macd:btMacd(M.closes),m_s89:btStoch(M.highs,M.lows,M.closes,89),
+        m_s8:btStoch(M.highs,M.lows,M.closes,8),m_rsi:btRsi(M.closes,14),m_ema10:btEma(M.closes,10),
+        w_macd:btMacd(W.closes),w_s89:btStoch(W.highs,W.lows,W.closes,89),
+        w_rsi:btRsi(W.closes,14),w_ema20:btEma(W.closes,20),w_ema10:btEma(W.closes,10),
+        w_ema5:btEma(W.closes,5),w_rsi5:btRsi(W.closes,5),w_s5:btStoch(W.highs,W.lows,W.closes,5),
+        d_macd:btMacd(closes),d_rsi14:btRsi(closes,14),d_rsi5:btRsi(closes,5),
+        d_ema5:btEma(closes,5),d_ema10:btEma(closes,10),
       };
     }
 
-    // Iterar día a día
-    for (let di = 1; di < allDates.length; di++) {
-      const date = allDates[di];
-      const prevDate = allDates[di - 1];
-      const prevNav = nav;
+    function getMonthIdx(ind,dateStr){const key=dateStr.slice(0,7);const idx=ind.M.dates.indexOf(key);return idx>=0?idx:ind.M.dates.length-1;}
+    function getWeekIdx(ind,ts){const d=new Date(ts*1000);const day=d.getDay();const diff=d.getDate()-day+(day===0?-6:1);const mo=new Date(+d);mo.setDate(diff);const key=mo.toISOString().slice(0,10);const idx=ind.W.dates.indexOf(key);return idx>=0?idx:ind.W.dates.length-1;}
 
-      // 1. Actualizar precios y P&L de posiciones abiertas
-      let unrealPnl = 0;
-      for (const pos of openPositions) {
-        const ind = indicators[pos.ticker];
-        if (!ind) continue;
-        const rowIdx = ind.rows.findIndex(r => r.date === date);
-        if (rowIdx < 0) continue;
-        const curPrice = ind.closes[rowIdx];
-        pos.currentPrice = curPrice;
-        // Actualizar stop activo (EMA10)
-        const ema10 = ind.ema10[rowIdx];
-        if (ema10 != null && pos.direction === 'long' && ema10 > pos.activeStop) {
-          pos.activeStop = ema10;
-        }
-        unrealPnl += (curPrice - pos.entryPrice) * pos.shares;
+    // Filtros exactos del sistema
+    function mensualOk(ind,mi){
+      if(mi<0||mi>=ind.M.closes.length)return false;
+      return ind.m_macd.m[mi]>0&&ind.m_macd.m[mi]>ind.m_macd.sl[mi]&&
+             ((ind.m_s89.k[mi]>80&&ind.m_s89.k[mi]>ind.m_s89.d[mi])||ind.m_s89.k[mi]>92)&&
+             ind.m_rsi[mi]>65&&ind.m_s8.k[mi]>78&&ind.M.closes[mi]>ind.m_ema10[mi];
+    }
+    function semanalOk(ind,wi){
+      if(wi<0||wi>=ind.W.closes.length)return false;
+      return ind.w_macd.m[wi]>0&&ind.w_macd.m[wi]>ind.w_macd.sl[wi]&&
+             ((ind.w_s89.k[wi]>85&&ind.w_s89.k[wi]>ind.w_s89.d[wi])||ind.w_s89.k[wi]>92)&&
+             ind.w_rsi[wi]>67&&ind.W.closes[wi]>ind.w_ema20[wi];
+    }
+
+    // Señales de entrada diarias exactas
+    function checkEntry(ind,i,wi,systems){
+      if(i<1)return null;
+      const c=ind.closes,dm=ind.d_macd,dr14=ind.d_rsi14,dr5=ind.d_rsi5,de5=ind.d_ema5;
+      if(systems.macd&&dm.m[i]>dm.sl[i]&&dm.m[i-1]<=dm.sl[i-1]&&dr14[i]>57&&dm.m[i]>0)return 'MACD_RSI';
+      if(systems.sma5d&&de5[i]!=null&&de5[i-1]!=null&&c[i]>de5[i]&&c[i-1]<=de5[i-1])return 'EMA5D';
+      if(systems.sma5w&&wi>0&&ind.w_ema5[wi]!=null&&ind.w_ema5[wi-1]!=null&&ind.W.closes[wi]>ind.w_ema5[wi]&&ind.W.closes[wi-1]<=ind.w_ema5[wi-1])return 'EMA5W';
+      if(systems.rsi5w&&wi>=2){const ok=(ind.w_rsi5[wi-1]<50||ind.w_rsi5[wi-2]<50)&&ind.w_s5.k[wi-1]<ind.w_s5.k[wi-2]&&ind.w_rsi5[wi]>60&&ind.w_rsi5[wi-1]<=60&&ind.w_s5.k[wi]>ind.w_s5.k[wi-1];if(ok)return 'RSI5W';}
+      if(systems.rsi5_pullback&&i>=5){let f=false;for(let j=i-10;j<i;j++){if(j>=0&&dr5[j]>60){f=true;break;}}if(f&&dr5[i-1]>=38&&dr5[i-1]<=42&&dr5[i]>dr5[i-1]&&dr5[i-1]<dr5[i-2])return 'RSI5_PB';}
+      return null;
+    }
+
+    // Estado de la simulación
+    const allDates=[...new Set(Object.values(universeData).flatMap(d=>d.map(r=>r.date)))].filter(d=>d>=startDate&&d<=endDate).sort();
+    if(allDates.length<100)throw new Error('Datos insuficientes — mínimo 100 sesiones');
+    let nav=initialCapital,cash=initialCapital,hwm=initialCapital;
+    let openPositions=[];
+    const closedTrades=[],navCurve=[{date:allDates[0],nav:initialCapital}],dailyReturns=[];
+
+    for(let di=1;di<allDates.length;di++){
+      const date=allDates[di],prevDate=allDates[di-1],prevNav=nav;
+
+      // Actualizar precios y stops dinámicos
+      for(const pos of openPositions){
+        const ind=indByTicker[pos.ticker];if(!ind)continue;
+        const ri=ind.rows.findIndex(r=>r.date===date);if(ri<0)continue;
+        pos.currentPrice=ind.closes[ri];
+        const e10=ind.d_ema10[ri];if(e10!=null&&e10>pos.activeStop)pos.activeStop=e10;
       }
 
-      // 2. NAV actual
-      const investedVal = openPositions.reduce((s, p) => s + p.currentPrice * p.shares, 0);
-      nav = cash + investedVal;
-      const dd = hwm > 0 ? (nav - hwm) / hwm : 0;
-      if (nav > hwm) hwm = nav;
+      // NAV y drawdown
+      nav=cash+openPositions.reduce((s,p)=>s+(p.currentPrice||p.entryPrice)*p.shares,0);
+      const dd=hwm>0?(nav-hwm)/hwm:0;if(nav>hwm)hwm=nav;
 
-      // 3. Ejecutar salidas — Signal was at prevDate, execution at date (t+1)
-      const toClose = [];
-      for (const pos of openPositions) {
-        const ind = indicators[pos.ticker];
-        if (!ind) continue;
-        const rowIdx = ind.rows.findIndex(r => r.date === prevDate); // señal en t
-        if (rowIdx < 0) continue;
-        const ema10 = ind.ema10[rowIdx];
-        const exitSignal = btCheckExit(pos, ind.closes[rowIdx], ema10);
-        if (exitSignal) {
-          // Ejecutar al cierre de date (t+1)
-          const execRowIdx = ind.rows.findIndex(r => r.date === date);
-          const exitPrice = execRowIdx >= 0 ? ind.closes[execRowIdx] : pos.currentPrice;
-          const slippage = exitPrice * (costs.slippage / 100);
-          const effectiveExit = pos.direction === 'long' ? exitPrice - slippage : exitPrice + slippage;
-          const pnlAbs = (effectiveExit - pos.entryPrice) * pos.shares - costs.commission;
-          const pnlPct = pnlAbs / (pos.entryPrice * pos.shares);
-          toClose.push({ ...pos, exitDate: date, exitPrice: effectiveExit, pnlAbs, pnlPct, exitSystem: exitSignal, holdingDays: di - pos.entryDayIdx });
-          cash += effectiveExit * pos.shares - costs.commission;
+      // Salidas — señal en prevDate(t), ejecución en date(t+1)
+      const toClose=[];
+      for(const pos of openPositions){
+        const ind=indByTicker[pos.ticker];if(!ind)continue;
+        const pri=ind.rows.findIndex(r=>r.date===prevDate);if(pri<0)continue;
+        const pts=ind.timestamps[pri],pwi=getWeekIdx(ind,pts),pmi=getMonthIdx(ind,prevDate);
+        const stopHit=ind.d_ema10[pri]!=null&&ind.closes[pri]<ind.d_ema10[pri];
+        const prevD=new Date(pts*1000);
+        const condsBroken=prevD.getDay()===5&&(!mensualOk(ind,pmi)||!semanalOk(ind,pwi));
+        if(stopHit||condsBroken){
+          const eri=ind.rows.findIndex(r=>r.date===date);
+          const ep=eri>=0?ind.closes[eri]:pos.currentPrice;
+          const effExit=ep-(ep*costs.slippage/100);
+          const pnlAbs=(effExit-pos.entryPrice)*pos.shares-costs.commission;
+          toClose.push({...pos,exitDate:date,exitPrice:effExit,pnlAbs,pnlPct:pnlAbs/(pos.entryPrice*pos.shares),exitSystem:stopHit?'EMA10D':'COND_BREAK',holdingDays:di-pos.entryDayIdx});
+          cash+=effExit*pos.shares-costs.commission;
         }
       }
-      openPositions = openPositions.filter(p => !toClose.find(c => c.ticker === p.ticker && c.entryDate === p.entryDate));
+      openPositions=openPositions.filter(p=>!toClose.find(c=>c.ticker===p.ticker&&c.entryDate===p.entryDate));
       closedTrades.push(...toClose);
 
-      // 4. Risk Budget disponible
-      const openRiskGlobal = openPositions.reduce((s, p) => s + Math.max(0, p.entryPrice - p.activeStop) * p.shares, 0);
-      const openRiskBuckets = { core: 0, sat: 0 };
-      openPositions.forEach(p => { openRiskBuckets[p.bucket] = (openRiskBuckets[p.bucket]||0) + Math.max(0, p.entryPrice - p.activeStop) * p.shares; });
-      const exposureByTicker = {};
-      const exposureBySector = {};
-      openPositions.forEach(p => {
-        exposureByTicker[p.ticker] = (exposureByTicker[p.ticker]||0) + p.currentPrice * p.shares;
-        exposureBySector[p.sector||'?'] = (exposureBySector[p.sector||'?']||0) + p.currentPrice * p.shares;
-      });
-      const budgetCore = nav * corePct;
-      const budgetSat  = nav * satPct;
-      const investedCore = openPositions.filter(p=>p.bucket==='core').reduce((s,p)=>s+p.currentPrice*p.shares,0);
-      const investedSat  = openPositions.filter(p=>p.bucket==='sat').reduce((s,p)=>s+p.currentPrice*p.shares,0);
+      // Métricas de riesgo/exposure
+      const openRiskG=openPositions.reduce((s,p)=>s+Math.max(0,p.entryPrice-p.activeStop)*p.shares,0);
+      const openRiskB={core:0,sat:0};openPositions.forEach(p=>{const b=p.bucket||'sat';openRiskB[b]=(openRiskB[b]||0)+Math.max(0,p.entryPrice-p.activeStop)*p.shares;});
+      const expT={};openPositions.forEach(p=>{expT[p.ticker]=(expT[p.ticker]||0)+p.currentPrice*p.shares;});
+      const invCore=openPositions.filter(p=>p.bucket==='core').reduce((s,p)=>s+p.currentPrice*p.shares,0);
+      const invSat=openPositions.filter(p=>p.bucket==='sat').reduce((s,p)=>s+p.currentPrice*p.shares,0);
 
-      // 5. Evaluar señales de entrada en t (prevDate) → ejecutar en date (t+1)
-      if (cash > 0) {
-        for (const [ticker, ind] of Object.entries(indicators)) {
-          if (openPositions.find(p => p.ticker === ticker)) continue;
-          const rowIdx = ind.rows.findIndex(r => r.date === prevDate);
-          if (rowIdx < 0 || rowIdx < 30) continue;
-          const entrySystem = btCheckEntry(ind.closes, ind.highs, ind.lows, rowIdx, systems);
-          if (!entrySystem) continue;
-
-          // Ejecución al cierre de date (t+1)
-          const execRowIdx = ind.rows.findIndex(r => r.date === date);
-          if (execRowIdx < 0) continue;
-          const entryPrice = ind.closes[execRowIdx];
-          const slippage = entryPrice * (costs.slippage / 100);
-          const effectiveEntry = entryPrice + slippage;
-          const initialStop = ind.ema10[execRowIdx] || effectiveEntry * 0.93;
-          const riskPerShare = Math.max(0.01, effectiveEntry - initialStop);
-
-          // Bucket — alternar CORE/SAT
-          const bucket = openPositions.length % 2 === 0 ? 'core' : 'sat';
-          const budgetBucket = bucket === 'core' ? budgetCore : budgetSat;
-          const investedBucket = bucket === 'core' ? investedCore : investedSat;
-          const availBucket = Math.max(0, budgetBucket - investedBucket);
-          const riskLimitBucket = bucket === 'core' ? coreRisk : satRisk;
-          const openRiskBucket = openRiskBuckets[bucket] || 0;
-
-          // Waterfall — misma lógica que motor.js
-          const ddMult = btDDMult(dd, ddScale);
-          const baseRiskEur = nav * tradeRisk * ddMult;
-          const availRiskBucket = Math.max(0, nav * riskLimitBucket - openRiskBucket);
-          const availRiskGlobal = Math.max(0, nav * portRisk - openRiskGlobal);
-          const availAsset = Math.max(0, nav * maxAssetNav - (exposureByTicker[ticker]||0));
-
-          const qtyByRisk   = Math.floor(baseRiskEur / riskPerShare);
-          const qtyByBucket = Math.floor(availBucket / effectiveEntry);
-          const qtyCash     = Math.floor(cash / effectiveEntry);
-          const qtyAsset    = Math.floor(availAsset / effectiveEntry);
-          const qtyRiskB    = Math.floor(availRiskBucket / riskPerShare);
-          const qtyRiskG    = Math.floor(availRiskGlobal / riskPerShare);
-
-          const shares = Math.max(0, Math.min(qtyByRisk, qtyByBucket, qtyCash, qtyAsset, qtyRiskB, qtyRiskG));
-          if (shares <= 0) continue;
-
-          const capitalInv = shares * effectiveEntry;
-          cash -= capitalInv + costs.commission;
-          openPositions.push({
-            ticker, direction: 'long', bucket, sector: ticker,
-            entryDate: date, entryPrice: effectiveEntry, shares,
-            initialStop, activeStop: initialStop,
-            currentPrice: effectiveEntry, entryDayIdx: di,
-            entrySystem, limitingRule: 'waterfall',
-            policyVersion: policy.version || '1.0',
-          });
-        }
+      // Entradas — señal en prevDate(t), ejecución en date(t+1)
+      let bt=openPositions.length%2;
+      for(const[ticker,ind]of Object.entries(indByTicker)){
+        if(openPositions.find(p=>p.ticker===ticker))continue;
+        const pri=ind.rows.findIndex(r=>r.date===prevDate);if(pri<0||pri<100)continue;
+        const pts=ind.timestamps[pri],pmi=getMonthIdx(ind,prevDate),pwi=getWeekIdx(ind,pts);
+        // FILTROS SUPERIORES EXACTOS
+        if(!mensualOk(ind,pmi))continue;
+        if(!semanalOk(ind,pwi))continue;
+        // SEÑAL DIARIA
+        const entrySystem=checkEntry(ind,pri,pwi,systems);if(!entrySystem)continue;
+        // Ejecución en t+1
+        const eri=ind.rows.findIndex(r=>r.date===date);if(eri<0)continue;
+        const ep=ind.closes[eri],effEntry=ep+(ep*costs.slippage/100);
+        const initialStop=ind.d_ema10[eri]||effEntry*0.93;
+        const riskPS=Math.max(0.01,effEntry-initialStop);
+        const bucket=(bt++%2===0)?'core':'sat';
+        const availBucket=Math.max(0,(bucket==='core'?nav*corePct-invCore:nav*satPct-invSat));
+        const availRiskB=Math.max(0,nav*(bucket==='core'?coreRisk:satRisk)-(openRiskB[bucket]||0));
+        const availRiskG=Math.max(0,nav*portRisk-openRiskG);
+        const availAsset=Math.max(0,nav*maxAssetNav-(expT[ticker]||0));
+        const ddMult=btDDMult(dd,ddScale);
+        const baseRiskEur=nav*tradeRisk*ddMult;
+        const shares=Math.max(0,Math.min(
+          Math.floor(baseRiskEur/riskPS),Math.floor(availBucket/effEntry),
+          Math.floor(cash/effEntry),Math.floor(availAsset/effEntry),
+          Math.floor(availRiskB/riskPS),Math.floor(availRiskG/riskPS)
+        ));
+        if(shares<=0)continue;
+        cash-=shares*effEntry+costs.commission;
+        openPositions.push({ticker,direction:'long',bucket,sector:ticker,entryDate:date,entryPrice:effEntry,shares,initialStop,activeStop:initialStop,currentPrice:effEntry,entryDayIdx:di,entrySystem,policyVersion:policy.version||'1.0'});
       }
 
-      // 6. Recalcular NAV final del día
-      const newInvestedVal = openPositions.reduce((s, p) => s + p.currentPrice * p.shares, 0);
-      nav = cash + newInvestedVal;
-      if (nav > hwm) hwm = nav;
-      if (di > 0) dailyReturns.push((nav - prevNav) / prevNav);
-      navCurve.push({ date, nav });
+      nav=cash+openPositions.reduce((s,p)=>s+(p.currentPrice||p.entryPrice)*p.shares,0);
+      if(nav>hwm)hwm=nav;
+      dailyReturns.push((nav-prevNav)/prevNav);
+      navCurve.push({date,nav});
     }
 
-    // Cerrar posiciones abiertas al final
-    for (const pos of openPositions) {
-      const pnlAbs = (pos.currentPrice - pos.entryPrice) * pos.shares;
-      closedTrades.push({ ...pos, exitDate: allDates[allDates.length-1], exitPrice: pos.currentPrice, pnlAbs, pnlPct: pnlAbs/(pos.entryPrice*pos.shares), exitSystem: 'END', holdingDays: 0 });
+    // Cerrar abiertas al final
+    for(const pos of openPositions){
+      const pnlAbs=(pos.currentPrice-pos.entryPrice)*pos.shares;
+      closedTrades.push({...pos,exitDate:allDates[allDates.length-1],exitPrice:pos.currentPrice,pnlAbs,pnlPct:pnlAbs/(pos.entryPrice*pos.shares),exitSystem:'END',holdingDays:0});
     }
 
-    // ── Métricas ────────────────────────────────────────────────
-    const totalDays = allDates.length;
-    const winners   = closedTrades.filter(t => t.pnlPct > 0);
-    const losers    = closedTrades.filter(t => t.pnlPct <= 0);
-    const avgWin    = winners.length ? winners.reduce((s,t)=>s+t.pnlPct,0)/winners.length : 0;
-    const avgLoss   = losers.length  ? Math.abs(losers.reduce((s,t)=>s+t.pnlPct,0)/losers.length) : 0;
-    const grossWin  = winners.reduce((s,t)=>s+t.pnlAbs,0);
-    const grossLoss = Math.abs(losers.reduce((s,t)=>s+t.pnlAbs,0));
-    const mdd       = btMaxDD(navCurve.map(p=>p.nav));
-    const cagr      = btCAGR(initialCapital, nav, totalDays);
-    const sharpe    = btSharpe(dailyReturns);
-    const sortino   = btSortino(dailyReturns);
-    const vol       = btAnnVol(dailyReturns);
-    const calmar    = mdd < 0 ? cagr / Math.abs(mdd) : 0;
-
-    // Por año
-    const byYear = {};
-    navCurve.forEach(p => {
-      const y = p.date.slice(0,4);
-      if (!byYear[y]) byYear[y] = { start: p.nav, end: p.nav, trades: 0, maxDD: 0, peak: p.nav };
-      byYear[y].end = p.nav;
-      if (p.nav > byYear[y].peak) byYear[y].peak = p.nav;
-      const dd2 = (p.nav - byYear[y].peak) / byYear[y].peak;
-      if (dd2 < byYear[y].maxDD) byYear[y].maxDD = dd2;
-    });
-    closedTrades.forEach(t => {
-      const y = (t.exitDate||'').slice(0,4);
-      if (byYear[y]) byYear[y].trades++;
-    });
-
-    // Por bucket
-    const byBucket = { core: { trades:[], pnl:0 }, sat: { trades:[], pnl:0 } };
-    closedTrades.forEach(t => {
-      const b = t.bucket||'sat';
-      if (byBucket[b]) { byBucket[b].trades.push(t); byBucket[b].pnl += t.pnlAbs; }
-    });
-
-    // Por sistema de entrada
-    const bySys = {};
-    closedTrades.forEach(t => {
-      if (!bySys[t.entrySystem]) bySys[t.entrySystem] = [];
-      bySys[t.entrySystem].push(t);
-    });
-
-    return {
-      // Config
-      startDate, endDate, initialCapital, policyVersion: policy.version||'1.0',
-      engineVersion: 'ETHAN Backtest Engine v1.0',
-      signalConvention: 'Signal Close(t) → Execution Close(t+1)',
-      survivorshipBias: true,
-      // Curvas
-      navCurve, dailyReturns,
-      // Operaciones
-      trades: closedTrades,
-      openAtEnd: openPositions.length,
-      // Métricas
-      finalCapital: nav, twr: (nav/initialCapital)-1, cagr, vol, sharpe, sortino, calmar, mdd,
-      nTrades: closedTrades.length, winRate: closedTrades.length ? winners.length/closedTrades.length : 0,
-      avgWin, avgLoss, payoff: avgLoss>0?avgWin/avgLoss:0,
-      profitFactor: grossLoss>0?grossWin/grossLoss:0,
-      expectancy: closedTrades.length ? closedTrades.reduce((s,t)=>s+t.pnlPct,0)/closedTrades.length : 0,
-      bestTrade: closedTrades.length ? Math.max(...closedTrades.map(t=>t.pnlPct)) : 0,
-      worstTrade: closedTrades.length ? Math.min(...closedTrades.map(t=>t.pnlPct)) : 0,
-      avgDays: closedTrades.length ? closedTrades.reduce((s,t)=>s+(t.holdingDays||0),0)/closedTrades.length : 0,
-      byYear, byBucket, bySys,
+    // Métricas finales
+    const winners=closedTrades.filter(t=>t.pnlPct>0),losers=closedTrades.filter(t=>t.pnlPct<=0);
+    const grossWin=winners.reduce((s,t)=>s+t.pnlAbs,0),grossLoss=Math.abs(losers.reduce((s,t)=>s+t.pnlAbs,0));
+    const avgWin=winners.length?winners.reduce((s,t)=>s+t.pnlPct,0)/winners.length:0;
+    const avgLoss=losers.length?Math.abs(losers.reduce((s,t)=>s+t.pnlPct,0)/losers.length):0;
+    const mdd=btMaxDD(navCurve.map(p=>p.nav));
+    const cagr=btCAGR(initialCapital,nav,allDates.length);
+    const byYear={};navCurve.forEach(p=>{const y=p.date.slice(0,4);if(!byYear[y])byYear[y]={start:p.nav,end:p.nav,trades:0,maxDD:0,peak:p.nav};byYear[y].end=p.nav;if(p.nav>byYear[y].peak)byYear[y].peak=p.nav;const dd2=(p.nav-byYear[y].peak)/byYear[y].peak;if(dd2<byYear[y].maxDD)byYear[y].maxDD=dd2;});
+    closedTrades.forEach(t=>{const y=(t.exitDate||'').slice(0,4);if(byYear[y])byYear[y].trades++;});
+    const byBucket={core:{trades:[],pnl:0},sat:{trades:[],pnl:0}};closedTrades.forEach(t=>{const b=t.bucket||'sat';if(byBucket[b]){byBucket[b].trades.push(t);byBucket[b].pnl+=t.pnlAbs;}});
+    const bySys={};closedTrades.forEach(t=>{if(!bySys[t.entrySystem])bySys[t.entrySystem]=[];bySys[t.entrySystem].push(t);});
+    return{
+      startDate,endDate,initialCapital,policyVersion:policy.version||'1.0',
+      engineVersion:'ETHAN Backtest Engine v1.0',
+      signalConvention:'Signal Close(t) → Execution Close(t+1)',survivorshipBias:true,
+      navCurve,dailyReturns,trades:closedTrades,openAtEnd:openPositions.length,
+      finalCapital:nav,twr:(nav/initialCapital)-1,cagr,vol:btAnnVol(dailyReturns),
+      sharpe:btSharpe(dailyReturns),sortino:btSortino(dailyReturns),calmar:mdd<0?cagr/Math.abs(mdd):0,mdd,
+      nTrades:closedTrades.length,winRate:closedTrades.length?winners.length/closedTrades.length:0,
+      avgWin,avgLoss,payoff:avgLoss>0?avgWin/avgLoss:0,profitFactor:grossLoss>0?grossWin/grossLoss:0,
+      expectancy:closedTrades.length?closedTrades.reduce((s,t)=>s+t.pnlPct,0)/closedTrades.length:0,
+      bestTrade:closedTrades.length?Math.max(...closedTrades.map(t=>t.pnlPct)):0,
+      worstTrade:closedTrades.length?Math.min(...closedTrades.map(t=>t.pnlPct)):0,
+      avgDays:closedTrades.length?closedTrades.reduce((s,t)=>s+(t.holdingDays||0),0)/closedTrades.length:0,
+      byYear,byBucket,bySys,
     };
   }
-
   // ── UI Backtesting ETHAN ────────────────────────────────────────
   function renderEthanConfig() {
     const policy = { version:'1.0', corePct:0.50, satPct:0.50, tradeRisk:0.015, portRisk:0.06, coreRisk:0.03, satRisk:0.04, maxAssetNav:0.20, maxSectorNav:0.35, ddScale:[1,0.8,0.6,0.4,0.25] };
@@ -1146,7 +1045,7 @@ export async function render(container, { actionsSlot }) {
 
         <div style="font-family:var(--mono);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text2);margin:14px 0 10px;">Sistemas de Entrada</div>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px;">
-          ${[['sma5d','EMA5 Diario'],['macd','MACD+RSI Diario'],['rsi5_pullback','RSI5 Pullback']].map(([id,lbl]) =>
+          ${[['sma5d','EMA5 Diario'],['macd','MACD+RSI Diario'],['rsi5_pullback','RSI5 Pullback Diario'],['sma5w','EMA5 Semanal'],['rsi5w','RSI5+Stoch5 Semanal']].map(([id,lbl]) =>
             `<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:11px;">
                <input type="checkbox" id="bt-e-sys-${id}" checked style="accent-color:var(--teal);"> ${lbl}
              </label>`).join('')}
@@ -1330,7 +1229,13 @@ export async function render(container, { actionsSlot }) {
       const portRisk  = (parseFloat(document.getElementById('bt-e-port')?.value)||6)/100;
       const maxAsset  = (parseFloat(document.getElementById('bt-e-asset')?.value)||20)/100;
       const maxSect   = (parseFloat(document.getElementById('bt-e-sect')?.value)||35)/100;
-      const systems   = { sma5d: document.getElementById('bt-e-sys-sma5d')?.checked, macd: document.getElementById('bt-e-sys-macd')?.checked, rsi5_pullback: document.getElementById('bt-e-sys-rsi5_pullback')?.checked };
+      const systems   = {
+        sma5d:         document.getElementById('bt-e-sys-sma5d')?.checked,
+        macd:          document.getElementById('bt-e-sys-macd')?.checked,
+        rsi5_pullback: document.getElementById('bt-e-sys-rsi5_pullback')?.checked,
+        sma5w:         document.getElementById('bt-e-sys-sma5w')?.checked,
+        rsi5w:         document.getElementById('bt-e-sys-rsi5w')?.checked,
+      };
 
       if (!tickersRaw.length) { alert('Introduce al menos un ticker'); return; }
 
