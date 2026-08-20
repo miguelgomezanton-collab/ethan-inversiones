@@ -1140,8 +1140,12 @@ function calcSizing(el) {
       }).join('')}
     </div>`;
 
-  // Guardar propuesta si autorizado
-  if (approved) saveProposal({ ticker, bucket, side, sector, entry, stop, qtyFinal, capInv, initRiskE, initRiskP, pctNav, ddMult, limitingRule:limiting.label, finalStatus:approved?'PASS':hasWarn?'WARN':'FAIL', policyVersion:POLICY.version, nav:STATE.nav });
+  // Guardar siempre en audit log — tanto AUTORIZADO como BLOQUEADO
+  const finalStatus = hardFail ? 'BLOQUEADO' : hasWarn ? 'WARN' : 'AUTORIZADO';
+  saveProposal({ ticker, bucket, side, sector, entry, stop, qtyFinal, capInv, initRiskE, initRiskP, pctNav, ddMult, limitingRule:limiting.label, finalStatus, policyVersion:POLICY.version, nav:STATE.nav });
+  // Refrescar audit log
+  const auditEl = wrap?.querySelector('#mt-proposals-list');
+  if (auditEl) setTimeout(() => loadAndRenderProposals(auditEl), 500);
 }
 
 async function saveProposal(data) {
@@ -1173,7 +1177,7 @@ async function loadAndRenderProposals(el) {
             <span class="mt-badge ${bc}">${p.finalStatus}</span>
             <div>
               <div style="font-weight:700;">${p.ticker||'—'} ${(p.side||'').toUpperCase()} · ${p.qtyFinal||0} acc. · ${(p.bucket||'').toUpperCase()}</div>
-              <div style="font-size:10px;color:var(--text3);margin-top:2px;">$${p.entry?.toFixed(2)||'—'} → stop $${p.stop?.toFixed(2)||'—'} · ${p.limitingRule||'—'}</div>
+              <div style="font-size:10px;color:var(--text3);margin-top:2px;">$${p.entry?.toFixed(2)||'—'} → stop $${p.stop?.toFixed(2)||'—'} · ${p.limitingRule||'—'} · v${p.policyVersion||'—'}</div>
             </div>
             <div style="text-align:right;font-family:var(--mono);font-size:11px;">${p.capInv?fmtE(p.capInv):'—'}</div>
             <div style="text-align:right;font-family:var(--mono);font-size:10px;color:var(--red);">${p.initRiskE?fmtE(p.initRiskE):'—'}</div>
@@ -1206,7 +1210,6 @@ export async function render(container, { actionsSlot, savedState } = {}) {
       <button class="mt-tab" data-tab="allocation">🎯 Asset Allocation</button>
       <button class="mt-tab" data-tab="sizing">📐 Position Sizing</button>
       <button class="mt-tab" data-tab="risk">⚡ Risk Budget</button>
-      <button class="mt-tab" data-tab="proposals">📋 Propuestas</button>
       <button class="mt-tab" data-tab="params">⚙️ Parámetros</button>
     </div>
 
@@ -1337,6 +1340,14 @@ export async function render(container, { actionsSlot, savedState } = {}) {
         </div>
       </div>
       <div class="mt-card"><div class="mt-card-title">Waterfall · Before/After · Pre-Trade Check</div><div id="mt-sz-waterfall"></div></div>
+
+      <div class="mt-card" style="margin-top:0;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+          <div class="mt-card-title" style="margin-bottom:0;">Audit Log · Historial de decisiones</div>
+          <span style="font-family:var(--mono);font-size:9px;color:var(--text3);">Últimas 10 · AUTORIZADO y BLOQUEADO</span>
+        </div>
+        <div id="mt-proposals-list"><div style="font-family:var(--mono);font-size:11px;color:var(--text3);padding:16px 0;">Sin registros aún.</div></div>
+      </div>
     </div>
 
     <!-- RISK BUDGET -->
@@ -1371,12 +1382,6 @@ export async function render(container, { actionsSlot, savedState } = {}) {
       </div>
       <div class="mt-sdiv"><div class="mt-sdiv-lbl">Riesgo por Posición</div><div class="mt-sdiv-line"></div></div>
       <div class="mt-card"><div id="mt-risk-positions"></div></div>
-    </div>
-
-    <!-- PROPUESTAS -->
-    <div class="mt-panel" id="mt-panel-proposals">
-      <div style="font-size:10px;color:var(--text3);margin-bottom:12px;line-height:1.6;">Log de auditoría — últimas 10 propuestas calculadas por el motor. Cada propuesta registra parámetros vigentes, resultado del Pre-Trade Check y regla limitante.</div>
-      <div class="mt-card"><div class="mt-card-title">Últimas Propuestas</div><div id="mt-proposals-list"><div class="mt-loader"><div class="mt-loader-ring"></div>Cargando...</div></div></div>
     </div>
 
     <!-- PARÁMETROS -->
@@ -1559,7 +1564,7 @@ export async function render(container, { actionsSlot, savedState } = {}) {
       wrap.querySelectorAll('.mt-panel').forEach(p=>p.classList.remove('active'));
       tab.classList.add('active');
       wrap.querySelector(`#mt-panel-${tab.dataset.tab}`)?.classList.add('active');
-      if (tab.dataset.tab === 'proposals') {
+      if (tab.dataset.tab === 'sizing') {
         const el2 = wrap.querySelector('#mt-proposals-list');
         if (el2) loadAndRenderProposals(el2);
       }
