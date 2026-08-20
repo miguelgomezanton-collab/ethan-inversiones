@@ -1161,10 +1161,11 @@ async function calcSizing(el) {
     sizingTimestamp: new Date().toISOString(),
     preTradeChecks: checks.map(c=>({rule:c.rule,result:c.result,type:c.type})),
   };
-  const proposalId = await saveProposal(sizingPayload);
+  const proposalId = await saveProposal(sizingPayload).catch(() => null);
+  const effectiveId = proposalId || ('local_' + Date.now());
 
   // Botón "Registrar ejecución" solo si AUTORIZADO
-  if (approved && proposalId) {
+  if (approved) {
     const btnContainer = document.createElement('div');
     btnContainer.style.cssText = 'margin-top:16px;text-align:center;';
     btnContainer.innerHTML = `
@@ -1173,12 +1174,12 @@ async function calcSizing(el) {
         📋 Registrar ejecución en IBKR
       </button>
       <div style="font-family:var(--mono);font-size:9px;color:var(--text3);margin-top:6px;">
-        Autorización válida ${POLICY.authorizationTTLhours||24}h · ID: ${proposalId.slice(0,8)}…
+        Autorización válida ${POLICY.authorizationTTLhours||24}h${proposalId ? ' · ID: '+proposalId.slice(0,8)+'…' : ''}
       </div>`;
     resEl.appendChild(btnContainer);
 
     btnContainer.querySelector('#mt-sz-exec-btn').addEventListener('click', () => {
-      openExecutionForm(wrap, sizingPayload, proposalId);
+      openExecutionForm(el, sizingPayload, effectiveId);
     });
   }
 
