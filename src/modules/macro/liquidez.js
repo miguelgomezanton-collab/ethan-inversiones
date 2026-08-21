@@ -138,7 +138,8 @@ export async function render(container, { actionsSlot }) {
                   const r = c[key];
                   if (!r) return `${label}: —`;
                   if (r.error) return `${label}: ⚠ ${r.error}`;
-                  return `${label}: ${r.currentDate||'—'} | YoY ${r.yoy!=null?(r.yoy>=0?'+':'')+f2(r.yoy)+'%':'—'} | base ${r.baseDate||'—'} | ${r.ageDays!=null?r.ageDays+'d':'-'} · ${fsn(r.freshness)}`;
+                  const srcTag = r.source ? ` [${r.source}${r.fallbackReason?' ⚠ fallback':''}]` : '';
+                  return `${label}: ${r.currentDate||'—'} | YoY ${r.yoy!=null?(r.yoy>=0?'+':'')+f2(r.yoy)+'%':'—'} | base ${r.baseDate||'—'} | ${r.ageDays!=null?r.ageDays+'d':'-'} · ${fsn(r.freshness)}${srcTag}`;
                 };
                 return [
                   row(true,'us','USA FRED M2SL'),

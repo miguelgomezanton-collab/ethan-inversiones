@@ -11,10 +11,11 @@ const ECB_URL = 'https://data-api.ecb.europa.eu/service/data/YC/B.U2.EUR.4F.G_N_
 // Serie M2 Eurozona BCE (millones EUR, fin de mes, sin ajuste estacional)
 const ECB_M2_URL = 'https://data-api.ecb.europa.eu/service/data/BSI/M.U2.N.V.M20.X.1.U2.2300.Z01.E?lastNObservations=14&format=csvdata';
 
-// BOJ API — M2 mensual (base MD02)
-// El código de serie correcto para M2 average amounts outstanding es MD02'AM'MABJMNE3S0000000M
-// Usamos el endpoint de metadatos para descubrir el código si falla el directo
-const BOJ_M2_URL = 'https://www.stat-search.boj.or.jp/api/v1/getDataCode?format=json&lang=en&db=MD02&code=MD02%27AM%27MABJMNE3S0000000M';
+// BOJ Time-Series Data Search API (oficial desde feb 2026)
+// Serie: MD02'MAM1NAM2M2MO — M2 / Average Amounts Outstanding / Money Stock
+// Documentación: https://www.boj.or.jp/en/statistics/outline/notice_2026/not260218a.htm
+const BOJ_TS_API  = 'https://www.stat-search.boj.or.jp/api/v1/getDataCode';
+const BOJ_M2_CODE = "MD02'MAM1NAM2M2MO";
 
 // ── FRED helper ───────────────────────────────
 async function fred(id, key, limit = 14) {
@@ -163,20 +164,26 @@ async function calcGlobalM2(fredKey, manualChinaM2pct) {
   }
 
   // ── JPN M2 ──────────────────────────────────────────────────
-  if (rJpM2.status === 'fulfilled' && rJpM2.value.length >= 2) {
-    const obs = rJpM2.value;
+  if (rJpM2.status === 'fulfilled' && rJpM2.value?.obs?.length >= 2) {
+    const { obs, source: jpSource, fallbackReason } = rJpM2.value;
     const current = obs[0];
     const base = findYoYBase(obs, current.date);
     const { ageDays, freshness } = m2Freshness(current.date);
     if (base) {
       const yoy = +((current.value - base.value) / base.value * 100).toFixed(2);
-      components.jp = { yoy, currentDate: current.date, currentValue: current.value,
-        baseDate: base.date, baseValue: base.value, ageDays, freshness, weight: 10, valid: freshness === 'ok' };
+      components.jp = {
+        yoy, currentDate: current.date, currentValue: current.value,
+        baseDate: base.date, baseValue: base.value,
+        ageDays, freshness, weight: 10, valid: freshness === 'ok',
+        source: jpSource,
+        ...(fallbackReason ? { fallbackReason } : {}),
+      };
     } else {
-      components.jp = { yoy: null, currentDate: current.date, error: 'Sin base YoY 12M', ageDays, freshness, weight: 10, valid: false };
+      components.jp = { yoy: null, currentDate: current.date, error: 'Sin base YoY 12M',
+        ageDays, freshness, weight: 10, valid: false, source: jpSource };
     }
   } else {
-    errors.push('JPN M2: ' + (rJpM2.reason?.message || 'sin datos'));
+    errors.push('JPN M2: ' + (rJpM2.reason?.message || 'sin datos o estructura inesperada'));
     components.jp = { yoy: null, error: 'Sin datos', ageDays: null, freshness: 'missing', weight: 10, valid: false };
   }
 
