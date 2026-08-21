@@ -525,7 +525,8 @@ function scTipoReal(v) {
   if (v >= 0.5) return  0;
   return -1;
 }
-// Indicador 10: BBB Spread (×1)
+// Indicador 10: BBB Spread (×1) — frontera inequívoca
+// ≤1.00% → +1 | >1.00% y ≤1.50% → 0 | >1.50% → -1
 function scBBB(v) {
   if (v <= 1.00) return +1;
   if (v <= 1.50) return  0;
@@ -921,11 +922,19 @@ export default async function handler(req, res) {
       score: scTipoReal(v), weight: 1 };
   }
 
-  // 10. BBB Spread (auto)
+  // 10. BBB Spread — FRED BAMLC0A4CBBB (diario, OAS ICE BofA BBB US Corporate)
+  // Freshness diario: ≤7d OK | 8-10d WARN | >10d STALE
   if (rBbb.status === 'fulfilled' && rBbb.value[0]) {
-    const v = rBbb.value[0].value;
-    ind.bbb = { label: 'BBB Corporate Spread', value: v, date: rBbb.value[0].date,
-      score: scBBB(v), weight: 1 };
+    const v       = rBbb.value[0].value;
+    const date    = rBbb.value[0].date;
+    const ageDays = Math.round((Date.now() - new Date(date).getTime()) / 86400000);
+    const freshness = ageDays <= 7 ? 'ok' : ageDays <= 10 ? 'warn' : 'stale';
+    ind.bbb = {
+      label: 'BBB Corporate Spread', value: v, date,
+      ageDays, freshness,
+      score: freshness === 'stale' ? null : scBBB(v),
+      weight: 1, auto: true, stale: freshness === 'stale',
+    };
   } else errs.push('BBB: ' + rBbb.reason?.message);
 
   // 11. Fear & Greed / Put-Call proxy (auto)

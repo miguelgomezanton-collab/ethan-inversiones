@@ -251,12 +251,19 @@ export async function render(container, { actionsSlot }) {
           <div class="co-liq-card-header"><span class="co-liq-card-title">📊 BBB Spread</span><span style="font-size:9px;color:var(--text3);font-family:var(--mono);">${liq.bbb.date||'—'}</span></div>
           <div style="font-family:var(--serif);font-size:32px;font-weight:600;font-style:italic;color:${col(liq.bbb.score)};">${f2(liq.bbb.value)}%</div>
           <div style="font-size:10px;color:var(--text2);font-family:var(--mono);margin-bottom:2px;">OAS · FRED BAMLC0A4CBBB</div>
-          <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:4px;">≤1.00%→+1  ·  1.00-1.50%→0  ·  >1.50%→−1  ·  peso ×1</div>
+          <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:4px;">≤1.00%→+1  ·  >1.00% y ≤1.50%→0  ·  >1.50%→−1  ·  PROVISIONAL · peso ×1</div>
           <div class="co-ind-bar-track" style="margin:8px 0 4px;"><div class="co-ind-bar-fill" style="width:${Math.min(liq.bbb.value/4*100,100)}%;background:${col(liq.bbb.score)};"></div></div>
+          <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:8px;background:rgba(64,217,192,0.04);border:1px solid rgba(64,217,192,0.15);border-radius:6px;padding:8px 10px;line-height:1.8;">
+            🔍 DEBUG BBB Spread<br>
+            Fecha: ${liq.bbb.date||'—'} | BAMLC0A4CBBB: ${liq.bbb.value!=null?liq.bbb.value.toFixed(2)+'%':'—'}<br>
+            Antigüedad: ${liq.bbb.ageDays!=null?liq.bbb.ageDays+'d':'—'} · ${liq.bbb.freshness==='ok'?'✓ OK':liq.bbb.freshness==='warn'?'⚠ WARN':'✗ STALE'} (≤7d OK | 8-10d WARN | >10d STALE)<br>
+            Score: ${liq.bbb.score!=null?liq.bbb.score:'bloqueado'}${liq.bbb.stale?' · STALE':''} · Fuente: FRED BAMLC0A4CBBB [PROVISIONAL]
+          </div>
           <div style="font-size:10px;color:var(--text2);line-height:1.5;margin-top:8px;">
-            ${liq.bbb.score>0?'<strong style="color:var(--green)">+1 pt.</strong> ≤1.00% — mercado tranquilo, acceso barato al crédito corporativo.':
-              liq.bbb.score===0?'<strong style="color:var(--amber)">0 pts.</strong> 1.00-1.50% — neutral, coste de crédito moderado.':
-              '<strong style="color:var(--red)">−1 pt.</strong> >1.50% — estrés crediticio, prima de riesgo corporativo elevada.'}
+            ${liq.bbb.score>0?'<strong style="color:var(--green)">+1 pt.</strong> ≤1.00% — spreads contenidos, mercado tranquilo. Scoring provisional.':
+              liq.bbb.score===0?'<strong style="color:var(--amber)">0 pts.</strong> >1.00% y ≤1.50% — neutral, coste de crédito moderado. Scoring provisional.':
+              liq.bbb.score!=null?'<strong style="color:var(--red)">−1 pt.</strong> >1.50% — estrés crediticio, prima de riesgo elevada. Scoring provisional.':
+              '<strong style="color:var(--text3)">— pts.</strong> Dato obsoleto o no disponible.'}
           </div>
         </div>` : ''}
       </div>
