@@ -295,7 +295,8 @@ async function calcGlobalM2(fredKey, manualChinaM2pct) {
     if (rChnM2.reason) errors.push('CHN M2 auto falló: ' + rChnM2.reason?.message);
   } else {
     errors.push('CHN M2: ' + (rChnM2.reason?.message || 'sin datos'));
-    components.chn = { yoy: null, freshness: 'missing', weight: 30, valid: false };
+    components.chn = { yoy: null, freshness: 'missing', weight: 30, valid: false,
+      error: rChnM2.reason?.message || rChnM2.value ? `sin datos tras parseo (keys: ${Object.keys(rChnM2.value||{}).join(',')})` : 'rejected' };
   }
 
   // ── Agregación con cobertura dinámica ────────────────────────

@@ -147,7 +147,7 @@ export async function render(container, { actionsSlot }) {
                   row(true,'us','USA FRED M2SL'),
                   row(true,'eur','EUR ECB BSI'),
                   row(true,'jp','JPN BOJ'),
-                  `CHN: ${c.chn?.valid ? '+'+f2(c.chn.yoy)+'% (manual)' : '— pendiente manual'}`,
+                  `CHN: ${c.chn?.valid ? (c.chn.source === 'manual override' ? `${f2(c.chn.yoy)}% (manual override)` : `${c.chn.currentDate||'—'} | YoY ${c.chn.yoy!=null?(c.chn.yoy>=0?'+':'')+f2(c.chn.yoy)+'%':'—'} | base ${c.chn.baseDate||'—'} | ${c.chn.ageDays!=null?c.chn.ageDays+'d':'-'} · ${fsn(c.chn.freshness)} [${c.chn.source||'—'}]`) : `⚠ ${c.chn?.error||'missing'} — ${c.chn?.source||'sin fuente'}`}`,
                   `Cobertura: ${liq.m2.coverageWeight||'—'}/100 (mín. 60) · Global YoY: ${liq.m2.value!=null?(liq.m2.value>=0?'+':'')+f2(liq.m2.value)+'%':'bloqueado'}`,
                 ].join('<br>');
               })()
