@@ -127,9 +127,7 @@ async function fetchChinaM2() {
 
   const json = await res.json();
   const rows = json?.data?.data;
-  if (!Array.isArray(rows) || rows.length === 0) {
-    throw new Error('CHN_NO_OBSERVATIONS');
-  }
+  if (!Array.isArray(rows) || rows.length === 0) throw new Error('CHN_NO_OBSERVATIONS');
 
   const obs = rows
     .map(r => ({ date: String(r.date), value: Number(r.value) }))
@@ -143,12 +141,8 @@ async function fetchChinaM2() {
   if (!base) throw new Error('CHN_INVALID_YOY_BASE');
 
   const yoy = (current.value / base.value - 1) * 100;
-  const { ageDays, freshness } = m2Freshness(current.date);
-
-  return {
-    obs: { current, base, yoy, ageDays, freshness },
-    source: 'PBOC_VIA_CHINADATA',
-  };
+  // Devolver datos crudos — freshness se calcula en calcGlobalM2 donde m2Freshness ya está definida
+  return { current, base, yoy, source: 'PBOC_VIA_CHINADATA' };
 }
 
 // ── Calcular M2 Global USA + EUR + JPN + CHN ────────────────────
@@ -281,21 +275,20 @@ async function calcGlobalM2(fredKey, manualChinaM2pct) {
 
   // ── CHN M2 — ChinaData.live (PBoC) + override manual como fallback ──────────
   const chnResult = rChnM2.status === 'fulfilled' ? rChnM2.value : null;
-  const chnData   = chnResult?.obs || null;
-  const chnSource = chnResult?.source || 'unknown';
 
-  if (chnData?.current && chnData?.yoy != null) {
+  if (chnResult?.current && chnResult?.yoy != null) {
+    const { ageDays, freshness } = m2Freshness(chnResult.current.date);
     components.chn = {
-      yoy:          +chnData.yoy.toFixed(2),
-      currentDate:  chnData.current.date,
-      currentValue: chnData.current.value,
-      baseDate:     chnData.base.date,
-      baseValue:    chnData.base.value,
-      ageDays:      chnData.ageDays,
-      freshness:    chnData.freshness,
+      valid:        freshness !== 'stale',
+      source:       chnResult.source || 'PBOC_VIA_CHINADATA',
+      currentDate:  chnResult.current.date,
+      currentValue: chnResult.current.value,
+      baseDate:     chnResult.base.date,
+      baseValue:    chnResult.base.value,
+      yoy:          +chnResult.yoy.toFixed(2),
+      ageDays,
+      freshness,
       weight: 30,
-      valid:  chnData.freshness !== 'stale',
-      source: chnSource,
     };
   } else if (manualChinaM2pct != null) {
     components.chn = {
