@@ -19,10 +19,14 @@ export async function render(container,{actionsSlot}){
     const co=macro.coyuntura||{};
     const ind=macro.indicators||{};
     const s=macro.scoreTotal??0;
+    const avail=macro.availableScore??17;
+    const cov=macro.coverage??1;
     const man=getManuals();
     // Ciclo position: map score a fase
     const fase=s>=10?'BOOM':s>=4?'EXPANSIÓN':s>=0?'DESACEL.':s>=-4?'RECESIÓN LEVE':'RECESIÓN SEVERA';
     const faseCol=s>=10?'var(--green)':s>=4?'var(--green)':s>=0?'var(--amber)':s>=-4?'var(--red)':'var(--red)';
+    const covColor=cov>=0.85?'var(--green)':cov>=0.65?'var(--amber)':'var(--red)';
+    const covLabel=cov>=0.85?'cobertura alta':cov>=0.65?'cobertura parcial':'cobertura insuficiente';
 
     el.innerHTML=`
       <div style="display:grid;grid-template-columns:260px 1fr;gap:16px;margin-bottom:14px;">
@@ -46,9 +50,11 @@ export async function render(container,{actionsSlot}){
             <text x="44" y="85" text-anchor="start" font-family="IBM Plex Mono" font-size="8" fill="var(--teal)">RECUPER.</text>
             <!-- Centro -->
             <circle cx="120" cy="120" r="40" fill="var(--surface)"/>
-            <text x="120" y="116" text-anchor="middle" font-family="Cormorant Garamond" font-size="12" font-style="italic" fill="${faseCol}">${fase}</text>
-            <text x="120" y="132" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="var(--text3)">${s>=0?'+':''}${s} / 17</text>
+            <text x="120" y="113" text-anchor="middle" font-family="Cormorant Garamond" font-size="12" font-style="italic" fill="${faseCol}">${fase}</text>
+            <text x="120" y="128" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="var(--text3)">${s>=0?'+':''}${s} / ${avail}</text>
+            <text x="120" y="140" text-anchor="middle" font-family="IBM Plex Mono" font-size="8" fill="${covColor}">${Math.round(cov*100)}% cob.</text>
           </svg>
+          <div style="font-family:var(--mono);font-size:9px;text-align:center;margin-top:6px;color:${covColor};">${covLabel} · ${avail}/${macro.maxPossible||17} pts disponibles</div>
         </div>
 
         <!-- Indicadores adelantados -->

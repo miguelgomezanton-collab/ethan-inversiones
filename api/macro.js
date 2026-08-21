@@ -703,16 +703,20 @@ export default async function handler(req, res) {
   } else errs.push('FearGreed: ' + rFg.reason?.message);
 
   // ── Score total ───────────────────────────────
-  let scoreTotal = 0, maxPossible = 0, minPossible = 0;
+  // Solo indicadores con score != null contribuyen al numerador Y al denominador.
+  // STALE/MISSING/ERROR quedan completamente excluidos de ambos.
+  let scoreTotal = 0, availableScore = 0;
   const scoreDetail = {};
+  const MAX_POSSIBLE = 17; // suma teórica de todos los pesos cuando todos puntúan
   Object.entries(ind).forEach(([k, i]) => {
     if (i.score != null) {
-      scoreTotal  += i.score;
+      scoreTotal    += i.score;
+      availableScore += (i.weight || 1);
       scoreDetail[k] = { score: i.score, weight: i.weight };
     }
-    maxPossible += i.weight || 1;
-    minPossible -= i.weight || 1;
+    // Si score null: excluido del numerador Y del denominador
   });
+  const coverage = +(availableScore / MAX_POSSIBLE).toFixed(4); // 0–1
 
   // ── Seguimiento (sin score) ───────────────────
   const seguimiento = {
@@ -766,6 +770,9 @@ export default async function handler(req, res) {
   return res.status(200).json({
     updatedAt: new Date().toISOString(),
     scoreTotal,
+    availableScore,
+    coverage,
+    maxPossible: MAX_POSSIBLE,
     zone: zone(scoreTotal),
     probabilities: probabilities(scoreTotal),
     riesgoContagio: rc,
