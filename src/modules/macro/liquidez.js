@@ -5,13 +5,28 @@ const fsign = v => v != null ? (v>=0?'+':'')+Number(v).toFixed(2) : '—';
 const col   = s => s > 0 ? 'var(--green)' : s === 0 ? 'var(--amber)' : 'var(--red)';
 
 function regime(liq) {
-  const total = Object.values(liq)
-    .filter(i => i?.score != null)
-    .reduce((s, i) => s + i.score, 0);
-  if (total >= 4)  return { title: 'Liquidez Expansiva',   c: 'var(--green)', sub: 'Combustible para el ciclo', score: total };
-  if (total >= 0)  return { title: 'Liquidez Neutral',     c: 'var(--amber)', sub: 'Mixto — selectividad clave', score: total };
-  if (total >= -4) return { title: 'Liquidez Contractiva', c: 'var(--red)',   sub: 'El dinero se retira del sistema', score: total };
-  return             { title: 'Drenaje Severo',           c: 'var(--red)',   sub: 'Riesgo sistémico — reducir exposición', score: total };
+  // Liquidity Score propio — independiente del macro.scoreTotal
+  // Indicadores: M2 Global (±3), Impulso Crediticio (±2), Velocidad M2 (±2), Reservas (±1/−2), BBB Spread (±1)
+  // PROVISIONAL — pesos y thresholds pendientes de calibración
+  let rawScore = 0, maxAvailable = 0;
+  const MAX_POSSIBLE = 9; // 3+2+2+1+1
+  const detail = {};
+  for (const [k, i] of Object.entries(liq)) {
+    if (i?.score != null) {
+      rawScore     += i.score;
+      maxAvailable += Math.abs(i.weight || 1);
+      detail[k]     = i.score;
+    }
+  }
+  const coverage = +(maxAvailable / MAX_POSSIBLE).toFixed(3);
+
+  let title, c, sub;
+  if (rawScore >= 4)  { title = 'Liquidez Expansiva';   c = 'var(--green)'; sub = 'Combustible para el ciclo'; }
+  else if (rawScore >= 0)  { title = 'Liquidez Neutral';     c = 'var(--amber)'; sub = 'Mixto — selectividad clave'; }
+  else if (rawScore >= -4) { title = 'Liquidez Contractiva'; c = 'var(--red)';   sub = 'El dinero se retira del sistema'; }
+  else                     { title = 'Drenaje Severo';       c = 'var(--red)';   sub = 'Riesgo sistémico — reducir exposición'; }
+
+  return { title, c, sub, score: rawScore, maxAvailable, coverage, detail };
 }
 
 function buildPhrase(liq) {
@@ -270,15 +285,49 @@ export async function render(container, { actionsSlot }) {
 
       <!-- IMPLICACIONES -->
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px 22px;margin-top:16px;">
-        <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:14px;">💡 Implicaciones para la estrategia</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+          <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:0.08em;">💡 Implicaciones para la estrategia</div>
+          <div style="font-family:var(--mono);font-size:9px;color:var(--text3);">
+            Liquidity Score: <span style="color:${reg.c};font-weight:700;">${reg.score>=0?'+':''}${reg.score}</span> / ${reg.maxAvailable} · cobertura ${Math.round(reg.coverage*100)}% · <span style="color:var(--amber)">PROVISIONAL</span>
+          </div>
+        </div>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;">
-          <div style="background:var(--surface2);border-radius:8px;padding:12px 14px;"><div style="font-size:10px;font-weight:700;color:${reg.c};margin-bottom:6px;text-transform:uppercase;">Renta Variable</div><div style="font-size:11px;color:var(--text2);line-height:1.5;">${reg.score>=4?'Liquidez expansiva favorece expansión de múltiplos. Entorno propicio para posiciones largas.':reg.score>=0?'Liquidez mixta. Selectividad: calidad sobre momentum.':'Liquidez contractiva presiona valoraciones. Preferir FCF alto y calidad sobre growth.'}</div></div>
-          <div style="background:var(--surface2);border-radius:8px;padding:12px 14px;"><div style="font-size:10px;font-weight:700;color:var(--amber);margin-bottom:6px;text-transform:uppercase;">Renta Fija</div><div style="font-size:11px;color:var(--text2);line-height:1.5;">${reg.score>=0?'Spreads contenidos favorecen IG. Duration media acceptable.':'QT + spreads ampliando. Duration corta o flotantes. IG estricto sobre HY.'}</div></div>
-          <div style="background:var(--surface2);border-radius:8px;padding:12px 14px;"><div style="font-size:10px;font-weight:700;color:var(--blue);margin-bottom:6px;text-transform:uppercase;">Sizing</div><div style="font-size:11px;color:var(--text2);line-height:1.5;">${reg.score>=4?'Liquidez favorable. Sizing normal, stops amplios.':reg.score>=0?'Sizing moderado. Stops ajustados.':'Sizing conservador. Esperar M2>+3% para aumentar exposición.'}</div></div>
+          <div style="background:var(--surface2);border-radius:8px;padding:12px 14px;">
+            <div style="font-size:10px;font-weight:700;color:${reg.c};margin-bottom:6px;text-transform:uppercase;">Renta Variable</div>
+            <div style="font-size:11px;color:var(--text2);line-height:1.5;">
+              ${reg.score >= 4
+                ? `Liquidity Score ${reg.score>=0?'+':''}${reg.score}: liquidez expansiva${liq.m2?.value!=null?' · M2 Global +'+f2(liq.m2.value)+'%':''}.`
+                : reg.score >= 0
+                ? `Liquidity Score ${reg.score>=0?'+':''}${reg.score}: liquidez neutral${liq.m2?.value!=null?' · M2 Global '+fsign(liq.m2.value)+'%':''}.`
+                : `Liquidity Score ${reg.score}: liquidez contractiva${liq.m2?.value!=null?' · M2 Global '+fsign(liq.m2.value)+'%':''}.`}
+              <span style="color:var(--text3);font-style:italic;"> Scoring provisional.</span>
+            </div>
+          </div>
+          <div style="background:var(--surface2);border-radius:8px;padding:12px 14px;">
+            <div style="font-size:10px;font-weight:700;color:var(--amber);margin-bottom:6px;text-transform:uppercase;">Renta Fija</div>
+            <div style="font-size:11px;color:var(--text2);line-height:1.5;">
+              ${liq.bbb?.value != null
+                ? `BBB OAS: ${f2(liq.bbb.value)}% — ${liq.bbb.value <= 1.0 ? 'spreads contenidos, mercado tranquilo.' : liq.bbb.value <= 1.5 ? 'spreads moderados, zona neutral.' : 'spreads elevados, estrés crediticio.'}`
+                : 'BBB Spread no disponible.'}
+              <span style="color:var(--text3);font-style:italic;"> Scoring provisional.</span>
+            </div>
+          </div>
+          <div style="background:var(--surface2);border-radius:8px;padding:12px 14px;">
+            <div style="font-size:10px;font-weight:700;color:var(--blue);margin-bottom:6px;text-transform:uppercase;">Sizing</div>
+            <div style="font-size:11px;color:var(--text2);line-height:1.5;">
+              ${reg.score >= 4
+                ? 'Liquidity Score expansivo: sizing normal.'
+                : reg.score >= 0
+                ? 'Liquidity Score neutral: sizing moderado, stops ajustados.'
+                : 'Liquidity Score contractivo: sizing conservador.'}
+              ${liq.reservas?.value != null ? ` Reservas Fed: $${f2(liq.reservas.value)}T.` : ''}
+              <span style="color:var(--text3);font-style:italic;"> Scoring provisional.</span>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div class="co-footer" style="margin-top:16px;">Fuentes: FRED (M2SL, M2V, WRESBAL, BAMLC0A4CBBB, TOTLL, GDP, USSLIND) · ECB (M2 EUR, Curva EUR) · BOJ API (M2 JPN) · China M2: input manual mensual (PBoC)</div>
+      <div class="co-footer" style="margin-top:16px;">Fuentes: FRED (M2SL, M2V, WRESBAL, BAMLC0A4CBBB, TOTLL, GDP, USALOLITOAASTSAM) · ECB (M2 EUR, Curva EUR) · BOJ vía Cloudflare Worker proxy (M2 JPN) · ChinaData.live PBoC (M2 CHN — pendiente automatización)</div>
     `;
 
     // Eventos manuales
