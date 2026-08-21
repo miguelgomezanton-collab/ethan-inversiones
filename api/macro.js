@@ -112,6 +112,33 @@ async function fetchBOJm2() {
   return { obs: levelObs, officialYoY, source: 'BOJ_PROXY', url: proxyUrl };
 }
 
+// ── CHN M2 — ChinaData.live (PBoC via agregador) ──────────────────
+// Endpoint: https://chinadata.live/api/v2/data/china-m2-money-supply
+// Sin API key · 100 req/IP/día · JSON · fuente: PBoC
+// Cachear en Vercel (req headers) para minimizar consumo de cuota
+async function fetchChinaM2() {
+  const url = 'https://chinadata.live/api/v2/data/china-m2-money-supply';
+  const ctrl = new AbortController();
+  setTimeout(() => ctrl.abort(), 12000);
+  const r = await fetch(url, {
+    signal: ctrl.signal,
+    headers: { 'User-Agent': 'EthanMacroPlatform/1.0', 'Accept': 'application/json' },
+  });
+  if (!r.ok) throw new Error(`ChinaData HTTP ${r.status}`);
+  const d = await r.json();
+  // Estructura esperada: { data: [{ date: 'YYYY-MM', value: NUMBER }, ...] }
+  // value = nivel M2 en unidades originales (100M CNY o similar)
+  const rows = d?.data || d?.results || d?.observations || (Array.isArray(d) ? d : []);
+  if (!rows.length) throw new Error(`ChinaData: sin datos. Keys: ${Object.keys(d||{}).join(',')}`);
+  return rows
+    .map(o => ({
+      date:  String(o.date || o.DATE || o.period || o.time || '').slice(0, 7), // YYYY-MM
+      value: parseFloat(o.value ?? o.VALUE ?? o.obs_value ?? o.amount ?? o.level ?? NaN),
+    }))
+    .filter(o => o.date.match(/^\d{4}-\d{2}$/) && !isNaN(o.value) && o.value > 0)
+    .sort((a, b) => b.date.localeCompare(a.date));
+}
+
 // ── Calcular M2 Global USA + EUR + JPN + CHN ────────────────────
 // Fix 1: freshness por componente
 // Fix 2: YoY por fecha real (no obs[12] a ciegas)
@@ -137,10 +164,11 @@ function m2Freshness(dateStr) {
 }
 
 async function calcGlobalM2(fredKey, manualChinaM2pct) {
-  const [rUsM2, rEurM2, rJpM2, rEURUSD, rUSDJPY] = await Promise.allSettled([
+  const [rUsM2, rEurM2, rJpM2, rChnM2, rEURUSD, rUSDJPY] = await Promise.allSettled([
     fred('M2SL', fredKey, 14),
     fetchECBm2(),
     fetchBOJm2(),
+    fetchChinaM2(),
     yahoo('EURUSD%3DX'),
     yahoo('USDJPY%3DX'),
   ]);
@@ -239,10 +267,34 @@ async function calcGlobalM2(fredKey, manualChinaM2pct) {
     components.jp = { yoy: null, error: errMsg, ageDays: null, freshness: 'missing', weight: 10, valid: false };
   }
 
-  // ── CHN M2 (manual) ─────────────────────────────────────────
-  if (manualChinaM2pct != null) {
-    components.chn = { yoy: manualChinaM2pct, currentDate: null, freshness: 'manual', weight: 30, valid: true };
+  // ── CHN M2 — ChinaData.live (PBoC) + override manual como fallback ──────────
+  if (rChnM2.status === 'fulfilled' && rChnM2.value?.length >= 2) {
+    const obs = rChnM2.value;
+    const current = obs[0];
+    const base = findYoYBase(obs, current.date);
+    const { ageDays, freshness } = m2Freshness(current.date);
+    if (base) {
+      const yoy = +((current.value - base.value) / base.value * 100).toFixed(2);
+      components.chn = {
+        yoy, currentDate: current.date, currentValue: current.value,
+        baseDate: base.date, baseValue: base.value,
+        ageDays, freshness, weight: 30,
+        valid: freshness === 'ok',
+        source: 'ChinaData.live (PBoC)',
+      };
+    } else {
+      components.chn = { yoy: null, currentDate: current.date, error: 'Sin base YoY 12M',
+        ageDays, freshness, weight: 30, valid: false, source: 'ChinaData.live' };
+    }
+  } else if (manualChinaM2pct != null) {
+    // Fallback: override manual si la API falla
+    components.chn = {
+      yoy: manualChinaM2pct, currentDate: null, freshness: 'manual',
+      weight: 30, valid: true, source: 'manual override',
+    };
+    if (rChnM2.reason) errors.push('CHN M2 auto falló: ' + rChnM2.reason?.message);
   } else {
+    errors.push('CHN M2: ' + (rChnM2.reason?.message || 'sin datos'));
     components.chn = { yoy: null, freshness: 'missing', weight: 30, valid: false };
   }
 
