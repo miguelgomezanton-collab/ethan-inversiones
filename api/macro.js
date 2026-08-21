@@ -609,7 +609,7 @@ export default async function handler(req, res) {
     fred('T5YIFR',       key, 10),   // Breakeven 5Y forward rate (alternativa)
     yahoo('CL%3DF'),
     yahoo('BZ%3DF'),
-    fred('M2V',          key, 6),
+    fred('M2V',          key, 8),
     fred('WRESBAL',      key, 60),
     fred('USALOLITOAASTSAM', key, 3),   // OECD CLI USA (amplitude adjusted, mensual)
     fred('TOTLL',        key, 70),
@@ -864,12 +864,31 @@ export default async function handler(req, res) {
       score: man.impulso != null ? scImpulso(man.impulso) : null, weight: 2, manual: man.impulso != null };
   }
 
-  // 7. Velocidad M2 — FRED M2V (trimestral, YoY vs hace 4 trimestres)
-  if (rM2v.status === 'fulfilled' && rM2v.value.length >= 5) {
-    const latest = rM2v.value[0].value, ya = rM2v.value[4].value;
-    const yoy = +(((latest - ya) / ya) * 100).toFixed(2);
-    ind.velM2 = { label: 'Velocidad M2', value: yoy, rawValue: latest,
-      date: rM2v.value[0].date, score: scVelM2(yoy), weight: 2 };
+  // 7. Velocidad M2 — FRED M2V (trimestral, NSA)
+  // Fix: YoY por fecha real (findYoYBase), freshness publication-aware, debug completo
+  if (rM2v.status === 'fulfilled' && rM2v.value.length >= 2) {
+    const mv = rM2v.value; // desc, trimestral
+    const current = mv[0];
+    const base    = findYoYBase(mv, current.date);
+    const ageDays = Math.round((Date.now() - new Date(current.date).getTime()) / 86400000);
+    // Trimestral publication-aware: dato de QN publicado ~30d después del cierre del trimestre
+    // Stale si han pasado >210d desde inicio del trimestre (>2 trimestres sin actualizar)
+    const freshness = ageDays <= 150 ? 'ok' : ageDays <= 210 ? 'warn' : 'stale';
+    if (base) {
+      const yoy = +(((current.value - base.value) / base.value) * 100).toFixed(2);
+      ind.velM2 = {
+        label: 'Velocidad M2 (FRED M2V)',
+        value: yoy, rawValue: current.value,
+        date: current.date, baseDate: base.date, baseValue: base.value,
+        ageDays, freshness,
+        score: freshness === 'stale' ? null : scVelM2(yoy),
+        weight: 2, auto: true, stale: freshness === 'stale',
+      };
+    } else {
+      ind.velM2 = { label: 'Velocidad M2', value: null, date: current.date,
+        error: 'Sin base YoY trimestral', ageDays, freshness,
+        score: null, weight: 2, auto: true };
+    }
   } else {
     errs.push('M2V: ' + rM2v.reason?.message);
     ind.velM2 = { label: 'Velocidad M2', value: null, date: null, score: null, weight: 2 };

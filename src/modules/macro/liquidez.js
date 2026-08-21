@@ -206,11 +206,26 @@ export async function render(container, { actionsSlot }) {
             v != null && v >= 0 ? `<strong style="color:var(--amber)">${s} pts.</strong> Crédito creciendo pero desacelerando — impulso negativo. <em>Scoring provisional.</em>` :
             `<strong style="color:var(--red)">${s} pts.</strong> Crédito desacelerando — contracción del impulso crediticio.`)}
 
-        ${liqCard('🔄','Velocidad M2', liq.velM2, 'YoY · FRED M2V (trimestral) · automático',
-          '≥0%→+2  ·  −1.5 a −0.1%→−1  ·  <−1.5%→−2  ·  peso ×2',
-          (s, v) => s >= 2 ? `<strong style="color:var(--green)">+2 pts.</strong> ≥0% — el dinero circula activamente. El M2 se traduce en actividad económica real.` :
-            s === -1 ? `<strong style="color:var(--amber)">−1 pt.</strong> Entre −1.5% y −0.1% — velocidad cayendo ligeramente. El dinero se acumula en vez de circular.` :
-            `<strong style="color:var(--red)">−2 pts.</strong> <−1.5% — velocidad muy baja. Bancos no prestan, empresas no invierten, consumidores no gastan. Señal de estancamiento aunque haya mucho M2.`)}
+        ${liqCard('🔄','Velocidad M2', liq.velM2,
+          liq.velM2?.auto
+            ? (() => {
+                const v = liq.velM2;
+                const fsn = f => f==='ok'?'✓ OK':f==='warn'?'⚠ WARN':f==='stale'?'✗ STALE':'—';
+                return [
+                  '🔍 DEBUG Velocidad M2',
+                  `M2V actual: ${v.date||'—'} | ${v.rawValue!=null?v.rawValue.toFixed(4):'—'}`,
+                  `Base:       ${v.baseDate||'—'} | ${v.baseValue!=null?v.baseValue.toFixed(4):'—'}`,
+                  `YoY: ${v.value!=null?(v.value>=0?'+':'')+f2(v.value)+'%':'—'} | ${v.ageDays!=null?v.ageDays+'d':'—'} · ${fsn(v.freshness)}`,
+                  `Score: ${v.score!=null?v.score:'bloqueado'}${v.stale?' · STALE':''} · Fuente: FRED M2V [PROVISIONAL]`,
+                ].join('<br>');
+              })()
+            : 'YoY · FRED M2V (trimestral) · automático',
+          '≥0%→+2  ·  −1.5 a −0.1%→−1  ·  <−1.5%→−2  ·  PROVISIONAL · peso ×2',
+          (s, v) => s >= 2
+            ? `<strong style="color:var(--green)">+2 pts.</strong> Velocidad M2 ${v!=null?(v>=0?'+':'')+f2(v)+'% interanual':'—'}. Scoring provisional.`
+            : s === -1
+            ? `<strong style="color:var(--amber)">−1 pt.</strong> Velocidad M2 ${v!=null?(v>=0?'+':'')+f2(v)+'% interanual':'—'}. Scoring provisional.`
+            : `<strong style="color:var(--red)">${s!=null?s:'—'} pts.</strong> Velocidad M2 ${v!=null?(v>=0?'+':'')+f2(v)+'% interanual':'—'}. Scoring provisional.`)}
 
         ${liqCard('🏦','Reservas Bancarias Fed', liq.reservas, 'Valor absoluto en $T · FRED WRESBAL (semanal) · automático',
           '≥$3.5T→+1  ·  $2.5-3.4T→−1  ·  <$2.5T→−2  ·  peso ×1',
