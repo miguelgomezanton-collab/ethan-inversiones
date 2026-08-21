@@ -131,13 +131,29 @@ export async function render(container, { actionsSlot }) {
       <div class="co-liq-grid3">
         ${liqCard('💵','M2 Global (USA+EUR+JPN)', liq.m2,
           liq.m2?.auto
-            ? `${liq.m2.coverage||''} · USA: ${liq.m2.components?.usYoY!=null?(liq.m2.components.usYoY>=0?'+':'')+f2(liq.m2.components.usYoY)+'%':'—'} · EUR: ${liq.m2.components?.eurYoY!=null?(liq.m2.components.eurYoY>=0?'+':'')+f2(liq.m2.components.eurYoY)+'%':'—'} · JPN: ${liq.m2.components?.jpYoY!=null?(liq.m2.components.jpYoY>=0?'+':'')+f2(liq.m2.components.jpYoY)+'%':'—'}`
+            ? (() => {
+                const c = liq.m2.components || {};
+                const fsn = f => f === 'ok' ? '✓ OK' : f === 'stale' ? '✗ STALE' : f === 'manual' ? '✎ manual' : '— missing';
+                const row = (flag, key, label) => {
+                  const r = c[key];
+                  if (!r) return `${label}: —`;
+                  if (r.error) return `${label}: ⚠ ${r.error}`;
+                  return `${label}: ${r.currentDate||'—'} | YoY ${r.yoy!=null?(r.yoy>=0?'+':'')+f2(r.yoy)+'%':'—'} | base ${r.baseDate||'—'} | ${r.ageDays!=null?r.ageDays+'d':'-'} · ${fsn(r.freshness)}`;
+                };
+                return [
+                  row(true,'us','USA FRED M2SL'),
+                  row(true,'eur','EUR ECB BSI'),
+                  row(true,'jp','JPN BOJ'),
+                  `CHN: ${c.chn?.valid ? '+'+f2(c.chn.yoy)+'% (manual)' : '— pendiente manual'}`,
+                  `Cobertura: ${liq.m2.coverageWeight||'—'}/100 (mín. 60) · Global YoY: ${liq.m2.value!=null?(liq.m2.value>=0?'+':'')+f2(liq.m2.value)+'%':'bloqueado'}`,
+                ].join('<br>');
+              })()
             : 'YoY — estimado global (Fed+ECB+PBOC+BoJ)',
-          '≥+5.0%→+3  ·  +3.0-4.9%→+1  ·  <+3.0%→−3  ·  peso ×3',
+          '≥+5.0%→+3  ·  +3.0-4.9%→+1  ·  <+3.0%→−3  ·  peso ×3 · min.cobertura 60/100',
           (s, v) => s > 0 ? `<strong style="color:var(--green)">+${s} pts.</strong> M2 creciendo — combustible para el ciclo y expansión de múltiplos.` :
             s === 0 ? `<strong style="color:var(--amber)">0 pts.</strong> M2 entre +3% y +5% — ciclo sostenido pero sin exceso monetario.` :
             v != null ? `<strong style="color:var(--red)">${s} pts.</strong> M2 bajo umbral — presión sobre activos de riesgo con 6-12m de retardo.` :
-            `Sin datos automáticos aún. Introduce China M2 YoY% con "Editar manuales" para completar el cálculo.`)}
+            `Sin datos o cobertura insuficiente (<60/100). Introduce China M2 YoY% con "Editar manuales" para mejorar cobertura.`)}
 
         ${liqCard('📈','Crédito vs Nominal GDP', liq.credito,
           liq.credito?.auto

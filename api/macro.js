@@ -90,92 +90,124 @@ async function fetchBOJm2() {
   }
 }
 
-// ── Calcular M2 Global USA + EUR + JPN ────────
+// ── Calcular M2 Global USA + EUR + JPN + CHN ────────────────────
+// Fix 1: freshness por componente
+// Fix 2: YoY por fecha real (no obs[12] a ciegas)
+const M2_STALE_DAYS = 90; // mensual con lag ~6 semanas → tolerancia 90d
+
+function findYoYBase(obs, currentDate) {
+  // Buscar observación cuya fecha sea ~12 meses antes, ±10 días
+  const target = new Date(currentDate);
+  target.setFullYear(target.getFullYear() - 1);
+  const targetMs = target.getTime();
+  const TEN_DAYS = 10 * 24 * 60 * 60 * 1000;
+  const match = obs.find(o => Math.abs(new Date(o.date).getTime() - targetMs) <= TEN_DAYS);
+  return match || null;
+}
+
+function m2Freshness(dateStr) {
+  if (!dateStr) return { ageDays: null, freshness: 'missing' };
+  // Fechas mensuales vienen como 'YYYY-MM' → usar fin de mes
+  const d = new Date(dateStr.length === 7 ? dateStr + '-01' : dateStr);
+  const ageDays = Math.round((Date.now() - d.getTime()) / (1000*60*60*24));
+  const freshness = ageDays <= M2_STALE_DAYS ? 'ok' : 'stale';
+  return { ageDays, freshness };
+}
+
 async function calcGlobalM2(fredKey, manualChinaM2pct) {
   const [rUsM2, rEurM2, rJpM2, rEURUSD, rUSDJPY] = await Promise.allSettled([
-    fred('M2SL', fredKey, 14),  // USA M2 en miles de millones USD
-    fetchECBm2(),               // EUR M2 en millones EUR
-    fetchBOJm2(),               // JPN M2 en miles de millones JPY
-    yahoo('EURUSD%3DX'),        // EURUSD
-    yahoo('USDJPY%3DX'),        // USDJPY
+    fred('M2SL', fredKey, 14),
+    fetchECBm2(),
+    fetchBOJm2(),
+    yahoo('EURUSD%3DX'),
+    yahoo('USDJPY%3DX'),
   ]);
 
   const errors = [];
-  let usM2 = null, eurM2 = null, jpM2 = null;
-  let usYoY = null, eurYoY = null, jpYoY = null;
-  let eurusd = null, usdjpy = null;
+  const components = {};
 
-  // USA M2 YoY
-  if (rUsM2.status === 'fulfilled' && rUsM2.value.length >= 13) {
+  // ── USA M2 ──────────────────────────────────────────────────
+  if (rUsM2.status === 'fulfilled' && rUsM2.value.length >= 2) {
     const obs = rUsM2.value; // desc
-    usM2 = obs[0].value; // miles de millones USD
-    usYoY = +((obs[0].value - obs[12].value) / obs[12].value * 100).toFixed(2);
-  } else errors.push('USA M2: ' + rUsM2.reason?.message);
-
-  // EUR M2 YoY
-  if (rEurM2.status === 'fulfilled' && rEurM2.value.length >= 13) {
-    const obs = rEurM2.value; // desc
-    eurM2 = obs[0].value; // millones EUR
-    eurYoY = +((obs[0].value - obs[12].value) / obs[12].value * 100).toFixed(2);
-  } else errors.push('EUR M2: ' + rEurM2.reason?.message);
-
-  // JPN M2 YoY
-  if (rJpM2.status === 'fulfilled' && rJpM2.value.length >= 13) {
-    const obs = rJpM2.value; // desc
-    jpM2 = obs[0].value;
-    jpYoY = +((obs[0].value - obs[12].value) / obs[12].value * 100).toFixed(2);
-  } else errors.push('JPN M2: ' + rJpM2.reason?.message);
-
-  // Tipos de cambio
-  if (rEURUSD.status === 'fulfilled') eurusd = rEURUSD.value.value;
-  else errors.push('EURUSD: ' + rEURUSD.reason?.message);
-  if (rUSDJPY.status === 'fulfilled') usdjpy = rUSDJPY.value.value;
-  else errors.push('USDJPY: ' + rUSDJPY.reason?.message);
-
-  // M2 Global en USD (solo regiones disponibles)
-  let globalM2usd = null;
-  if (usM2 && eurM2 && eurusd && jpM2 && usdjpy) {
-    const usUSD  = usM2 * 1e9;                  // miles de millones → USD
-    const eurUSD = (eurM2 * 1e6) * eurusd;       // millones EUR → USD
-    const jpUSD  = (jpM2 * 1e9) / usdjpy;        // miles de millones JPY → USD  (ajustar si unidad diferente)
-    globalM2usd = usUSD + eurUSD + jpUSD;
+    const current = obs[0];
+    const base = findYoYBase(obs, current.date);
+    const { ageDays, freshness } = m2Freshness(current.date);
+    if (base) {
+      const yoy = +((current.value - base.value) / base.value * 100).toFixed(2);
+      components.us = { yoy, currentDate: current.date, currentValue: current.value,
+        baseDate: base.date, baseValue: base.value, ageDays, freshness, weight: 35, valid: freshness === 'ok' };
+    } else {
+      components.us = { yoy: null, currentDate: current.date, error: 'Sin base YoY 12M', ageDays, freshness, weight: 35, valid: false };
+    }
+  } else {
+    errors.push('USA M2: ' + (rUsM2.reason?.message || 'sin datos'));
+    components.us = { yoy: null, error: 'Sin datos', ageDays: null, freshness: 'missing', weight: 35, valid: false };
   }
 
-  // YoY global ponderado (promedio simple de las 3 regiones disponibles)
-  // Peso aproximado: USA ~35%, EUR ~25%, JPN ~10%, CHN ~30%
-  // Con China manual se ajusta; sin él, las 3 representan ~70% del total
-  const weights = { us: 35, eur: 25, jp: 10 };
-  const available = [
-    usYoY  !== null ? { yoy: usYoY,  w: weights.us  } : null,
-    eurYoY !== null ? { yoy: eurYoY, w: weights.eur } : null,
-    jpYoY  !== null ? { yoy: jpYoY,  w: weights.jp  } : null,
-    manualChinaM2pct !== null ? { yoy: manualChinaM2pct, w: 30 } : null,
-  ].filter(Boolean);
+  // ── EUR M2 ──────────────────────────────────────────────────
+  if (rEurM2.status === 'fulfilled' && rEurM2.value.length >= 2) {
+    const obs = rEurM2.value;
+    const current = obs[0];
+    const base = findYoYBase(obs, current.date);
+    const { ageDays, freshness } = m2Freshness(current.date);
+    if (base) {
+      const yoy = +((current.value - base.value) / base.value * 100).toFixed(2);
+      components.eur = { yoy, currentDate: current.date, currentValue: current.value,
+        baseDate: base.date, baseValue: base.value, ageDays, freshness, weight: 25, valid: freshness === 'ok' };
+    } else {
+      components.eur = { yoy: null, currentDate: current.date, error: 'Sin base YoY 12M', ageDays, freshness, weight: 25, valid: false };
+    }
+  } else {
+    errors.push('EUR M2: ' + (rEurM2.reason?.message || 'sin datos'));
+    components.eur = { yoy: null, error: 'Sin datos', ageDays: null, freshness: 'missing', weight: 25, valid: false };
+  }
 
+  // ── JPN M2 ──────────────────────────────────────────────────
+  if (rJpM2.status === 'fulfilled' && rJpM2.value.length >= 2) {
+    const obs = rJpM2.value;
+    const current = obs[0];
+    const base = findYoYBase(obs, current.date);
+    const { ageDays, freshness } = m2Freshness(current.date);
+    if (base) {
+      const yoy = +((current.value - base.value) / base.value * 100).toFixed(2);
+      components.jp = { yoy, currentDate: current.date, currentValue: current.value,
+        baseDate: base.date, baseValue: base.value, ageDays, freshness, weight: 10, valid: freshness === 'ok' };
+    } else {
+      components.jp = { yoy: null, currentDate: current.date, error: 'Sin base YoY 12M', ageDays, freshness, weight: 10, valid: false };
+    }
+  } else {
+    errors.push('JPN M2: ' + (rJpM2.reason?.message || 'sin datos'));
+    components.jp = { yoy: null, error: 'Sin datos', ageDays: null, freshness: 'missing', weight: 10, valid: false };
+  }
+
+  // ── CHN M2 (manual) ─────────────────────────────────────────
+  if (manualChinaM2pct != null) {
+    components.chn = { yoy: manualChinaM2pct, currentDate: null, freshness: 'manual', weight: 30, valid: true };
+  } else {
+    components.chn = { yoy: null, freshness: 'missing', weight: 30, valid: false };
+  }
+
+  // ── Agregación con cobertura dinámica ────────────────────────
+  const available = Object.values(components).filter(c => c.valid && c.yoy != null);
+  const coverageWeight = available.reduce((s, c) => s + c.weight, 0);
+  const MIN_COVERAGE = 60; // mínimo 60/100 para emitir score
   let globalYoY = null;
   if (available.length > 0) {
-    const totalW = available.reduce((s, x) => s + x.w, 0);
-    globalYoY = +(available.reduce((s, x) => s + x.yoy * x.w, 0) / totalW).toFixed(2);
+    globalYoY = +(available.reduce((s, c) => s + c.yoy * c.weight, 0) / coverageWeight).toFixed(2);
   }
 
-  // Fuentes disponibles
-  const sources = [
-    usYoY  !== null ? 'FRED M2SL (USA)'  : null,
-    eurYoY !== null ? 'ECB BSI (EUR)'    : null,
-    jpYoY  !== null ? 'BOJ MD02 (JPN)'   : null,
-    manualChinaM2pct !== null ? 'Manual (CHN)' : null,
-  ].filter(Boolean);
+  // FX spot (solo informativo — no afecta YoY)
+  const eurusd = rEURUSD.status === 'fulfilled' ? rEURUSD.value.value : null;
+  const usdjpy = rUSDJPY.status === 'fulfilled' ? rUSDJPY.value.value : null;
 
   return {
     globalYoY,
-    globalM2usd,
-    components: { usYoY, eurYoY, jpYoY, chnYoY: manualChinaM2pct },
+    coverageWeight,
+    coveragePct: +(coverageWeight / 100).toFixed(4),
+    coverageOk: coverageWeight >= MIN_COVERAGE,
+    components,
     fx: { eurusd, usdjpy },
-    sources,
     errors,
-    chinaPending: manualChinaM2pct === null,
-    coverage: `${sources.length}/4 regiones` +
-      (manualChinaM2pct === null ? ' — introduce China M2 manualmente para completar' : ''),
   };
 }
 
@@ -582,26 +614,27 @@ export default async function handler(req, res) {
       weight: 1, manual: man.lei != null };
   }
 
-  // 4. M2 Global — USA (FRED) + EUR (ECB) + JPN (BOJ) + CHN (manual opcional)
-  if (rGlobalM2.status === 'fulfilled' && rGlobalM2.value.globalYoY != null) {
+  // 4. M2 Global — USA (FRED) + EUR (ECB) + JPN (BOJ) + CHN (manual)
+  if (rGlobalM2.status === 'fulfilled') {
     const g = rGlobalM2.value;
     if (g.errors?.length) errs.push(...g.errors.map(e => 'M2Global: ' + e));
+    const regions = ['us','eur','jp','chn'];
+    const label = 'M2 Global (USA+EUR+JPN' + (g.components.chn?.valid ? '+CHN' : ', CHN pendiente') + ')';
     ind.m2 = {
-      label: 'M2 Global (USA+EUR+JPN' + (g.components.chnYoY != null ? '+CHN' : ', CHN pendiente') + ')',
+      label,
       value: g.globalYoY,
       components: g.components,
+      coverageWeight: g.coverageWeight,
+      coveragePct: g.coveragePct,
+      coverageOk: g.coverageOk,
       fx: g.fx,
-      coverage: g.coverage,
-      sources: g.sources,
       date: null,
-      score: scM2(g.globalYoY), weight: 3, auto: true,
+      score: (g.globalYoY != null && g.coverageOk) ? scM2(g.globalYoY) : null,
+      weight: 3, auto: true,
     };
-  } else if (man.chinM2 != null || rGlobalM2.reason) {
-    // Si calcGlobalM2 falló pero tenemos override manual completo
-    errs.push('M2 Global auto falló: ' + rGlobalM2.reason?.message);
-    ind.m2 = { label: 'M2 Global', value: null, date: null, score: null, weight: 3, manual: true };
   } else {
-    ind.m2 = { label: 'M2 Global', value: null, date: null, score: null, weight: 3, manual: true };
+    errs.push('M2 Global: ' + rGlobalM2.reason?.message);
+    ind.m2 = { label: 'M2 Global', value: null, date: null, score: null, weight: 3 };
   }
 
   // 5. Crédito vs Nominal GDP — FRED TOTLL (Total Loans, mensual) vs GDP (trimestral, SAAR)
