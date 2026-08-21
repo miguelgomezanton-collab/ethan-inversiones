@@ -15,10 +15,21 @@ export async function render(container,{actionsSlot}){
     const liq=macro.liquidez||{};
     const ind=macro.indicators||{};
     const tr=co.tipoReal,ffr=seg.ffr,res=liq.reservas,bbb=liq.bbbSpread;
-    // Stance 0-100
-    const stance=tr?.value!=null?Math.min(100,Math.max(0,((tr.value+3)/6)*100)):50;
-    const stanceLabel=stance>70?'Muy Restrictiva':stance>55?'Restrictiva':stance>45?'Neutral':stance>30?'Acomodaticia':'Muy Acomodaticia';
-    const stanceCol=stance>70?'var(--red)':stance>55?'var(--amber)':stance>45?'var(--text2)':'var(--green)';
+    // Stance basado en tipo real — misma lógica que scTipoReal para coherencia
+    // ≥+1.0% → Restrictiva | +0.5-0.9% → Neutral | <+0.5% → Acomodaticia
+    // Normalizado a escala 0-100 para la barra visual: centro=0%, -3%=0, +3%=100
+    const trVal = tr?.value ?? null;
+    const stance = trVal != null ? Math.min(100, Math.max(0, ((trVal + 3) / 6) * 100)) : 50;
+    const stanceLabel = trVal == null ? '—'
+      : trVal >= 1.5 ? 'Muy Restrictiva'
+      : trVal >= 1.0 ? 'Restrictiva'
+      : trVal >= 0.5 ? 'Neutral'
+      : trVal >= 0.0 ? 'Acomodaticia'
+      : 'Muy Acomodaticia';
+    const stanceCol = trVal == null ? 'var(--text3)'
+      : trVal >= 1.0 ? 'var(--red)'
+      : trVal >= 0.5 ? 'var(--amber)'
+      : 'var(--green)';
 
     el.innerHTML=`
       <div style="display:grid;grid-template-columns:1fr 260px;gap:14px;margin-bottom:14px;">
@@ -32,7 +43,7 @@ export async function render(container,{actionsSlot}){
               <div style="position:absolute;top:50%;left:${stance}%;transform:translate(-50%,-50%);width:4px;height:18px;background:var(--text1);border-radius:2px;"></div>
             </div>
             <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:12px;"><span>Muy Acomodaticia</span><span>Neutral</span><span>Muy Restrictiva</span></div>
-            <div style="font-size:11px;color:var(--text2);line-height:1.7;">${tr?.value!=null?`El <strong style="color:var(--text1)">tipo real de ${tr.value>=0?'+':''}${f2(tr.value)}%</strong> indica política ${tr.value>=1?'muy restrictiva':tr.value>=0.5?'restrictiva':'acomodaticia'}. Históricamente, tipos reales >+1.5% durante >6 meses han precedido recesión en el 78% de los casos.`:'Sin datos de tipo real disponibles.'}</div>
+            <div style="font-size:11px;color:var(--text2);line-height:1.7;">${trVal!=null?`Tipo real <strong style="color:var(--text1)">${trVal>=0?'+':''}${f2(trVal)}%</strong> → <strong style="color:${stanceCol}">${stanceLabel}</strong>. ${trVal>=1.5?'Tipos muy restrictivos — históricamente preceden desaceleración o recesión.':trVal>=1.0?'Política monetaria restrictiva — frena consumo e inversión.':trVal>=0.5?'Zona neutral — ni estimula ni restringe significativamente.':trVal>=0?'Política acomodaticia — tipo real bajo, condiciones financieras laxas.':'Tipo real negativo — política muy expansiva, potencial riesgo inflacionario.'} <em style="color:var(--text3)">Scoring provisional.</em>`:'Sin datos de tipo real disponibles.'}</div>
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
             <!-- FFR -->
@@ -92,27 +103,7 @@ export async function render(container,{actionsSlot}){
           </div>
         </div>
       </div>
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:14px;">
-        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:10px;">
-          Fear & Greed (CNN) <span style="color:var(--amber)">⚠ Clasificación provisional — pertenece a Sentimiento, no Política Monetaria</span>
-        </div>
-        ${macro.coyuntura?.fearGreed ? (() => {
-          const fg = macro.coyuntura.fearGreed;
-          const fsn = f => f==='ok'?'✓ OK':f==='warn'?'⚠ WARN':f==='stale'?'✗ STALE':'— sin fecha';
-          return `
-          <div style="display:flex;gap:16px;align-items:center;">
-            <div style="font-family:var(--serif);font-size:36px;font-weight:600;font-style:italic;color:${fg.score>0?'var(--green)':fg.score===0?'var(--amber)':'var(--red)'};">${fg.value}</div>
-            <div style="flex:1;font-size:9px;font-family:var(--mono);color:var(--text3);background:rgba(64,217,192,0.04);border:1px solid rgba(64,217,192,0.15);border-radius:6px;padding:8px 10px;line-height:1.8;">
-              🔍 DEBUG Fear & Greed<br>
-              Valor: ${fg.value} (${fg.label_text||'—'}) | Fuente: ${fg.source||'—'}<br>
-              Fecha: ${fg.date||'sin fecha'} | Antigüedad: ${fg.ageDays!=null?fg.ageDays+'d':'—'} · ${fsn(fg.freshness)}<br>
-              Anterior cierre: ${fg.previousClose||'—'} | Semana: ${fg.previousWeek||'—'} | Mes: ${fg.previousMonth||'—'}<br>
-              Score: ${fg.score!=null?fg.score:'—'} · <+40→+1 (miedo) | 40-54→0 | >54→−1 (euforia) [PROVISIONAL]
-            </div>
-          </div>`;
-        })() : '<div style="font-size:11px;color:var(--text3);">Sin datos de Fear & Greed</div>'}
-      </div>
-      <div class="co-footer">Fuentes: FRED (DFF, CPIAUCSL, CPIAUCSL base 12M, DGS10, DGS2, WRESBAL, BAMLC0A4CBBB) · CNN Fear & Greed [reclasificación pendiente]</div>
+      <div class="co-footer">Fuentes: FRED (DFF, CPIAUCSL, DGS10, DGS2, WRESBAL, BAMLC0A4CBBB) · Fear &amp; Greed → pendiente de reclasificación a 1.5 Sentimiento</div>
     `;
   }
   document.getElementById('pm-refresh')?.addEventListener('click',()=>load(true));
