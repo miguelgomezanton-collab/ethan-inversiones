@@ -527,7 +527,8 @@ export default async function handler(req, res) {
     const latest = obs[0].value, prev = obs[1].value;
     const mom = prev > 0 ? +(((latest - prev) / prev) * 100).toFixed(2) : null;
     ind.lei = { label: 'LEI USA (FRED USSLIND)', value: mom, rawValue: latest,
-      date: obs[0].date, score: mom != null ? scLEI(mom) : null, weight: 1, auto: true };
+      date: obs[0].date, prevDate: obs[1].date, prevValue: prev,
+      score: mom != null ? scLEI(mom) : null, weight: 1, auto: true };
   } else {
     errs.push('USSLIND: ' + rLeiFreD.reason?.message);
     ind.lei = { label: 'LEI USA', value: man.lei ?? null, date: null,

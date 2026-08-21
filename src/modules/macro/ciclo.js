@@ -78,6 +78,13 @@ export async function render(container,{actionsSlot}){
               <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--text3);font-family:var(--mono);margin-bottom:6px;"><span style="color:var(--red)">Negativo</span><span>0</span><span style="color:var(--green)">Positivo</span></div>
               <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:3px;">${thresholds}</div>
               <div style="font-size:10px;color:var(--text2);border-top:1px solid var(--border);padding-top:6px;margin-top:6px;">${signal}</div>
+              ${k==='lei'?`<div style="margin-top:8px;background:rgba(251,191,36,0.07);border:1px solid rgba(251,191,36,0.25);border-radius:6px;padding:8px 10px;font-family:var(--mono);font-size:9px;color:var(--amber);">
+                🔍 DEBUG LEI<br>
+                Obs. actual: ${i.date||'—'} | USSLIND ${i.rawValue!=null?Number(i.rawValue).toFixed(3):'—'}<br>
+                Obs. anterior: ${i.prevDate||'—'} | USSLIND ${i.prevValue!=null?Number(i.prevValue).toFixed(3):'—'}<br>
+                MoM calculado: ${i.value!=null?fsign(i.value)+'%':'—'}<br>
+                Fuente: ${i.manual?'Override manual':i.auto?'FRED USSLIND (auto)':'—'}
+              </div>`:''}
             </div>`;
           }).join('')}
         </div>
