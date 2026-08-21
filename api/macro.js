@@ -612,8 +612,8 @@ export default async function handler(req, res) {
     fred('M2V',          key, 6),
     fred('WRESBAL',      key, 60),
     fred('USALOLITOAASTSAM', key, 3),   // OECD CLI USA (amplitude adjusted, mensual)
-    fred('TOTLL',        key, 16),
-    fred('GDP',          key,  6),
+    fred('TOTLL',        key, 20),
+    fred('GDP',          key,  8),
     fred('MICH',         key, 10),   // Univ. Michigan 1Y inflation expectations (fallback)
   ]);
 
