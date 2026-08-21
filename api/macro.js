@@ -612,8 +612,8 @@ export default async function handler(req, res) {
     fred('M2V',          key, 6),
     fred('WRESBAL',      key, 60),
     fred('USALOLITOAASTSAM', key, 3),   // OECD CLI USA (amplitude adjusted, mensual)
-    fred('TOTLL',        key, 14),
-    fred('GDP',          key, 6),
+    fred('TOTLL',        key, 16),
+    fred('GDP',          key,  6),
     fred('MICH',         key, 10),   // Univ. Michigan 1Y inflation expectations (fallback)
   ]);
 
@@ -752,29 +752,52 @@ export default async function handler(req, res) {
     ind.m2 = { label: 'M2 Global', value: null, date: null, score: null, weight: 3 };
   }
 
-  // 5. Crédito vs Nominal GDP — FRED TOTLL (Total Loans, mensual) vs GDP (trimestral, SAAR)
-  // Calculamos YoY de cada uno y el diferencial.
-  // Si el manual override existe, lo usamos preferentemente.
+  // 5. Crédito vs Nominal GDP — FRED TOTLL (mensual) vs GDP (trimestral, SAAR)
+  // Fix: YoY por fecha real (findYoYBase), freshness por componente, debug completo
+  // Scoring provisional: diff ≥ +3.0% → +3 | ≥ +1.5% → 0 | < +1.5% → -3
   if (man.credito != null) {
     ind.credito = { label: 'Crédito vs Nominal GDP', value: man.credito, date: null,
       score: scCredito(man.credito), weight: 3, manual: true };
-  } else if (
-    rTotll.status === 'fulfilled' && rTotll.value.length >= 13 &&
-    rGdp.status   === 'fulfilled' && rGdp.value.length   >= 5
-  ) {
-    // Crédito YoY (mensual)
-    const tl = rTotll.value; // desc
-    const creditYoY = +(((tl[0].value - tl[12].value) / tl[12].value) * 100).toFixed(2);
-    // GDP nominal YoY (trimestral — 4 obs = 1 año)
-    const gdp = rGdp.value; // desc
-    const gdpYoY = +(((gdp[0].value - gdp[4].value) / gdp[4].value) * 100).toFixed(2);
-    const diff = +(creditYoY - gdpYoY).toFixed(2);
-    ind.credito = {
-      label: 'Crédito vs Nominal GDP (TOTLL vs GDP)',
-      value: diff, creditYoY, gdpYoY,
-      date: tl[0].date,
-      score: scCredito(diff), weight: 3, auto: true
-    };
+  } else if (rTotll.status === 'fulfilled' && rTotll.value.length >= 2 &&
+             rGdp.status   === 'fulfilled' && rGdp.value.length   >= 2) {
+    const tl  = rTotll.value; // desc, mensual
+    const gdp = rGdp.value;   // desc, trimestral
+
+    // TOTLL YoY por fecha real
+    const tlCurrent  = tl[0];
+    const tlBase     = findYoYBase(tl, tlCurrent.date);
+    const tlAgeDays  = Math.round((Date.now() - new Date(tlCurrent.date).getTime()) / 86400000);
+    const tlFresh    = tlAgeDays <= 60 ? 'ok' : tlAgeDays <= 90 ? 'warn' : 'stale';
+
+    // GDP YoY por fecha real (buscar ~12 meses = ~4 trimestres atrás)
+    const gdpCurrent = gdp[0];
+    const gdpBase    = findYoYBase(gdp, gdpCurrent.date);
+    const gdpAgeDays = Math.round((Date.now() - new Date(gdpCurrent.date).getTime()) / 86400000);
+    const gdpFresh   = gdpAgeDays <= 120 ? 'ok' : gdpAgeDays <= 150 ? 'warn' : 'stale';
+
+    if (tlBase && gdpBase) {
+      const creditYoY = +(((tlCurrent.value  - tlBase.value)  / tlBase.value)  * 100).toFixed(2);
+      const gdpYoY    = +(((gdpCurrent.value - gdpBase.value) / gdpBase.value) * 100).toFixed(2);
+      const diff      = +(creditYoY - gdpYoY).toFixed(2);
+      const isStale   = tlFresh === 'stale' || gdpFresh === 'stale';
+      ind.credito = {
+        label: 'Crédito vs Nominal GDP (TOTLL vs GDP)',
+        value: diff, creditYoY, gdpYoY,
+        tl:  { date: tlCurrent.date,  value: tlCurrent.value,  baseDate: tlBase.date,  baseValue: tlBase.value,  ageDays: tlAgeDays,  freshness: tlFresh  },
+        gdp: { date: gdpCurrent.date, value: gdpCurrent.value, baseDate: gdpBase.date, baseValue: gdpBase.value, ageDays: gdpAgeDays, freshness: gdpFresh },
+        date: tlCurrent.date,
+        score: isStale ? null : scCredito(diff),
+        weight: 3, auto: true,
+        stale: isStale,
+      };
+    } else {
+      ind.credito = {
+        label: 'Crédito vs Nominal GDP', value: null, date: tlCurrent.date,
+        tl:  { date: tlCurrent.date,  ageDays: tlAgeDays,  freshness: tlFresh,  error: tlBase  ? null : 'Sin base YoY 12M' },
+        gdp: { date: gdpCurrent.date, ageDays: gdpAgeDays, freshness: gdpFresh, error: gdpBase ? null : 'Sin base YoY 4T'  },
+        score: null, weight: 3, auto: true,
+      };
+    }
   } else {
     if (rTotll.status !== 'fulfilled') errs.push('TOTLL: ' + rTotll.reason?.message);
     if (rGdp.status   !== 'fulfilled') errs.push('GDP: '   + rGdp.reason?.message);
@@ -782,24 +805,31 @@ export default async function handler(req, res) {
       score: man.credito != null ? scCredito(man.credito) : null, weight: 3, manual: man.credito != null };
   }
 
-  // 6. Impulso Crediticio — derivado de la aceleración del crédito (TOTLL)
-  // Si tenemos TOTLL: impulso = variación del YoY vs hace 3 meses (aceleración del crédito)
-  // Si override manual, usar ese.
+  // 6. Impulso Crediticio — aceleración del crédito (TOTLL)
+  // YoY actual vs YoY de hace 3 meses — Fix: buscar bases por fecha real
   if (man.impulso != null) {
     ind.impulso = { label: 'Impulso Crediticio', value: man.impulso, date: null,
       score: scImpulso(man.impulso), weight: 2, manual: true };
-  } else if (rTotll.status === 'fulfilled' && rTotll.value.length >= 16) {
+  } else if (rTotll.status === 'fulfilled' && rTotll.value.length >= 4) {
     const tl = rTotll.value; // desc
-    // YoY actual vs YoY de hace 3 meses = aceleración del crédito
-    const yoyNow  = ((tl[0].value  - tl[12].value) / tl[12].value) * 100;
-    const yoy3m   = ((tl[3].value  - tl[15].value) / tl[15].value) * 100;
-    const impulso = +(yoyNow - yoy3m).toFixed(2);
-    ind.impulso = {
-      label: 'Impulso Crediticio (aceleración TOTLL)',
-      value: impulso, yoyNow: +yoyNow.toFixed(2), yoy3mAgo: +yoy3m.toFixed(2),
-      date: tl[0].date,
-      score: scImpulso(impulso), weight: 2, auto: true
-    };
+    const current   = tl[0];
+    const current3m = tl[3]; // hace 3 meses — posición fija OK aquí (solo 3 meses)
+    const baseNow   = findYoYBase(tl, current.date);
+    const base3m    = findYoYBase(tl, current3m.date);
+    if (baseNow && base3m) {
+      const yoyNow  = ((current.value   - baseNow.value) / baseNow.value) * 100;
+      const yoy3m   = ((current3m.value - base3m.value)  / base3m.value)  * 100;
+      const impulso = +(yoyNow - yoy3m).toFixed(2);
+      ind.impulso = {
+        label: 'Impulso Crediticio (aceleración TOTLL)',
+        value: impulso, yoyNow: +yoyNow.toFixed(2), yoy3mAgo: +yoy3m.toFixed(2),
+        date: current.date, baseDate: baseNow.date, base3mDate: base3m.date,
+        score: scImpulso(impulso), weight: 2, auto: true,
+      };
+    } else {
+      ind.impulso = { label: 'Impulso Crediticio', value: null, date: current.date,
+        error: !baseNow ? 'Sin base YoY actual' : 'Sin base YoY 3M', score: null, weight: 2, auto: true };
+    }
   } else {
     ind.impulso = { label: 'Impulso Crediticio', value: man.impulso ?? null, date: null,
       score: man.impulso != null ? scImpulso(man.impulso) : null, weight: 2, manual: man.impulso != null };

@@ -164,9 +164,20 @@ export async function render(container, { actionsSlot }) {
 
         ${liqCard('📈','Crédito vs Nominal GDP', liq.credito,
           liq.credito?.auto
-            ? `Crédito YoY: ${liq.credito.creditYoY!=null?(liq.credito.creditYoY>=0?'+':'')+f2(liq.credito.creditYoY)+'%':'—'} · GDP YoY: ${liq.credito.gdpYoY!=null?'+'+f2(liq.credito.gdpYoY)+'%':'—'} · FRED TOTLL vs GDP`
-            : 'Crecimiento crédito − Crecimiento nominal GDP',
-          '≥+3.0%→+3  ·  +1.5-2.9%→0  ·  <+1.5%→−3  ·  peso ×3',
+            ? (() => {
+                const tl  = liq.credito.tl  || {};
+                const gdp = liq.credito.gdp || {};
+                const fsn = f => f==='ok'?'✓ OK':f==='warn'?'⚠ WARN':f==='stale'?'✗ STALE':'—';
+                return [
+                  '🔍 DEBUG Crédito vs PIB',
+                  `TOTLL: ${tl.date||'—'} | base ${tl.baseDate||'—'} | ${tl.ageDays!=null?tl.ageDays+'d':'—'} · ${fsn(tl.freshness)}${tl.error?' ⚠ '+tl.error:''}`,
+                  `GDP:   ${gdp.date||'—'} | base ${gdp.baseDate||'—'} | ${gdp.ageDays!=null?gdp.ageDays+'d':'—'} · ${fsn(gdp.freshness)}${gdp.error?' ⚠ '+gdp.error:''}`,
+                  `CreditYoY: ${liq.credito.creditYoY!=null?(liq.credito.creditYoY>=0?'+':'')+f2(liq.credito.creditYoY)+'%':'—'} | GdpYoY: ${liq.credito.gdpYoY!=null?(liq.credito.gdpYoY>=0?'+':'')+f2(liq.credito.gdpYoY)+'%':'—'} | Diff: ${liq.credito.value!=null?(liq.credito.value>=0?'+':'')+f2(liq.credito.value)+'%':'—'}`,
+                  `Score: ${liq.credito.score!=null?liq.credito.score:'bloqueado'}${liq.credito.stale?' · STALE':''}`,
+                ].join('<br>');
+              })()
+            : 'Manual override',
+          '≥+3.0%→+3  ·  +1.5-2.9%→0  ·  <+1.5%→−3  ·  PROVISIONAL · peso ×3',
           (s, v) => s > 0 ? `<strong style="color:var(--green)">+${s} pts.</strong> Crédito crece más que el nominal — expansión financiera saludable.` :
             s === 0 ? `<strong style="color:var(--amber)">0 pts.</strong> Crédito alineado con el nominal — ciclo estable.` :
             `<strong style="color:var(--red)">${s} pts.</strong> Crédito crece menos que el nominal — desapalancamiento en curso.`)}
