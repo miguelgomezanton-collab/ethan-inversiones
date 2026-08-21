@@ -234,7 +234,7 @@ export async function render(container, { actionsSlot }) {
                 const fsn = f => f==='ok'?'✓ OK':f==='warn'?'⚠ WARN':f==='stale'?'✗ STALE':'—';
                 return [
                   '🔍 DEBUG Reservas Bancarias',
-                  `Fecha: ${r.date||'—'} | Bruto FRED: ${r.rawValueB!=null?f2(r.rawValueB)+' $B':'—'} | Convertido: ${r.value!=null?'$'+r.value+'T':'—'}`,
+                  `Fecha: ${r.date||'—'} | Bruto FRED: ${r.rawValueM!=null?Number(r.rawValueM).toLocaleString('es-ES')+' $M':'—'} | Convertido: ${r.value!=null?'$'+r.value+'T':'—'}`,
                   `Antigüedad: ${r.ageDays!=null?r.ageDays+'d':'—'} · ${fsn(r.freshness)} · Fuente: FRED WRESBAL`,
                   `Score: ${r.score!=null?r.score:'bloqueado'}${r.stale?' · STALE':''} [PROVISIONAL · thresholds fijos $3.5T/$2.5T]`,
                 ].join('<br>');

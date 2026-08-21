@@ -897,14 +897,14 @@ export default async function handler(req, res) {
   // 8. Reservas Bancarias — FRED WRESBAL (semanal, SA, miles de millones USD → $T)
   // Freshness semanal: ≤14d OK | 15-21d WARN | >21d STALE
   if (rWresbal.status === 'fulfilled' && rWresbal.value[0]) {
-    const rawB    = rWresbal.value[0].value;
-    const rawT    = +(rawB / 1000).toFixed(2);
+    const rawM = rWresbal.value[0].value;              // en millones USD (FRED)
+    const rawT  = +(rawM / 1_000_000).toFixed(3);      // millones → trillions
     const date    = rWresbal.value[0].date;
     const ageDays = Math.round((Date.now() - new Date(date).getTime()) / 86400000);
     const freshness = ageDays <= 14 ? 'ok' : ageDays <= 21 ? 'warn' : 'stale';
     ind.reservas = {
       label: 'Reservas Bancarias Fed',
-      value: rawT, rawValueB: rawB, date,
+      value: rawT, rawValueM: rawM, date,
       ageDays, freshness,
       score: freshness === 'stale' ? null : scReservas(rawT),
       weight: 1, auto: true, stale: freshness === 'stale',
