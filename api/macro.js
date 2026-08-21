@@ -12,12 +12,10 @@ const ECB_URL = 'https://data-api.ecb.europa.eu/service/data/YC/B.U2.EUR.4F.G_N_
 const ECB_M2_URL = 'https://data-api.ecb.europa.eu/service/data/BSI/M.U2.N.V.M20.X.1.U2.2300.Z01.E?lastNObservations=14&format=csvdata';
 
 // BOJ Time-Series Data Search API (oficial desde feb 2026)
-// DB: MD02 (Money Stock) | Series code: MAM1NAM2M2MO (sin prefijo DB)
-// URL: /getDataCode?format=json&lang=en&db=MD02&code=MAM1NAM2M2MO&startDate=YYYYMM
-// Documentación: https://www.stat-search.boj.or.jp/info/api_manual_en.pdf
+// El code incluye prefijo DB con comilla: MD02'MAM1NAM2M2MO
+// URL: /getDataCode?format=json&lang=en&code=MD02'MAM1NAM2M2MO&startDate=YYYYMM
 const BOJ_TS_API   = 'https://www.stat-search.boj.or.jp/api/v1/getDataCode';
-const BOJ_M2_DB    = 'MD02';
-const BOJ_M2_CODE  = 'MAM1NAM2M2MO';  // series code SIN prefijo DB
+const BOJ_M2_CODE  = "MD02'MAM1NAM2M2MO";  // code completo con prefijo DB
 
 // ── FRED helper ───────────────────────────────
 async function fred(id, key, limit = 14) {
@@ -62,10 +60,9 @@ async function fetchECBm2() {
 // DB: MD02 | Series: MAM1NAM2M2MO | sin prefijo DB en code=
 // Manual: https://www.stat-search.boj.or.jp/info/api_manual_en.pdf
 async function fetchBOJm2() {
-  // startDate = 15 meses atrás en formato YYYYMM
   const sd = new Date(); sd.setMonth(sd.getMonth() - 15);
   const startDate = `${sd.getFullYear()}${String(sd.getMonth()+1).padStart(2,'0')}`;
-  const url = `${BOJ_TS_API}?format=json&lang=en&db=${BOJ_M2_DB}&code=${BOJ_M2_CODE}&startDate=${startDate}`;
+  const url = `${BOJ_TS_API}?format=json&lang=en&code=${encodeURIComponent(BOJ_M2_CODE)}&startDate=${startDate}`;
   const ctrl = new AbortController();
   setTimeout(() => ctrl.abort(), 12000);
   try {
