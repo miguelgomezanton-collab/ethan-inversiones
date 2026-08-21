@@ -504,11 +504,31 @@ export default async function handler(req, res) {
   // ── Construir indicadores con score ──────────
   const ind = {};
 
-  // 1. Curva USD (auto)
+  // 1. Curva USD — DGS10 y DGS2 con fecha común más reciente
   if (t10y && t2y) {
-    const v = +(t10y.value - t2y.value).toFixed(2);
-    ind.curvaUSD = { label: 'Curva USD (10Y−2Y)', value: v, date: t10y.date,
-      score: scCurvaUSD(v), weight: 1 };
+    // Buscar fecha común entre las últimas 5 observaciones de cada serie
+    const dgs10obs = rDgs10.value;
+    const dgs2obs  = rDgs2.value;
+    const dgs10dates = new Set(dgs10obs.map(o => o.date));
+    const commonObs  = dgs2obs.find(o => dgs10dates.has(o.date));
+    if (commonObs) {
+      const dgs10match = dgs10obs.find(o => o.date === commonObs.date);
+      const spread = +(dgs10match.value - commonObs.value).toFixed(2);
+      const ageDays = Math.round((Date.now() - new Date(commonObs.date).getTime()) / (1000*60*60*24));
+      const freshness = ageDays <= 7 ? 'ok' : ageDays <= 10 ? 'warn' : 'stale';
+      ind.curvaUSD = {
+        label: 'Curva USD (10Y−2Y)', value: spread,
+        date: commonObs.date,
+        dgs10: { value: dgs10match.value, date: dgs10match.date },
+        dgs2:  { value: commonObs.value,  date: commonObs.date  },
+        ageDays, freshness,
+        score: freshness === 'stale' ? null : scCurvaUSD(spread),
+        weight: 1,
+      };
+    } else {
+      ind.curvaUSD = { label: 'Curva USD (10Y−2Y)', value: null, score: null, weight: 1, error: 'Sin fecha común DGS10/DGS2' };
+      errs.push('CurvaUSD: sin fecha común entre DGS10 y DGS2');
+    }
   }
 
   // 2. Curva EUR (manual o ECB)
