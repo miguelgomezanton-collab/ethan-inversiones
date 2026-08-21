@@ -65,12 +65,12 @@ export async function render(container,{actionsSlot}){
               :(i.value==null?'Sin dato':i.value>100&&i.delta>0?'>100 y subiendo — expansión':i.value>100&&i.delta<=0?'>100 pero perdiendo momentum — desaceleración':i.value<=100&&i.delta<0?'<100 y bajando — contracción':'<100 pero mejorando — recuperación');
             const trend=k==='lei'
               ? (i.freshness==='stale'?'⚠ Pendiente actualización':i.freshness==='warn'?'⚠ Próximo a expirar':i.score>0?'↑ Mejorando':i.score===0?'→ Estable':'↓ Empeorando')
-              : k==='curvaUSD'
+              : k==='curvaUSD'||k==='curvaEUR'
               ? (i.freshness==='stale'?'⚠ Dato obsoleto':i.freshness==='warn'?'⚠ Próximo a expirar':i.error?'⚠ Error':i.score>0?'↑ Mejorando':i.score===0?'→ Estable':'↓ Empeorando')
               : (i.score>0?'↑ Mejorando':i.score===0?'→ Estable':'↓ Empeorando');
             const trendColor=k==='lei'
               ? (i.freshness==='stale'?'var(--red)':i.freshness==='warn'?'var(--amber)':c)
-              : k==='curvaUSD'
+              : k==='curvaUSD'||k==='curvaEUR'
               ? (i.freshness==='stale'||i.error?'var(--red)':i.freshness==='warn'?'var(--amber)':c)
               : c;
             return `<div class="mac-card">
@@ -96,6 +96,12 @@ export async function render(container,{actionsSlot}){
                 DGS10: ${i.dgs10?.date||'—'} | ${i.dgs10?.value!=null?i.dgs10.value.toFixed(3)+'%':'—'}<br>
                 DGS2 : ${i.dgs2?.date||'—'} | ${i.dgs2?.value!=null?i.dgs2.value.toFixed(3)+'%':'—'}<br>
                 Fecha común: ${i.date||'—'} · Spread: ${i.value!=null?(i.value>=0?'+':'')+i.value.toFixed(2)+'%':'—'}<br>
+                Antigüedad: ${i.ageDays!=null?i.ageDays+' días':'—'} · ${i.freshness==='ok'?'✓ OK (≤7d)':i.freshness==='warn'?'⚠ WARN (8–10d)':'✗ STALE (>10d)'} · Score: ${i.score!=null?(i.score>0?'+':'')+i.score:'bloqueado'}
+              </div>`:''}
+              ${k==='curvaEUR'?`<div style="margin-top:8px;background:${i.freshness==='stale'||i.error?'rgba(244,113,116,0.07)':i.freshness==='warn'?'rgba(251,191,36,0.07)':'rgba(64,217,192,0.05)'};border:1px solid ${i.freshness==='stale'||i.error?'rgba(244,113,116,0.25)':i.freshness==='warn'?'rgba(251,191,36,0.25)':'rgba(64,217,192,0.2)'};border-radius:6px;padding:8px 10px;font-family:var(--mono);font-size:9px;color:${i.freshness==='stale'||i.error?'var(--red)':i.freshness==='warn'?'var(--amber)':'var(--text3)'};">
+                ${i.freshness==='stale'?'⚠ DATO OBSOLETO — Score bloqueado':i.freshness==='warn'?'⚠ Próximo a expirar':'🔍 Curva EUR 10Y−2Y · ECB YC SRS_10Y_2Y'}<br>
+                Spread: ${i.date||'—'} | ${i.value!=null?(i.value>=0?'+':'')+i.value.toFixed(2)+'%':'—'}<br>
+                Serie: spread precalculado ECB · curva soberana eurozona · Svensson<br>
                 Antigüedad: ${i.ageDays!=null?i.ageDays+' días':'—'} · ${i.freshness==='ok'?'✓ OK (≤7d)':i.freshness==='warn'?'⚠ WARN (8–10d)':'✗ STALE (>10d)'} · Score: ${i.score!=null?(i.score>0?'+':'')+i.score:'bloqueado'}
               </div>`:''}
               ${k==='lei'?`<div style="margin-top:8px;background:${i.freshness==='stale'?'rgba(244,113,116,0.07)':i.freshness==='warn'?'rgba(251,191,36,0.07)':'rgba(64,217,192,0.05)'};border:1px solid ${i.freshness==='stale'?'rgba(244,113,116,0.25)':i.freshness==='warn'?'rgba(251,191,36,0.25)':'rgba(64,217,192,0.2)'};border-radius:6px;padding:8px 10px;font-family:var(--mono);font-size:9px;color:${i.freshness==='stale'?'var(--red)':i.freshness==='warn'?'var(--amber)':'var(--text3)'};">

@@ -531,11 +531,20 @@ export default async function handler(req, res) {
     }
   }
 
-  // 2. Curva EUR (manual o ECB)
+  // 2. Curva EUR — ECB YC spread SRS_10Y_2Y (precalculado, Svensson, soberana agregada eurozona)
   if (rCurvaEUR.status === 'fulfilled') {
     const v = rCurvaEUR.value.value;
-    ind.curvaEUR = { label: 'Curva EUR (10Y−2Y)', value: v, date: rCurvaEUR.value.date,
-      score: scCurvaEUR(v), weight: 1, manual: rCurvaEUR.value.manual || false };
+    const dateStr = rCurvaEUR.value.date;
+    const ageDays = Math.round((Date.now() - new Date(dateStr).getTime()) / (1000*60*60*24));
+    const freshness = ageDays <= 7 ? 'ok' : ageDays <= 10 ? 'warn' : 'stale';
+    ind.curvaEUR = {
+      label: 'Curva EUR (10Y−2Y)', value: v, date: dateStr,
+      ageDays, freshness,
+      score: freshness === 'stale' ? null : scCurvaEUR(v),
+      weight: 1,
+      manual: false,
+      source: 'ECB YC · B.U2.EUR.4F.G_N_A.SV_C_YM.SRS_10Y_2Y · Svensson · soberana eurozona',
+    };
   } else errs.push('CurvaEUR: ' + rCurvaEUR.reason?.message);
 
   // 3. OECD CLI USA — FRED USALOLITOAASTSAM (amplitude adjusted, mensual)
