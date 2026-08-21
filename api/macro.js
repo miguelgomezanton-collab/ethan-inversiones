@@ -14,8 +14,7 @@ const ECB_M2_URL = 'https://data-api.ecb.europa.eu/service/data/BSI/M.U2.N.V.M20
 // BOJ Time-Series Data Search API (oficial desde feb 2026)
 // Series: MD02'MAM1YAM2M2MO — M2 YoY% directo (no calculado), actualizado a 2026/07
 // Documentación: https://www.stat-search.boj.or.jp/ssi/mtshtml/md02_m_1_en.html
-const BOJ_TS_API   = 'https://www.stat-search.boj.or.jp/api/v1/getDataCode';
-const BOJ_M2_CODE  = "MD02'MAM1YAM2M2MO";  // YoY% oficial BOJ — sin necesidad de calcular
+
 
 // ── FRED helper ───────────────────────────────
 async function fred(id, key, limit = 14) {
