@@ -12,10 +12,12 @@ const ECB_URL = 'https://data-api.ecb.europa.eu/service/data/YC/B.U2.EUR.4F.G_N_
 const ECB_M2_URL = 'https://data-api.ecb.europa.eu/service/data/BSI/M.U2.N.V.M20.X.1.U2.2300.Z01.E?lastNObservations=14&format=csvdata';
 
 // BOJ Time-Series Data Search API (oficial desde feb 2026)
-// Serie: MD02'MAM1NAM2M2MO — M2 / Average Amounts Outstanding / Money Stock
-// Documentación: https://www.boj.or.jp/en/statistics/outline/notice_2026/not260218a.htm
-const BOJ_TS_API  = 'https://www.stat-search.boj.or.jp/api/v1/getDataCode';
-const BOJ_M2_CODE = "MD02'MAM1NAM2M2MO";
+// DB: MD02 (Money Stock) | Series code: MAM1NAM2M2MO (sin prefijo DB)
+// URL: /getDataCode?format=json&lang=en&db=MD02&code=MAM1NAM2M2MO&startDate=YYYYMM
+// Documentación: https://www.stat-search.boj.or.jp/info/api_manual_en.pdf
+const BOJ_TS_API   = 'https://www.stat-search.boj.or.jp/api/v1/getDataCode';
+const BOJ_M2_DB    = 'MD02';
+const BOJ_M2_CODE  = 'MAM1NAM2M2MO';  // series code SIN prefijo DB
 
 // ── FRED helper ───────────────────────────────
 async function fred(id, key, limit = 14) {
@@ -56,38 +58,54 @@ async function fetchECBm2() {
     .reverse(); // más reciente primero
 }
 
-// ── BOJ M2 Japón ──────────────────────────────
+// ── BOJ M2 Japón — API oficial BOJ Time-Series (Feb 2026) ────────
+// DB: MD02 | Series: MAM1NAM2M2MO | sin prefijo DB en code=
+// Manual: https://www.stat-search.boj.or.jp/info/api_manual_en.pdf
 async function fetchBOJm2() {
-  // Intenta la API directa del BOJ primero
+  // startDate = 15 meses atrás en formato YYYYMM
+  const sd = new Date(); sd.setMonth(sd.getMonth() - 15);
+  const startDate = `${sd.getFullYear()}${String(sd.getMonth()+1).padStart(2,'0')}`;
+  const url = `${BOJ_TS_API}?format=json&lang=en&db=${BOJ_M2_DB}&code=${BOJ_M2_CODE}&startDate=${startDate}`;
+  const ctrl = new AbortController();
+  setTimeout(() => ctrl.abort(), 12000);
   try {
-    const r = await fetch(BOJ_M2_URL, {
-      headers: { 'User-Agent': 'EthanMacroPlatform/1.0', 'Accept': 'application/json' }
+    const r = await fetch(url, {
+      signal: ctrl.signal,
+      headers: { 'User-Agent': 'EthanMacroPlatform/1.0', 'Accept': 'application/json', 'Accept-Encoding': 'gzip' }
     });
-    if (!r.ok) throw new Error(`BOJ API: ${r.status}`);
+    if (!r.ok) throw new Error(`BOJ API HTTP ${r.status}`);
     const d = await r.json();
-    // El JSON del BOJ tiene estructura: { data: [ { date, value } ] }
-    const obs = d?.data || d?.DATA || [];
-    if (obs.length < 2) throw new Error('BOJ: sin observaciones');
-    // Ordenar desc y devolver últimas 14
-    return obs
-      .filter(o => o.value != null && !isNaN(parseFloat(o.value)))
-      .map(o => ({ date: o.date || o.DATE, value: parseFloat(o.value || o.VALUE) }))
+    // Verificar STATUS BOJ (200 = ok)
+    if (d?.STATUS && d.STATUS !== '200') throw new Error(`BOJ API STATUS ${d.STATUS}: ${d.MESSAGE||''}`);
+    // El JSON BOJ devuelve array de series, cada una con SURVEY_DATES y VALUES
+    const series = d?.DATA?.[0] || d?.data?.[0] || d;
+    const dates  = series?.SURVEY_DATES || series?.survey_dates || [];
+    const values = series?.VALUES       || series?.values       || [];
+    if (!dates.length || !values.length) throw new Error(`BOJ API: sin datos (STATUS ${d?.STATUS})`);
+    const obs = dates.map((date, i) => ({ date: String(date), value: parseFloat(values[i]) }))
+      .filter(o => !isNaN(o.value) && o.value > 0)
       .sort((a, b) => b.date.localeCompare(a.date))
-      .slice(0, 14);
-  } catch {
-    // Fallback: serie de Japón vía ECB Data Portal (RTD dataset)
-    const url = 'https://data-api.ecb.europa.eu/service/data/RTD/M.JP.Y.M_M2.J?lastNObservations=14&format=csvdata';
-    const r2 = await fetch(url, { headers: { 'Accept': 'text/csv' } });
-    if (!r2.ok) throw new Error(`ECB RTD JP M2: ${r2.status}`);
+      .slice(0, 15);
+    if (obs.length < 2) throw new Error(`BOJ API: solo ${obs.length} obs válidas`);
+    return { obs, source: 'BOJ_API_2026' };
+  } catch(e) {
+    // Fallback: ECB RTD para JPN
+    const url2 = 'https://data-api.ecb.europa.eu/service/data/RTD/M.JP.Y.M_M2.J?lastNObservations=15&format=csvdata';
+    const ctrl2 = new AbortController();
+    setTimeout(() => ctrl2.abort(), 10000);
+    const r2 = await fetch(url2, { signal: ctrl2.signal, headers: { 'Accept': 'text/csv' } });
+    if (!r2.ok) throw new Error(`ECB RTD JP M2 HTTP ${r2.status} (BOJ falló: ${e.message})`);
     const text = await r2.text();
     const lines = text.trim().split('\n');
     if (lines.length < 2) throw new Error('ECB RTD JP M2: sin datos');
     const h = lines[0].split(',');
     const di = h.indexOf('TIME_PERIOD'), vi = h.indexOf('OBS_VALUE');
-    return lines.slice(1)
+    const obs = lines.slice(1)
       .map(l => { const c = l.split(','); return { date: c[di], value: parseFloat(c[vi]) }; })
-      .filter(p => !isNaN(p.value))
-      .reverse();
+      .filter(p => !isNaN(p.value) && p.value > 0)
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .slice(0, 15);
+    return { obs, source: 'ECB_RTD_FALLBACK', fallbackReason: e.message };
   }
 }
 
