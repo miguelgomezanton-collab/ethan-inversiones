@@ -334,11 +334,13 @@ function scCurvaEUR(v) {
   if (v >= 0.40) return  0;
   return -1;
 }
-// Indicador 3: LEI USA (×1)
-function scLEI(v) {
-  if (v >=  0.3) return +1;
-  if (v >= -0.3) return  0;
-  return -1;
+// Indicador 3: OECD CLI USA — nivel + dirección (×1)
+// Serie: USALOLITOAASTSAM (amplitude adjusted, ~100 = tendencia)
+// Scoring v1: nivel > 100 y subiendo → +1 | nivel < 100 y bajando → -1 | resto → 0
+function scLEI(level, delta) {
+  if (level > 100 && delta > 0) return +1;
+  if (level < 100 && delta < 0) return -1;
+  return 0;
 }
 // Indicador 4: M2 Global (×3)
 function scM2(v) {
@@ -462,7 +464,7 @@ export default async function handler(req, res) {
     yahoo('BZ%3DF'),
     fred('M2V',          key, 6),
     fred('WRESBAL',      key, 60),
-    fred('USSLIND',      key, 14),
+    fred('USALOLITOAASTSAM', key, 3),   // OECD CLI USA (amplitude adjusted, mensual)
     fred('TOTLL',        key, 14),
     fred('GDP',          key, 6),
     fred('MICH',         key, 10),   // Univ. Michigan 1Y inflation expectations (fallback)
@@ -516,38 +518,42 @@ export default async function handler(req, res) {
       score: scCurvaEUR(v), weight: 1, manual: rCurvaEUR.value.manual || false };
   } else errs.push('CurvaEUR: ' + rCurvaEUR.reason?.message);
 
-  // 3. LEI USA — FRED USSLIND
-  // NOTA: USSLIND fue discontinuado por FRED. Última obs disponible: 2020-02-01.
-  // Si el dato tiene más de 18 meses de antigüedad → stale, no puntúa.
-  // Solo el override manual puede generar score en este indicador.
+  // 3. OECD CLI USA — FRED USALOLITOAASTSAM (amplitude adjusted, mensual)
+  // Scoring: nivel > 100 y MoM > 0 → +1 | nivel < 100 y MoM < 0 → -1 | resto → 0
+  // Freshness: bloquear score si el dato tiene más de 2 meses de antigüedad
   if (man.lei != null) {
-    ind.lei = { label: 'LEI USA', value: man.lei, date: null,
-      score: scLEI(man.lei), weight: 1, manual: true };
+    // Override manual — se interpreta como MoM% del CLI real
+    // Para override: nivel asumido 100 (neutro), solo dirección MoM
+    const manScore = man.lei > 0 ? +1 : man.lei < 0 ? -1 : 0;
+    ind.lei = { label: 'OECD CLI USA', value: man.lei, date: null,
+      score: manScore, weight: 1, manual: true };
   } else if (rLeiFreD.status === 'fulfilled' && rLeiFreD.value.length >= 2) {
-    const obs = rLeiFreD.value; // ya ordenado desc
-    const latest = obs[0].value, prev = obs[1].value;
-    const mom = prev > 0 ? +(((latest - prev) / prev) * 100).toFixed(2) : null;
+    const obs     = rLeiFreD.value; // ordenado desc
+    const level   = obs[0].value;
+    const prev    = obs[1].value;
+    const delta   = +(level - prev).toFixed(5);
     const latestDate = obs[0].date;
-    // Validación de freshness: rechazar si el dato tiene más de 18 meses
+    // Freshness: OECD CLI se publica mensualmente, tolerar hasta 2 meses de lag
     const ageMonths = (Date.now() - new Date(latestDate).getTime()) / (1000 * 60 * 60 * 24 * 30);
-    const isStale = ageMonths > 18;
+    const isStale = ageMonths > 2;
     ind.lei = {
-      label: 'LEI USA (FRED USSLIND)',
-      value: isStale ? null : mom,
-      rawValue: latest,
+      label: 'OECD CLI USA',
+      value: level,          // nivel del índice (~100)
+      delta,                 // variación MoM en puntos
+      prevValue: prev,
       date: latestDate,
       prevDate: obs[1].date,
-      prevValue: prev,
-      score: isStale ? null : (mom != null ? scLEI(mom) : null),
+      score: isStale ? null : scLEI(level, delta),
       weight: 1,
       auto: true,
       stale: isStale,
       staleMonths: Math.round(ageMonths),
     };
   } else {
-    errs.push('USSLIND: ' + rLeiFreD.reason?.message);
-    ind.lei = { label: 'LEI USA', value: man.lei ?? null, date: null,
-      score: man.lei != null ? scLEI(man.lei) : null, weight: 1, manual: man.lei != null };
+    errs.push('OECD CLI: ' + rLeiFreD.reason?.message);
+    ind.lei = { label: 'OECD CLI USA', value: null, date: null,
+      score: man.lei != null ? (man.lei > 0 ? +1 : man.lei < 0 ? -1 : 0) : null,
+      weight: 1, manual: man.lei != null };
   }
 
   // 4. M2 Global — USA (FRED) + EUR (ECB) + JPN (BOJ) + CHN (manual opcional)

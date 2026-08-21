@@ -57,9 +57,9 @@ export async function render(container,{actionsSlot}){
             const i=co[k]||(k==='lei'?ind.lei:null);
             if(!i) return `<div class="mac-card" style="background:var(--surface2);"><div style="font-size:10px;color:var(--text3);">${k==='curvaUSD'?'Curva USD':k==='curvaEUR'?'Curva EUR':'LEI USA'} — sin datos</div></div>`;
             const c=col(i.score);
-            const thresholds=k==='curvaUSD'?'≥+0.90%→+1 · +0.48-0.89%→0 · <+0.48%→−1':k==='curvaEUR'?'≥+0.60%→+1 · +0.40-0.59%→0 · <+0.40%→−1':'≥+0.3%→+1 · ±0.3%→0 · <−0.3%→−1';
-            const label=k==='curvaUSD'?'Curva USD (10Y−2Y)':k==='curvaEUR'?'Curva EUR (10Y−2Y)'+( i.manual?' ✎':''):'LEI USA ✎';
-            const signal=k==='curvaUSD'?(i.value<0?'Invertida — señal histórica de recesión':i.score>0?'≥+0.90% — optimismo de crecimiento':'Comprimiendo — neutral'):k==='curvaEUR'?(i.value<0?'Invertida — señal recesiva en Europa':i.score>0?'≥+0.60% — ciclo expansivo':'Neutral'):(i.value==null?'Sin dato — introduce el valor mensualmente':i.score>0?'≥+0.3% → expansión próximos 6-9 meses':i.score===0?'±0.3% → neutral':'<−0.3% → contracción anticipada');
+            const thresholds=k==='curvaUSD'?'≥+0.90%→+1 · +0.48-0.89%→0 · <+0.48%→−1':k==='curvaEUR'?'≥+0.60%→+1 · +0.40-0.59%→0 · <+0.40%→−1':'nivel>100 y subiendo→+1 · nivel<100 y bajando→−1 · resto→0';
+            const label=k==='curvaUSD'?'Curva USD (10Y−2Y)':k==='curvaEUR'?'Curva EUR (10Y−2Y)'+(i.manual?' ✎':''):'OECD CLI USA ✎';
+            const signal=k==='curvaUSD'?(i.value<0?'Invertida — señal histórica de recesión':i.score>0?'≥+0.90% — optimismo de crecimiento':'Comprimiendo — neutral'):k==='curvaEUR'?(i.value<0?'Invertida — señal recesiva en Europa':i.score>0?'≥+0.60% — ciclo expansivo':'Neutral'):(i.value==null?'Sin dato':i.value>100&&i.delta>0?'>100 y subiendo — expansión':i.value>100&&i.delta<=0?'>100 pero perdiendo momentum — desaceleración':i.value<=100&&i.delta<0?'<100 y bajando — contracción':'<100 pero mejorando — recuperación');
             const trend=i.score>0?'↑ Mejorando':i.score===0?'→ Estable':'↓ Empeorando';
             return `<div class="mac-card">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
@@ -69,7 +69,8 @@ export async function render(container,{actionsSlot}){
                   <span style="font-size:9px;padding:2px 7px;border-radius:10px;font-family:var(--mono);font-weight:700;background:rgba(${i.score>0?'74,222,128':i.score===0?'251,191,36':'244,113,116'},0.12);color:${c};">Score ${i.score>0?'+':''}${i.score??'—'}</span>
                 </div>
               </div>
-              <div style="font-family:var(--serif);font-size:28px;font-weight:600;font-style:italic;color:${c};">${i.value!=null?fsign(i.value)+'%':'—'}</div>
+              <div style="font-family:var(--serif);font-size:28px;font-weight:600;font-style:italic;color:${c};">${k==='lei'?(i.value!=null?Number(i.value).toFixed(4):'—'):(i.value!=null?fsign(i.value)+'%':'—')}</div>
+              ${k==='lei'&&i.delta!=null?`<div style="font-family:var(--mono);font-size:10px;color:${i.delta>0?'var(--green)':'var(--red)'};margin-top:2px;">MoM ${i.delta>0?'+':''}${i.delta.toFixed(4)} pts</div>`:''}
               <div style="position:relative;height:5px;background:var(--surface2);border-radius:3px;margin:8px 0 4px;">
                 ${i.value!=null&&i.value>=0?`<div style="position:absolute;left:50%;width:${Math.min(Math.abs(i.value||0)*50,50)}%;height:100%;background:${c};border-radius:0 3px 3px 0;"></div>`:''}
                 ${i.value!=null&&i.value<0?`<div style="position:absolute;right:50%;width:${Math.min(Math.abs(i.value||0)*50,50)}%;height:100%;background:${c};border-radius:3px 0 0 3px;"></div>`:''}
@@ -78,12 +79,13 @@ export async function render(container,{actionsSlot}){
               <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--text3);font-family:var(--mono);margin-bottom:6px;"><span style="color:var(--red)">Negativo</span><span>0</span><span style="color:var(--green)">Positivo</span></div>
               <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:3px;">${thresholds}</div>
               <div style="font-size:10px;color:var(--text2);border-top:1px solid var(--border);padding-top:6px;margin-top:6px;">${signal}</div>
-              ${k==='lei'?`<div style="margin-top:8px;background:${i.stale?'rgba(244,113,116,0.07)':'rgba(251,191,36,0.07)'};border:1px solid ${i.stale?'rgba(244,113,116,0.25)':'rgba(251,191,36,0.25)'};border-radius:6px;padding:8px 10px;font-family:var(--mono);font-size:9px;color:${i.stale?'var(--red)':'var(--amber)'};">
-                ${i.stale?'⚠ DATO OBSOLETO — USSLIND discontinuado en FRED. Score bloqueado.':'🔍 DEBUG LEI'}<br>
-                Obs. actual: ${i.date||'—'} | USSLIND ${i.rawValue!=null?Number(i.rawValue).toFixed(3):'—'}<br>
-                Obs. anterior: ${i.prevDate||'—'} | USSLIND ${i.prevValue!=null?Number(i.prevValue).toFixed(3):'—'}<br>
-                MoM calculado: ${i.value!=null?fsign(i.value)+'%':'bloqueado'}<br>
-                ${i.stale?`Antigüedad: ~${i.staleMonths} meses — introduce override manual para puntuar`:'Fuente: FRED USSLIND (auto)'}
+              ${k==='lei'?`<div style="margin-top:8px;background:${i.stale?'rgba(244,113,116,0.07)':'rgba(64,217,192,0.05)'};border:1px solid ${i.stale?'rgba(244,113,116,0.25)':'rgba(64,217,192,0.2)'};border-radius:6px;padding:8px 10px;font-family:var(--mono);font-size:9px;color:${i.stale?'var(--red)':'var(--text3)'};">
+                ${i.stale?'⚠ DATO OBSOLETO — Score bloqueado':'🔍 OECD CLI USA · USALOLITOAASTSAM'}<br>
+                Obs. actual: ${i.date||'—'} | Nivel ${i.value!=null?Number(i.value).toFixed(5):'—'}<br>
+                Obs. anterior: ${i.prevDate||'—'} | Nivel ${i.prevValue!=null?Number(i.prevValue).toFixed(5):'—'}<br>
+                Delta MoM: ${i.delta!=null?(i.delta>0?'+':'')+i.delta.toFixed(5)+' pts':'—'}<br>
+                Regla: nivel>${i.value>100?'✓':'✗'}100 y subiendo>${i.delta>0?'✓':'✗'}0 → Score ${i.score!=null?i.score:'bloqueado'}<br>
+                ${i.stale?`Antigüedad: ~${i.staleMonths} meses (máx. 2)`:'Fuente: FRED USALOLITOAASTSAM (auto)'}
               </div>`:''}
             </div>`;
           }).join('')}
@@ -110,14 +112,14 @@ export async function render(container,{actionsSlot}){
       <!-- Panel manuales -->
       <div id="ciclo-manual-panel" style="display:none;background:var(--surface);border:1px dashed var(--border2);border-radius:12px;padding:18px 20px;">
         <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px;">✎ Override Manual — Ciclo</div>
-        <div style="font-size:10px;color:var(--text3);font-family:var(--mono);margin-bottom:14px;">⚠ USSLIND (FRED) fue discontinuado — última obs. 2020-02-01. El scoring del LEI está bloqueado hasta que introduzcas un override manual. Fuente recomendada: Conference Board LEI (publicación mensual). Introduce la variación MoM% del último dato publicado.</div>
+        <div style="font-size:10px;color:var(--text3);font-family:var(--mono);margin-bottom:14px;">OECD CLI USA se obtiene automáticamente de FRED (USALOLITOAASTSAM). Solo introduce un override si FRED no está disponible o el dato tiene más de 2 meses. Override: introduce el delta MoM en puntos (ej. +0.04 si el nivel subió de 100.76 a 100.80). Score: >0 y subiendo → +1 | <100 y bajando → -1 | resto → 0.</div>
         ${manualInput('lei','Override LEI (% m/m)','Deja vacío para usar FRED USSLIND automático · ≥+0.3%→+1 · ±0.3%→0 · <−0.3%→−1',man.lei)}
         <div style="display:flex;gap:8px;margin-top:14px;">
           <button class="btn btn-primary" id="ciclo-save-man">Guardar y actualizar</button>
           <button class="btn" id="ciclo-close-man">Cancelar</button>
         </div>
       </div>
-      <div class="co-footer">Fuentes: FRED (DGS10, DGS2) · ECB Data Portal (Curva EUR) · Conference Board LEI (manual)</div>
+      <div class="co-footer">Fuentes: FRED (DGS10, DGS2, USALOLITOAASTSAM) · ECB Data Portal (Curva EUR)</div>
     `;
     document.getElementById('ciclo-save-man')?.addEventListener('click',()=>{
       const man=getManuals();
