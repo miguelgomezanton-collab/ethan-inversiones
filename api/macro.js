@@ -113,42 +113,42 @@ async function fetchBOJm2() {
 }
 
 // ── CHN M2 — ChinaData.live (PBoC via agregador) ──────────────────
-// Estructura: json.data.data = array histórico mensual
+// Estructura: json.data.data = array histórico mensual [{date,value}]
 // source: PBOC_VIA_CHINADATA
 async function fetchChinaM2() {
   const url = 'https://chinadata.live/api/v2/data/china-m2-money-supply';
   const ctrl = new AbortController();
   setTimeout(() => ctrl.abort(), 12000);
-  const r = await fetch(url, {
+  const res = await fetch(url, {
     signal: ctrl.signal,
     headers: { 'User-Agent': 'EthanMacroPlatform/1.0', 'Accept': 'application/json' },
   });
+  if (!res.ok) throw new Error(`ChinaData HTTP ${res.status}`);
 
-  const httpStatus  = r.status;
-  const contentType = r.headers.get('Content-Type') || '';
-  const rawText     = await r.text();
-
-  if (!r.ok) throw new Error(`ChinaData HTTP ${r.status} · ${rawText.slice(0,200)}`);
-
-  let json;
-  try { json = JSON.parse(rawText); }
-  catch(e) { throw new Error(`ChinaData INVALID_JSON: ${e.message}`); }
-
-  // Histórico en json.data.data (no en json.data directamente)
-  const observations = Array.isArray(json?.data?.data) ? json.data.data : [];
-  if (!observations.length) {
-    throw new Error(`ChinaData NO_OBSERVATIONS · topKeys:${Object.keys(json||{}).join(',')} · dataKeys:${Object.keys(json?.data||{}).join(',')}`);
+  const json = await res.json();
+  const rows = json?.data?.data;
+  if (!Array.isArray(rows) || rows.length === 0) {
+    throw new Error('CHN_NO_OBSERVATIONS');
   }
 
-  // Normalizar y ordenar asc para findYoYBase
-  const obs = observations
-    .map(x => ({ date: String(x.date||'').slice(0,7), value: Number(x.value) }))
-    .filter(x => /^\d{4}-\d{2}$/.test(x.date) && Number.isFinite(x.value) && x.value > 0)
+  const obs = rows
+    .map(r => ({ date: String(r.date), value: Number(r.value) }))
+    .filter(r => /^\d{4}-\d{2}$/.test(r.date) && Number.isFinite(r.value))
     .sort((a, b) => a.date.localeCompare(b.date));
 
-  if (!obs.length) throw new Error(`ChinaData NO_OBSERVATIONS después de filtrar`);
+  const current = obs.at(-1);
+  const [year, month] = current.date.split('-').map(Number);
+  const baseDate = `${year - 1}-${String(month).padStart(2, '0')}`;
+  const base = obs.find(r => r.date === baseDate);
+  if (!base) throw new Error('CHN_INVALID_YOY_BASE');
 
-  return { obs, source: 'PBOC_VIA_CHINADATA' };
+  const yoy = (current.value / base.value - 1) * 100;
+  const { ageDays, freshness } = m2Freshness(current.date);
+
+  return {
+    obs: { current, base, yoy, ageDays, freshness },
+    source: 'PBOC_VIA_CHINADATA',
+  };
 }
 
 // ── Calcular M2 Global USA + EUR + JPN + CHN ────────────────────
@@ -281,28 +281,22 @@ async function calcGlobalM2(fredKey, manualChinaM2pct) {
 
   // ── CHN M2 — ChinaData.live (PBoC) + override manual como fallback ──────────
   const chnResult = rChnM2.status === 'fulfilled' ? rChnM2.value : null;
-  const chnObs    = chnResult?.obs || null;
+  const chnData   = chnResult?.obs || null;
   const chnSource = chnResult?.source || 'unknown';
 
-  if (chnObs && chnObs.length >= 2) {
-    // obs viene ordenado asc — tomar el último como current
-    const current = chnObs[chnObs.length - 1];
-    const base    = findYoYBase(chnObs, current.date + '-01');
-    const { ageDays, freshness } = m2Freshness(current.date);
-    if (base) {
-      const yoy = +((current.value / base.value - 1) * 100).toFixed(2);
-      components.chn = {
-        yoy, currentDate: current.date, currentValue: current.value,
-        baseDate: base.date, baseValue: base.value,
-        ageDays, freshness, weight: 30,
-        valid: freshness !== 'stale',
-        source: chnSource,
-      };
-    } else {
-      components.chn = { yoy: null, currentDate: current.date,
-        error: 'INVALID_YOY — sin base 12M', ageDays, freshness,
-        weight: 30, valid: false, source: chnSource };
-    }
+  if (chnData?.current && chnData?.yoy != null) {
+    components.chn = {
+      yoy:          +chnData.yoy.toFixed(2),
+      currentDate:  chnData.current.date,
+      currentValue: chnData.current.value,
+      baseDate:     chnData.base.date,
+      baseValue:    chnData.base.value,
+      ageDays:      chnData.ageDays,
+      freshness:    chnData.freshness,
+      weight: 30,
+      valid:  chnData.freshness !== 'stale',
+      source: chnSource,
+    };
   } else if (manualChinaM2pct != null) {
     components.chn = {
       yoy: manualChinaM2pct, currentDate: null, freshness: 'manual',
