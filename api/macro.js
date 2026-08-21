@@ -894,12 +894,21 @@ export default async function handler(req, res) {
     ind.velM2 = { label: 'Velocidad M2', value: null, date: null, score: null, weight: 2 };
   }
 
-  // 8. Reservas Bancarias — FRED WRESBAL (semanal, valor absoluto en $B → convertir a $T)
+  // 8. Reservas Bancarias — FRED WRESBAL (semanal, SA, miles de millones USD → $T)
+  // Freshness semanal: ≤14d OK | 15-21d WARN | >21d STALE
   if (rWresbal.status === 'fulfilled' && rWresbal.value[0]) {
-    const rawB = rWresbal.value[0].value;              // en miles de millones $
-    const rawT = +(rawB / 1000).toFixed(2);            // convertir a $T
-    ind.reservas = { label: 'Reservas Bancarias Fed', value: rawT, rawValue: rawT,
-      date: rWresbal.value[0].date, score: scReservas(rawT), weight: 1 };
+    const rawB    = rWresbal.value[0].value;
+    const rawT    = +(rawB / 1000).toFixed(2);
+    const date    = rWresbal.value[0].date;
+    const ageDays = Math.round((Date.now() - new Date(date).getTime()) / 86400000);
+    const freshness = ageDays <= 14 ? 'ok' : ageDays <= 21 ? 'warn' : 'stale';
+    ind.reservas = {
+      label: 'Reservas Bancarias Fed',
+      value: rawT, rawValueB: rawB, date,
+      ageDays, freshness,
+      score: freshness === 'stale' ? null : scReservas(rawT),
+      weight: 1, auto: true, stale: freshness === 'stale',
+    };
   } else {
     errs.push('WRESBAL: ' + rWresbal.reason?.message);
     ind.reservas = { label: 'Reservas Bancarias Fed', value: null, date: null, score: null, weight: 1 };

@@ -227,11 +227,25 @@ export async function render(container, { actionsSlot }) {
             ? `<strong style="color:var(--amber)">−1 pt.</strong> Velocidad M2 ${v!=null?(v>=0?'+':'')+f2(v)+'% interanual':'—'}. Scoring provisional.`
             : `<strong style="color:var(--red)">${s!=null?s:'—'} pts.</strong> Velocidad M2 ${v!=null?(v>=0?'+':'')+f2(v)+'% interanual':'—'}. Scoring provisional.`)}
 
-        ${liqCard('🏦','Reservas Bancarias Fed', liq.reservas, 'Valor absoluto en $T · FRED WRESBAL (semanal) · automático',
-          '≥$3.5T→+1  ·  $2.5-3.4T→−1  ·  <$2.5T→−2  ·  peso ×1',
-          (s, v) => s > 0 ? `<strong style="color:var(--green)">+1 pt.</strong> ≥$3.5T — liquidez abundante. Los bancos tienen amplia capacidad prestadora.` :
-            s === -1 ? `<strong style="color:var(--amber)">−1 pt.</strong> $2.5-3.4T — reservas en zona baja. QT activo de la Fed — menos liquidez en el sistema.` :
-            `<strong style="color:var(--red)">−2 pts.</strong> <$2.5T — reservas insuficientes. La Fed está drenando agresivamente. Riesgo de contracción crediticia sistémica.`)}
+        ${liqCard('🏦','Reservas Bancarias Fed', liq.reservas,
+          liq.reservas?.auto
+            ? (() => {
+                const r = liq.reservas;
+                const fsn = f => f==='ok'?'✓ OK':f==='warn'?'⚠ WARN':f==='stale'?'✗ STALE':'—';
+                return [
+                  '🔍 DEBUG Reservas Bancarias',
+                  `Fecha: ${r.date||'—'} | Bruto FRED: ${r.rawValueB!=null?f2(r.rawValueB)+' $B':'—'} | Convertido: ${r.value!=null?'$'+r.value+'T':'—'}`,
+                  `Antigüedad: ${r.ageDays!=null?r.ageDays+'d':'—'} · ${fsn(r.freshness)} · Fuente: FRED WRESBAL`,
+                  `Score: ${r.score!=null?r.score:'bloqueado'}${r.stale?' · STALE':''} [PROVISIONAL · thresholds fijos $3.5T/$2.5T]`,
+                ].join('<br>');
+              })()
+            : 'Valor absoluto en $T · FRED WRESBAL (semanal) · automático',
+          '≥$3.5T→+1  ·  $2.5-3.4T→−1  ·  <$2.5T→−2  ·  PROVISIONAL · peso ×1',
+          (s, v) => s > 0
+            ? `<strong style="color:var(--green)">+1 pt.</strong> Reservas $${v}T — liquidez sistémica elevada. Scoring provisional.`
+            : s === -1
+            ? `<strong style="color:var(--amber)">−1 pt.</strong> Reservas $${v}T — zona media. Scoring provisional.`
+            : `<strong style="color:var(--red)">${s!=null?s:'—'} pts.</strong> Reservas ${v!=null?'$'+v+'T':'—'}. Scoring provisional.`)}
 
         ${liq.bbb ? `<div class="co-liq-card">
           <div class="co-liq-card-header"><span class="co-liq-card-title">📊 BBB Spread</span><span style="font-size:9px;color:var(--text3);font-family:var(--mono);">${liq.bbb.date||'—'}</span></div>
