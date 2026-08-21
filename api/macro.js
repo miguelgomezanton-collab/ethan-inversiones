@@ -164,10 +164,15 @@ async function calcGlobalM2(fredKey, manualChinaM2pct) {
   }
 
   // ── JPN M2 ──────────────────────────────────────────────────
-  if (rJpM2.status === 'fulfilled' && rJpM2.value?.obs?.length >= 2) {
-    const { obs, source: jpSource, fallbackReason } = rJpM2.value;
-    const current = obs[0];
-    const base = findYoYBase(obs, current.date);
+  const jpResult = rJpM2.status === 'fulfilled' ? rJpM2.value : null;
+  // fetchBOJm2 devuelve {obs, source} — manejar también array plano por retrocompatibilidad
+  const jpObs = jpResult?.obs || (Array.isArray(jpResult) ? jpResult : null);
+  const jpSource2 = jpResult?.source || 'unknown';
+  const jpFallbackReason = jpResult?.fallbackReason;
+
+  if (jpObs && jpObs.length >= 2) {
+    const current = jpObs[0];
+    const base = findYoYBase(jpObs, current.date);
     const { ageDays, freshness } = m2Freshness(current.date);
     if (base) {
       const yoy = +((current.value - base.value) / base.value * 100).toFixed(2);
@@ -175,16 +180,17 @@ async function calcGlobalM2(fredKey, manualChinaM2pct) {
         yoy, currentDate: current.date, currentValue: current.value,
         baseDate: base.date, baseValue: base.value,
         ageDays, freshness, weight: 10, valid: freshness === 'ok',
-        source: jpSource,
-        ...(fallbackReason ? { fallbackReason } : {}),
+        source: jpSource2,
+        ...(jpFallbackReason ? { fallbackReason: jpFallbackReason } : {}),
       };
     } else {
       components.jp = { yoy: null, currentDate: current.date, error: 'Sin base YoY 12M',
-        ageDays, freshness, weight: 10, valid: false, source: jpSource };
+        ageDays, freshness, weight: 10, valid: false, source: jpSource2 };
     }
   } else {
-    errors.push('JPN M2: ' + (rJpM2.reason?.message || 'sin datos o estructura inesperada'));
-    components.jp = { yoy: null, error: 'Sin datos', ageDays: null, freshness: 'missing', weight: 10, valid: false };
+    const errMsg = rJpM2.reason?.message || jpResult?.fallbackReason || `estructura inesperada (obs: ${jpObs?.length ?? 'N/A'})`;
+    errors.push('JPN M2: ' + errMsg);
+    components.jp = { yoy: null, error: errMsg, ageDays: null, freshness: 'missing', weight: 10, valid: false };
   }
 
   // ── CHN M2 (manual) ─────────────────────────────────────────

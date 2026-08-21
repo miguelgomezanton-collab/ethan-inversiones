@@ -137,7 +137,7 @@ export async function render(container, { actionsSlot }) {
                 const row = (flag, key, label) => {
                   const r = c[key];
                   if (!r) return `${label}: —`;
-                  if (r.error) return `${label}: ⚠ ${r.error}`;
+                  if (r.error) return `${label}: ⚠ ${r.error}${r.fallbackReason?' (fallback falló: '+r.fallbackReason+')':''}${r.source?' ['+r.source+']':''}`;
                   const srcTag = r.source ? ` [${r.source}${r.fallbackReason?' ⚠ fallback':''}]` : '';
                   return `${label}: ${r.currentDate||'—'} | YoY ${r.yoy!=null?(r.yoy>=0?'+':'')+f2(r.yoy)+'%':'—'} | base ${r.baseDate||'—'} | ${r.ageDays!=null?r.ageDays+'d':'-'} · ${fsn(r.freshness)}${srcTag}`;
                 };
