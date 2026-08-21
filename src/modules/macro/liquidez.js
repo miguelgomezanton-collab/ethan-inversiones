@@ -137,9 +137,11 @@ export async function render(container, { actionsSlot }) {
                 const row = (flag, key, label) => {
                   const r = c[key];
                   if (!r) return `${label}: —`;
-                  if (r.error) return `${label}: ⚠ ${r.error}${r.fallbackReason?' (fallback falló: '+r.fallbackReason+')':''}${r.source?' ['+r.source+']':''}`;
+                  if (r.error) return `${label}: ⚠ ${r.error}${r.fallbackReason?' ('+r.fallbackReason+')':''}${r.source?' ['+r.source+']':''}`;
                   const srcTag = r.source ? ` [${r.source}${r.fallbackReason?' · '+r.fallbackReason:''}]` : '';
-                  return `${label}: ${r.currentDate||'—'} | YoY ${r.yoy!=null?(r.yoy>=0?'+':'')+f2(r.yoy)+'%':'—'} | base ${r.baseDate||'—'} | ${r.ageDays!=null?r.ageDays+'d':'-'} · ${fsn(r.freshness)}${srcTag}`;
+                  const yoyLabel = r.isOfficialYoY ? 'YoY oficial BOJ' : 'YoY calc.';
+                  const baseInfo = r.baseDate ? ` | base ${r.baseDate}` : (r.isOfficialYoY ? ' | YoY directo BOJ' : '');
+                  return `${label}: ${r.currentDate||'—'} | ${yoyLabel} ${r.yoy!=null?(r.yoy>=0?'+':'')+f2(r.yoy)+'%':'—'}${baseInfo} | ${r.ageDays!=null?r.ageDays+'d':'-'} · ${fsn(r.freshness)}${srcTag}`;
                 };
                 return [
                   row(true,'us','USA FRED M2SL'),
