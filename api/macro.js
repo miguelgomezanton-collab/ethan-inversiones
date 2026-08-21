@@ -77,11 +77,13 @@ async function fetchBOJm2() {
     const d = await r.json();
     // Verificar STATUS BOJ (200 = ok)
     if (d?.STATUS && d.STATUS !== '200') throw new Error(`BOJ API STATUS ${d.STATUS}: ${d.MESSAGE||''}`);
+    // Log estructura para diagnóstico
+    const topKeys = Object.keys(d||{}).join(',');
     // El JSON BOJ devuelve array de series, cada una con SURVEY_DATES y VALUES
     const series = d?.DATA?.[0] || d?.data?.[0] || d;
     const dates  = series?.SURVEY_DATES || series?.survey_dates || [];
     const values = series?.VALUES       || series?.values       || [];
-    if (!dates.length || !values.length) throw new Error(`BOJ API: sin datos (STATUS ${d?.STATUS})`);
+    if (!dates.length || !values.length) throw new Error(`BOJ API STATUS 200 ok pero sin datos. Keys: ${topKeys}. Series keys: ${Object.keys(series||{}).slice(0,8).join(',')}`);
     const obs = dates.map((date, i) => ({ date: String(date), value: parseFloat(values[i]) }))
       .filter(o => !isNaN(o.value) && o.value > 0)
       .sort((a, b) => b.date.localeCompare(a.date))
