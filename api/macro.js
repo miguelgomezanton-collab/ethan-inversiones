@@ -763,17 +763,21 @@ export default async function handler(req, res) {
     const tl  = rTotll.value; // desc, mensual
     const gdp = rGdp.value;   // desc, trimestral
 
-    // TOTLL YoY por fecha real
+    // TOTLL YoY por fecha real — serie semanal: buscar obs más próxima a t-365d ±7 días
     const tlCurrent  = tl[0];
-    const tlBase     = findYoYBase(tl, tlCurrent.date);
+    const tlBase     = findYoYBase(tl, tlCurrent.date);  // ±10d ya configurado en findYoYBase
     const tlAgeDays  = Math.round((Date.now() - new Date(tlCurrent.date).getTime()) / 86400000);
-    const tlFresh    = tlAgeDays <= 60 ? 'ok' : tlAgeDays <= 90 ? 'warn' : 'stale';
+    const tlFresh    = tlAgeDays <= 30 ? 'ok' : tlAgeDays <= 45 ? 'warn' : 'stale';
 
-    // GDP YoY por fecha real (buscar ~12 meses = ~4 trimestres atrás)
+    // GDP YoY por fecha real — trimestral, publication-aware
+    // La fecha FRED es el inicio del trimestre (2026-04-01 = Q2 2026)
+    // BEA publica ~30 días después del cierre del trimestre
+    // Freshness: considerar stale solo si han pasado >150d desde inicio del trimestre
+    // (equivale a >~2 trimestres de lag, lo que indicaría que hay un dato más reciente disponible)
     const gdpCurrent = gdp[0];
     const gdpBase    = findYoYBase(gdp, gdpCurrent.date);
     const gdpAgeDays = Math.round((Date.now() - new Date(gdpCurrent.date).getTime()) / 86400000);
-    const gdpFresh   = gdpAgeDays <= 120 ? 'ok' : gdpAgeDays <= 150 ? 'warn' : 'stale';
+    const gdpFresh   = gdpAgeDays <= 150 ? 'ok' : gdpAgeDays <= 210 ? 'warn' : 'stale';
 
     if (tlBase && gdpBase) {
       const creditYoY = +(((tlCurrent.value  - tlBase.value)  / tlBase.value)  * 100).toFixed(2);

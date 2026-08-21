@@ -178,9 +178,11 @@ export async function render(container, { actionsSlot }) {
               })()
             : 'Manual override',
           '≥+3.0%→+3  ·  +1.5-2.9%→0  ·  <+1.5%→−3  ·  PROVISIONAL · peso ×3',
-          (s, v) => s > 0 ? `<strong style="color:var(--green)">+${s} pts.</strong> Crédito crece más que el nominal — expansión financiera saludable.` :
-            s === 0 ? `<strong style="color:var(--amber)">0 pts.</strong> Crédito alineado con el nominal — ciclo estable.` :
-            `<strong style="color:var(--red)">${s} pts.</strong> Crédito crece menos que el nominal — desapalancamiento en curso.`)}
+          (s, v) => s > 0 ? `<strong style="color:var(--green)">+${s} pts.</strong> Crédito crece significativamente más que el PIB nominal — expansión financiera.` :
+            s === 0 ? `<strong style="color:var(--amber)">0 pts.</strong> Crédito crece moderadamente más que el nominal — impulso leve.` :
+            v != null && v > 0 ? `<strong style="color:var(--amber)">${s} pts.</strong> Crédito crece más que el PIB nominal (+${typeof v === 'number' ? v.toFixed(2) : v} pp) pero por debajo del umbral de señal. <em>Scoring provisional.</em>` :
+            v != null && v <= 0 ? `<strong style="color:var(--red)">${s} pts.</strong> Crédito crece menos que el PIB nominal — desapalancamiento bancario.` :
+            `<strong style="color:var(--red)">${s} pts.</strong> Sin datos suficientes.`)}
 
         ${liqCard('⚡','Impulso Crediticio', liq.impulso,
           liq.impulso?.auto
