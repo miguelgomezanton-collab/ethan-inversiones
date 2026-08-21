@@ -186,12 +186,25 @@ export async function render(container, { actionsSlot }) {
 
         ${liqCard('⚡','Impulso Crediticio', liq.impulso,
           liq.impulso?.auto
-            ? `Aceleración TOTLL: YoY ahora ${liq.impulso.yoyNow!=null?(liq.impulso.yoyNow>=0?'+':'')+f2(liq.impulso.yoyNow)+'%':'—'} vs hace 3m ${liq.impulso.yoy3mAgo!=null?(liq.impulso.yoy3mAgo>=0?'+':'')+f2(liq.impulso.yoy3mAgo)+'%':'—'} · FRED TOTLL`
-            : 'Aceleración del crédito — anticipa gasto con 6-9 meses',
-          '≥+1.0→+2  ·  +0.5-0.9→+1  ·  <+0.5→−2  ·  peso ×2',
-          (s, v) => s >= 2 ? `<strong style="color:var(--green)">+2 pts.</strong> Impulso fuerte — expansión de demanda en 6-9 meses.` :
+            ? (() => {
+                const c   = liq.impulso.current || {};
+                const p3m = liq.impulso.point3m || {};
+                const fsn = f => f==='ok'?'✓ OK':f==='warn'?'⚠ WARN':f==='stale'?'✗ STALE':'—';
+                return [
+                  '🔍 DEBUG Impulso Crediticio',
+                  `Actual:  ${c.date||'—'} | base ${c.baseDate||'—'} | ${c.ageDays!=null?c.ageDays+'d':'—'} · ${fsn(c.freshness)}`,
+                  `Hace 3M: ${p3m.date||'—'} | base ${p3m.baseDate||'—'}`,
+                  `YoY actual: ${liq.impulso.yoyNow!=null?(liq.impulso.yoyNow>=0?'+':'')+f2(liq.impulso.yoyNow)+'%':'—'} | YoY 3M atrás: ${liq.impulso.yoy3mAgo!=null?(liq.impulso.yoy3mAgo>=0?'+':'')+f2(liq.impulso.yoy3mAgo)+'%':'—'}`,
+                  `Impulso (diff): ${liq.impulso.value!=null?(liq.impulso.value>=0?'+':'')+f2(liq.impulso.value)+' pp':'—'}`,
+                  `Score: ${liq.impulso.score!=null?liq.impulso.score:'bloqueado'}${liq.impulso.stale?' · STALE':''}`,
+                ].join('<br>');
+              })()
+            : 'Manual override',
+          '≥+1.0→+2  ·  +0.5-0.9→+1  ·  <+0.5→−2  ·  PROVISIONAL · peso ×2',
+          (s, v) => s >= 2 ? `<strong style="color:var(--green)">+2 pts.</strong> Impulso fuerte — crédito acelerando.` :
             s === 1 ? `<strong style="color:var(--green)">+1 pt.</strong> Impulso positivo moderado.` :
-            `<strong style="color:var(--red)">${s} pts.</strong> Impulso negativo — contracción del gasto con retardo.`)}
+            v != null && v >= 0 ? `<strong style="color:var(--amber)">${s} pts.</strong> Crédito creciendo pero desacelerando — impulso negativo. <em>Scoring provisional.</em>` :
+            `<strong style="color:var(--red)">${s} pts.</strong> Crédito desacelerando — contracción del impulso crediticio.`)}
 
         ${liqCard('🔄','Velocidad M2', liq.velM2, 'YoY · FRED M2V (trimestral) · automático',
           '≥0%→+2  ·  −1.5 a −0.1%→−1  ·  <−1.5%→−2  ·  peso ×2',

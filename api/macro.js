@@ -809,30 +809,55 @@ export default async function handler(req, res) {
       score: man.credito != null ? scCredito(man.credito) : null, weight: 3, manual: man.credito != null };
   }
 
-  // 6. Impulso Crediticio — aceleración del crédito (TOTLL)
-  // YoY actual vs YoY de hace 3 meses — Fix: buscar bases por fecha real
+  // 6. Impulso Crediticio — aceleración del crédito (TOTLL semanal)
+  // Impulso = YoY actual − YoY de hace 3 meses (≈91 días)
+  // Fix: buscar obs más cercana a t−91d por fecha, no por posición (tl[3] = 3 semanas, no 3 meses)
   if (man.impulso != null) {
     ind.impulso = { label: 'Impulso Crediticio', value: man.impulso, date: null,
       score: scImpulso(man.impulso), weight: 2, manual: true };
   } else if (rTotll.status === 'fulfilled' && rTotll.value.length >= 4) {
-    const tl = rTotll.value; // desc
-    const current   = tl[0];
-    const current3m = tl[3]; // hace 3 meses — posición fija OK aquí (solo 3 meses)
-    const baseNow   = findYoYBase(tl, current.date);
-    const base3m    = findYoYBase(tl, current3m.date);
-    if (baseNow && base3m) {
-      const yoyNow  = ((current.value   - baseNow.value) / baseNow.value) * 100;
-      const yoy3m   = ((current3m.value - base3m.value)  / base3m.value)  * 100;
+    const tl = rTotll.value; // desc, semanal
+    const current = tl[0];
+
+    // Punto de hace ~3 meses: buscar obs más próxima a currentDate - 91 días
+    const currentMs = new Date(current.date).getTime();
+    const target3m  = currentMs - 91 * 24 * 60 * 60 * 1000;
+    const WEEK_MS   = 7 * 24 * 60 * 60 * 1000;
+    const obs3m = tl.reduce((best, o) => {
+      const diff = Math.abs(new Date(o.date).getTime() - target3m);
+      return (!best || diff < Math.abs(new Date(best.date).getTime() - target3m)) ? o : best;
+    }, null);
+
+    // Bases YoY por fecha real para cada punto
+    const baseNow = findYoYBase(tl, current.date);
+    const base3m  = obs3m ? findYoYBase(tl, obs3m.date) : null;
+
+    // Freshness
+    const tlAgeDays = Math.round((Date.now() - currentMs) / 86400000);
+    const tlFresh   = tlAgeDays <= 30 ? 'ok' : tlAgeDays <= 45 ? 'warn' : 'stale';
+
+    if (baseNow && base3m && obs3m) {
+      const yoyNow = ((current.value  - baseNow.value) / baseNow.value) * 100;
+      const yoy3m  = ((obs3m.value    - base3m.value)  / base3m.value)  * 100;
       const impulso = +(yoyNow - yoy3m).toFixed(2);
       ind.impulso = {
         label: 'Impulso Crediticio (aceleración TOTLL)',
-        value: impulso, yoyNow: +yoyNow.toFixed(2), yoy3mAgo: +yoy3m.toFixed(2),
-        date: current.date, baseDate: baseNow.date, base3mDate: base3m.date,
-        score: scImpulso(impulso), weight: 2, auto: true,
+        value: impulso,
+        yoyNow:   +yoyNow.toFixed(2),
+        yoy3mAgo: +yoy3m.toFixed(2),
+        current:  { date: current.date,  value: current.value,  baseDate: baseNow.date, ageDays: tlAgeDays, freshness: tlFresh },
+        point3m:  { date: obs3m.date,    value: obs3m.value,    baseDate: base3m.date },
+        date: current.date,
+        score: tlFresh === 'stale' ? null : scImpulso(impulso),
+        weight: 2, auto: true,
+        stale: tlFresh === 'stale',
       };
     } else {
-      ind.impulso = { label: 'Impulso Crediticio', value: null, date: current.date,
-        error: !baseNow ? 'Sin base YoY actual' : 'Sin base YoY 3M', score: null, weight: 2, auto: true };
+      ind.impulso = {
+        label: 'Impulso Crediticio', value: null, date: current.date,
+        error: !baseNow ? 'Sin base YoY actual' : !obs3m ? 'Sin obs 3M' : 'Sin base YoY 3M',
+        score: null, weight: 2, auto: true,
+      };
     }
   } else {
     ind.impulso = { label: 'Impulso Crediticio', value: man.impulso ?? null, date: null,
