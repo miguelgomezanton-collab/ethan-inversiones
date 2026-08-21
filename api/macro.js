@@ -150,7 +150,7 @@ async function fetchChinaM2() {
 
   const rows = parsed?.data || parsed?.results || parsed?.observations || (isArray ? parsed : []);
   if (!rows.length) {
-    return { _debug: { stage: 'NO_OBSERVATIONS', httpStatus, contentType, parsedType, isArray, topKeys, rawSample: rawText.slice(0, 500) } };
+    return { _debug: { stage: 'NO_OBSERVATIONS', httpStatus, contentType, parsedType, isArray, topKeys, rawSample: rawText.slice(0, 3000) } };
   }
 
   const obs = rows

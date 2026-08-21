@@ -129,7 +129,7 @@ export async function render(container, { actionsSlot }) {
 
       <!-- GRID 6 CARDS -->
       <div class="co-liq-grid3">
-        ${liqCard('💵','M2 Global (USA+EUR+JPN)', liq.m2,
+        ${liqCard('💵','M2 Global', liq.m2,
           liq.m2?.auto
             ? (() => {
                 const c = liq.m2.components || {};
@@ -151,7 +151,7 @@ export async function render(container, { actionsSlot }) {
                     ? (c.chn.source === 'manual override'
                       ? `${f2(c.chn.yoy)}% (manual override)`
                       : `${c.chn.currentDate||'—'} | YoY ${c.chn.yoy!=null?(c.chn.yoy>=0?'+':'')+f2(c.chn.yoy)+'%':'—'} | base ${c.chn.baseDate||'—'} | ${c.chn.ageDays!=null?c.chn.ageDays+'d':'-'} · ${fsn(c.chn.freshness)} [${c.chn.source||'—'}]`)
-                    : `⚠ ${c.chn?.error||'missing'}${c.chn?._debug ? ' · stage:'+c.chn._debug.stage+' HTTP:'+c.chn._debug.httpStatus+(c.chn._debug.rawSample?' sample:'+c.chn._debug.rawSample.slice(0,120):'') : ''}`}`,
+                    : `⚠ ${c.chn?.error||'missing'}${c.chn?._debug ? ' · stage:'+c.chn._debug.stage+' HTTP:'+c.chn._debug.httpStatus+(c.chn._debug.rawSample?'<br>BODY: '+c.chn._debug.rawSample.slice(0,2000):'') : ''}`}`,
                   `Cobertura: ${liq.m2.coverageWeight||'—'}/100 (mín. 60) · Global YoY: ${liq.m2.value!=null?(liq.m2.value>=0?'+':'')+f2(liq.m2.value)+'%':'bloqueado'}`,
                 ].join('<br>');
               })()
