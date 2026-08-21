@@ -1006,7 +1006,10 @@ export default async function handler(req, res) {
   const seguimiento = {
     t10y,
     t2y,
-    ffr,
+    ffr: ffrMeta || ffr,
+    ffrHistory: rDff.status === 'fulfilled'
+      ? rDff.value.slice(0, 5).map(o => ({ date: o.date, value: o.value }))
+      : [],
     t10y2y: t10y && t2y ? { value: +(t10y.value - t2y.value).toFixed(2), date: t10y.date } : null,
     cpi:     cpiYoY    != null ? { value: cpiYoY,    date: rCpi.value?.[0]?.date }    : null,
     cpiCore: cpiCoreYoY != null ? { value: cpiCoreYoY, date: rCpiCore.value?.[0]?.date } : null,
