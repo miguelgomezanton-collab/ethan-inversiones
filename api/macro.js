@@ -516,9 +516,10 @@ export default async function handler(req, res) {
       score: scCurvaEUR(v), weight: 1, manual: rCurvaEUR.value.manual || false };
   } else errs.push('CurvaEUR: ' + rCurvaEUR.reason?.message);
 
-  // 3. LEI USA — FRED USSLIND (Conference Board Leading Index, mensual)
-  // USSLIND es el índice en nivel. Calculamos variación mensual % como proxy del dato que publica CB.
-  // Si el manual override existe (man.lei), lo usamos preferentemente.
+  // 3. LEI USA — FRED USSLIND
+  // NOTA: USSLIND fue discontinuado por FRED. Última obs disponible: 2020-02-01.
+  // Si el dato tiene más de 18 meses de antigüedad → stale, no puntúa.
+  // Solo el override manual puede generar score en este indicador.
   if (man.lei != null) {
     ind.lei = { label: 'LEI USA', value: man.lei, date: null,
       score: scLEI(man.lei), weight: 1, manual: true };
@@ -526,9 +527,23 @@ export default async function handler(req, res) {
     const obs = rLeiFreD.value; // ya ordenado desc
     const latest = obs[0].value, prev = obs[1].value;
     const mom = prev > 0 ? +(((latest - prev) / prev) * 100).toFixed(2) : null;
-    ind.lei = { label: 'LEI USA (FRED USSLIND)', value: mom, rawValue: latest,
-      date: obs[0].date, prevDate: obs[1].date, prevValue: prev,
-      score: mom != null ? scLEI(mom) : null, weight: 1, auto: true };
+    const latestDate = obs[0].date;
+    // Validación de freshness: rechazar si el dato tiene más de 18 meses
+    const ageMonths = (Date.now() - new Date(latestDate).getTime()) / (1000 * 60 * 60 * 24 * 30);
+    const isStale = ageMonths > 18;
+    ind.lei = {
+      label: 'LEI USA (FRED USSLIND)',
+      value: isStale ? null : mom,
+      rawValue: latest,
+      date: latestDate,
+      prevDate: obs[1].date,
+      prevValue: prev,
+      score: isStale ? null : (mom != null ? scLEI(mom) : null),
+      weight: 1,
+      auto: true,
+      stale: isStale,
+      staleMonths: Math.round(ageMonths),
+    };
   } else {
     errs.push('USSLIND: ' + rLeiFreD.reason?.message);
     ind.lei = { label: 'LEI USA', value: man.lei ?? null, date: null,

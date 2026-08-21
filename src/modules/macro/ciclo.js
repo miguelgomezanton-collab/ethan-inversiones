@@ -78,12 +78,12 @@ export async function render(container,{actionsSlot}){
               <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--text3);font-family:var(--mono);margin-bottom:6px;"><span style="color:var(--red)">Negativo</span><span>0</span><span style="color:var(--green)">Positivo</span></div>
               <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:3px;">${thresholds}</div>
               <div style="font-size:10px;color:var(--text2);border-top:1px solid var(--border);padding-top:6px;margin-top:6px;">${signal}</div>
-              ${k==='lei'?`<div style="margin-top:8px;background:rgba(251,191,36,0.07);border:1px solid rgba(251,191,36,0.25);border-radius:6px;padding:8px 10px;font-family:var(--mono);font-size:9px;color:var(--amber);">
-                🔍 DEBUG LEI<br>
+              ${k==='lei'?`<div style="margin-top:8px;background:${i.stale?'rgba(244,113,116,0.07)':'rgba(251,191,36,0.07)'};border:1px solid ${i.stale?'rgba(244,113,116,0.25)':'rgba(251,191,36,0.25)'};border-radius:6px;padding:8px 10px;font-family:var(--mono);font-size:9px;color:${i.stale?'var(--red)':'var(--amber)'};">
+                ${i.stale?'⚠ DATO OBSOLETO — USSLIND discontinuado en FRED. Score bloqueado.':'🔍 DEBUG LEI'}<br>
                 Obs. actual: ${i.date||'—'} | USSLIND ${i.rawValue!=null?Number(i.rawValue).toFixed(3):'—'}<br>
                 Obs. anterior: ${i.prevDate||'—'} | USSLIND ${i.prevValue!=null?Number(i.prevValue).toFixed(3):'—'}<br>
-                MoM calculado: ${i.value!=null?fsign(i.value)+'%':'—'}<br>
-                Fuente: ${i.manual?'Override manual':i.auto?'FRED USSLIND (auto)':'—'}
+                MoM calculado: ${i.value!=null?fsign(i.value)+'%':'bloqueado'}<br>
+                ${i.stale?`Antigüedad: ~${i.staleMonths} meses — introduce override manual para puntuar`:'Fuente: FRED USSLIND (auto)'}
               </div>`:''}
             </div>`;
           }).join('')}
@@ -110,7 +110,7 @@ export async function render(container,{actionsSlot}){
       <!-- Panel manuales -->
       <div id="ciclo-manual-panel" style="display:none;background:var(--surface);border:1px dashed var(--border2);border-radius:12px;padding:18px 20px;">
         <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px;">✎ Override Manual — Ciclo</div>
-        <div style="font-size:10px;color:var(--text3);font-family:var(--mono);margin-bottom:14px;">LEI, Crédito vs Nominal e Impulso Crediticio son ahora automáticos vía FRED (USSLIND, TOTLL, GDP). Solo introduce un override si consideras que el dato de FRED no es representativo.</div>
+        <div style="font-size:10px;color:var(--text3);font-family:var(--mono);margin-bottom:14px;">⚠ USSLIND (FRED) fue discontinuado — última obs. 2020-02-01. El scoring del LEI está bloqueado hasta que introduzcas un override manual. Fuente recomendada: Conference Board LEI (publicación mensual). Introduce la variación MoM% del último dato publicado.</div>
         ${manualInput('lei','Override LEI (% m/m)','Deja vacío para usar FRED USSLIND automático · ≥+0.3%→+1 · ±0.3%→0 · <−0.3%→−1',man.lei)}
         <div style="display:flex;gap:8px;margin-top:14px;">
           <button class="btn btn-primary" id="ciclo-save-man">Guardar y actualizar</button>
