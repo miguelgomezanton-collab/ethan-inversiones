@@ -57,13 +57,20 @@ async function fetchECBm2() {
 }
 
 // ── BOJ M2 Japón — API oficial BOJ Time-Series (Feb 2026) ────────
-// DB: MD02 | Series: MAM1NAM2M2MO | sin prefijo DB en code=
-// Manual: https://www.stat-search.boj.or.jp/info/api_manual_en.pdf
+// DB: MD02 | code incluye prefijo DB | requiere db + code + startDate + endDate
+// Doble lectura: nivel (NAM2M2MO) + YoY oficial (YAM2M2MO) para validación cruzada
 async function fetchBOJm2() {
-  // Para YoY directo solo necesitamos las últimas 3 obs (dato actual + contexto)
-  const sd = new Date(); sd.setMonth(sd.getMonth() - 3);
+  // startDate = 15 meses atrás (para base YoY calculado desde niveles)
+  // endDate = mes actual
+  const now = new Date();
+  const sd  = new Date(); sd.setMonth(sd.getMonth() - 15);
   const startDate = `${sd.getFullYear()}${String(sd.getMonth()+1).padStart(2,'0')}`;
-  const url = `${BOJ_TS_API}?format=json&lang=en&code=${encodeURIComponent(BOJ_M2_CODE)}&startDate=${startDate}`;
+  const endDate   = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}`;
+  // Nivel M2 — para calcular YoY propio
+  const urlLevel  = `${BOJ_TS_API}?format=json&lang=en&db=MD02&code=MD02'MAM1NAM2M2MO&startDate=${startDate}&endDate=${endDate}`;
+  // YoY oficial BOJ — para validación cruzada
+  const urlYoY    = `${BOJ_TS_API}?format=json&lang=en&db=MD02&code=MD02'MAM1YAM2M2MO&startDate=${startDate}&endDate=${endDate}`;
+  const url = urlLevel; // principal
   const ctrl = new AbortController();
   setTimeout(() => ctrl.abort(), 12000);
   try {
@@ -73,21 +80,49 @@ async function fetchBOJm2() {
     });
     if (!r.ok) throw new Error(`BOJ API HTTP ${r.status}`);
     const d = await r.json();
-    // Verificar STATUS BOJ (200 = ok)
     if (d?.STATUS && d.STATUS !== '200') throw new Error(`BOJ API STATUS ${d.STATUS}: ${d.MESSAGE||''}`);
-    // Log estructura para diagnóstico
-    const topKeys = Object.keys(d||{}).join(',');
-    // El JSON BOJ devuelve array de series, cada una con SURVEY_DATES y VALUES
-    const series = d?.DATA?.[0] || d?.data?.[0] || d;
-    const dates  = series?.SURVEY_DATES || series?.survey_dates || [];
-    const values = series?.VALUES       || series?.values       || [];
-    if (!dates.length || !values.length) throw new Error(`BOJ API STATUS 200 ok pero sin datos. Keys: ${topKeys}. Series keys: ${Object.keys(series||{}).slice(0,8).join(',')}`);
-    const obs = dates.map((date, i) => ({ date: String(date), value: parseFloat(values[i]) }))
-      .filter(o => !isNaN(o.value) && o.value > 0)
+
+    // Parser flexible — el BOJ puede devolver distintas estructuras
+    function parseBOJjson(d) {
+      // Estructura 1: { DATA: [{ SURVEY_DATES: [...], VALUES: [...] }] }
+      const s1 = d?.DATA?.[0] || d?.data?.[0];
+      if (s1?.SURVEY_DATES?.length) {
+        return s1.SURVEY_DATES.map((date, i) => ({ date: String(date), value: parseFloat(s1.VALUES?.[i] ?? s1.values?.[i]) }));
+      }
+      // Estructura 2: array plano de { date, value }
+      if (Array.isArray(d?.DATA || d?.data)) {
+        const arr = d.DATA || d.data;
+        if (arr[0]?.date || arr[0]?.DATE) {
+          return arr.map(o => ({ date: String(o.date||o.DATE||o.TIME_PERIOD||''), value: parseFloat(o.value||o.VALUE||o.OBS_VALUE) }));
+        }
+      }
+      // Estructura 3: { SERIES: [...] } con objetos fecha/valor
+      const s3 = d?.SERIES || d?.series;
+      if (Array.isArray(s3) && s3[0]?.date) {
+        return s3.map(o => ({ date: String(o.date), value: parseFloat(o.value) }));
+      }
+      throw new Error(`BOJ: estructura no reconocida. Keys: ${Object.keys(d||{}).join(',')}`);
+    }
+
+    const rawObs = parseBOJjson(d)
+      .filter(o => o.date && !isNaN(o.value) && o.value > 0)
       .sort((a, b) => b.date.localeCompare(a.date))
       .slice(0, 15);
-    if (obs.length < 2) throw new Error(`BOJ API: solo ${obs.length} obs válidas`);
-    return { obs, source: 'BOJ_API_2026' };
+
+    if (rawObs.length < 2) throw new Error(`BOJ API: solo ${rawObs.length} obs válidas tras parseo`);
+
+    // Doble lectura: YoY oficial para validación cruzada
+    let officialYoY = null;
+    try {
+      const r2 = await fetch(urlYoY, { signal: ctrl.signal, headers: { 'User-Agent': 'EthanMacroPlatform/1.0', 'Accept': 'application/json' } });
+      if (r2.ok) {
+        const d2 = await r2.json();
+        const yoyObs = parseBOJjson(d2).filter(o => o.date && !isNaN(o.value)).sort((a, b) => b.date.localeCompare(a.date));
+        if (yoyObs.length) officialYoY = { value: yoyObs[0].value, date: yoyObs[0].date };
+      }
+    } catch {}
+
+    return { obs: rawObs, source: 'BOJ_API_2026', officialYoY };
   } catch(e) {
     // Fallback: ECB RTD para JPN
     const url2 = 'https://data-api.ecb.europa.eu/service/data/RTD/M.JP.Y.M_M2.J?lastNObservations=15&format=csvdata';
@@ -187,23 +222,50 @@ async function calcGlobalM2(fredKey, manualChinaM2pct) {
   const jpSource2 = jpResult?.source || 'unknown';
   const jpFallbackReason = jpResult?.fallbackReason;
 
-  if (jpObs && jpObs.length >= 1) {
-    const current = jpObs[0]; // Ya es YoY% oficial BOJ
+  if (jpObs && jpObs.length >= 2) {
+    const current = jpObs[0];
+    const base = findYoYBase(jpObs, current.date);
     const { ageDays, freshness } = m2Freshness(current.date);
+    const officialYoY = jpResult?.officialYoY || null;
+    if (base) {
+      const yoyCalc = +((current.value - base.value) / base.value * 100).toFixed(2);
+      // Validación cruzada: YoY calculado vs YoY oficial BOJ
+      let validation = null;
+      if (officialYoY != null) {
+        const diff = Math.abs(yoyCalc - officialYoY.value);
+        validation = { officialYoY: officialYoY.value, officialDate: officialYoY.date, diff: +diff.toFixed(2), status: diff > 0.1 ? 'VALIDATION_WARN' : 'OK' };
+      }
+      components.jp = {
+        yoy: yoyCalc, currentDate: current.date, currentValue: current.value,
+        baseDate: base.date, baseValue: base.value,
+        ageDays, freshness, weight: 10, valid: freshness === 'ok',
+        source: jpSource2, validation,
+        ...(jpFallbackReason ? { fallbackReason: jpFallbackReason } : {}),
+      };
+    } else {
+      // Sin base YoY calculado — usar YoY oficial directamente si disponible
+      if (officialYoY != null) {
+        components.jp = {
+          yoy: officialYoY.value, currentDate: officialYoY.date,
+          baseDate: null, isOfficialYoY: true,
+          ageDays: m2Freshness(officialYoY.date).ageDays,
+          freshness: m2Freshness(officialYoY.date).freshness,
+          weight: 10, valid: m2Freshness(officialYoY.date).freshness === 'ok',
+          source: jpSource2,
+        };
+      } else {
+        components.jp = { yoy: null, currentDate: current.date, error: 'Sin base YoY 12M ni YoY oficial',
+          ageDays, freshness, weight: 10, valid: false, source: jpSource2 };
+      }
+    }
+  } else if (jpResult?.officialYoY) {
+    // Solo YoY oficial disponible (sin nivel)
+    const oy = jpResult.officialYoY;
+    const { ageDays, freshness } = m2Freshness(oy.date);
     components.jp = {
-      yoy: current.value,           // YoY% directo — no calculado
-      currentDate: current.date,
-      currentValue: current.value,
-      baseDate: null,               // No aplica — BOJ publica YoY directo
-      baseValue: null,
-      ageDays, freshness,
-      weight: 10,
-      valid: freshness === 'ok',
-      source: jpSource2,
-      isOfficialYoY: true,          // Flag: es YoY oficial, no calculado por nosotros
-      ...(jpFallbackReason ? { fallbackReason: jpFallbackReason } : {}),
+      yoy: oy.value, currentDate: oy.date, isOfficialYoY: true,
+      ageDays, freshness, weight: 10, valid: freshness === 'ok', source: jpSource2,
     };
-  } else {
     const errMsg = rJpM2.reason?.message || jpResult?.fallbackReason || `sin obs (${jpObs?.length ?? 'N/A'})`;
     errors.push('JPN M2: ' + errMsg);
     components.jp = { yoy: null, error: errMsg, ageDays: null, freshness: 'missing', weight: 10, valid: false };
