@@ -151,7 +151,7 @@ export async function render(container, { actionsSlot }) {
                     ? (c.chn.source === 'manual override'
                       ? `${f2(c.chn.yoy)}% (manual override)`
                       : `${c.chn.currentDate||'—'} | YoY ${c.chn.yoy!=null?(c.chn.yoy>=0?'+':'')+f2(c.chn.yoy)+'%':'—'} | base ${c.chn.baseDate||'—'} | ${c.chn.ageDays!=null?c.chn.ageDays+'d':'-'} · ${fsn(c.chn.freshness)} [${c.chn.source||'—'}]`)
-                    : `⚠ ${c.chn?.error||'missing'}${c.chn?._debug ? ' · '+c.chn._debug.stage+' HTTP:'+c.chn._debug.httpStatus+'<br>topKeys:'+JSON.stringify(c.chn._debug.topKeys)+'<br>dataKeys:'+JSON.stringify(c.chn._debug.dataKeys)+'<br>data:'+String(c.chn._debug.dataSample||'').slice(0,2000) : ''}`}`,
+                    : `⚠ ${c.chn?.error||'missing'}`}`,
                   `Cobertura: ${liq.m2.coverageWeight||'—'}/100 (mín. 60) · Global YoY: ${liq.m2.value!=null?(liq.m2.value>=0?'+':'')+f2(liq.m2.value)+'%':'bloqueado'}`,
                 ].join('<br>');
               })()

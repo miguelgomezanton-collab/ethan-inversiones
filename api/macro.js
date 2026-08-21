@@ -113,7 +113,8 @@ async function fetchBOJm2() {
 }
 
 // ── CHN M2 — ChinaData.live (PBoC via agregador) ──────────────────
-// DEBUG: diagnóstico completo de la respuesta antes de parsear
+// Estructura: json.data.data = array histórico mensual
+// source: PBOC_VIA_CHINADATA
 async function fetchChinaM2() {
   const url = 'https://chinadata.live/api/v2/data/china-m2-money-supply';
   const ctrl = new AbortController();
@@ -127,48 +128,27 @@ async function fetchChinaM2() {
   const contentType = r.headers.get('Content-Type') || '';
   const rawText     = await r.text();
 
-  if (!r.ok) {
-    return { _debug: { stage: 'HTTP_ERROR', httpStatus, contentType, rawText: rawText.slice(0, 500) } };
-  }
-  if (!rawText.trim()) {
-    return { _debug: { stage: 'EMPTY_RESPONSE', httpStatus, contentType } };
-  }
+  if (!r.ok) throw new Error(`ChinaData HTTP ${r.status} · ${rawText.slice(0,200)}`);
 
-  let parsed;
-  try { parsed = JSON.parse(rawText); }
-  catch(e) {
-    return { _debug: { stage: 'INVALID_JSON', httpStatus, contentType, parseError: e.message, rawText: rawText.slice(0, 500) } };
-  }
+  let json;
+  try { json = JSON.parse(rawText); }
+  catch(e) { throw new Error(`ChinaData INVALID_JSON: ${e.message}`); }
 
-  const parsedType = typeof parsed;
-  const isArray    = Array.isArray(parsed);
-  const topKeys    = Object.keys(parsed || {});
-
-  if (parsedType !== 'object' || parsed === null) {
-    return { _debug: { stage: 'UNEXPECTED_SCHEMA', httpStatus, parsedType, isArray, topKeys } };
+  // Histórico en json.data.data (no en json.data directamente)
+  const observations = Array.isArray(json?.data?.data) ? json.data.data : [];
+  if (!observations.length) {
+    throw new Error(`ChinaData NO_OBSERVATIONS · topKeys:${Object.keys(json||{}).join(',')} · dataKeys:${Object.keys(json?.data||{}).join(',')}`);
   }
 
-  const rows = parsed?.data || parsed?.results || parsed?.observations || (isArray ? parsed : []);
-  if (!rows.length) {
-    const dataKeys = Object.keys(parsed?.data || {});
-    const dataSample = JSON.stringify(parsed?.data || {}).slice(0, 5000);
-    return { _debug: { stage: 'NO_OBSERVATIONS', httpStatus, contentType,
-      topKeys, dataKeys, dataSample } };
-  }
+  // Normalizar y ordenar asc para findYoYBase
+  const obs = observations
+    .map(x => ({ date: String(x.date||'').slice(0,7), value: Number(x.value) }))
+    .filter(x => /^\d{4}-\d{2}$/.test(x.date) && Number.isFinite(x.value) && x.value > 0)
+    .sort((a, b) => a.date.localeCompare(b.date));
 
-  const obs = rows
-    .map(o => ({
-      date:  String(o.date || o.DATE || o.period || o.time || '').slice(0, 7),
-      value: parseFloat(o.value ?? o.VALUE ?? o.obs_value ?? o.amount ?? o.level ?? NaN),
-    }))
-    .filter(o => /^\d{4}-\d{2}$/.test(o.date) && !isNaN(o.value) && o.value > 0)
-    .sort((a, b) => b.date.localeCompare(a.date));
+  if (!obs.length) throw new Error(`ChinaData NO_OBSERVATIONS después de filtrar`);
 
-  if (!obs.length) {
-    return { _debug: { stage: 'NO_OBSERVATIONS', httpStatus, topKeys, rowSample: JSON.stringify(rows.slice(0,2)) } };
-  }
-
-  return obs; // array limpio
+  return { obs, source: 'PBOC_VIA_CHINADATA' };
 }
 
 // ── Calcular M2 Global USA + EUR + JPN + CHN ────────────────────
@@ -301,40 +281,38 @@ async function calcGlobalM2(fredKey, manualChinaM2pct) {
 
   // ── CHN M2 — ChinaData.live (PBoC) + override manual como fallback ──────────
   const chnResult = rChnM2.status === 'fulfilled' ? rChnM2.value : null;
-  const chnObs    = Array.isArray(chnResult) ? chnResult : null;
-  const chnDebug  = chnResult?._debug || null;
+  const chnObs    = chnResult?.obs || null;
+  const chnSource = chnResult?.source || 'unknown';
 
   if (chnObs && chnObs.length >= 2) {
-    const current = chnObs[0];
-    const base = findYoYBase(chnObs, current.date);
+    // obs viene ordenado asc — tomar el último como current
+    const current = chnObs[chnObs.length - 1];
+    const base    = findYoYBase(chnObs, current.date + '-01');
     const { ageDays, freshness } = m2Freshness(current.date);
     if (base) {
-      const yoy = +((current.value - base.value) / base.value * 100).toFixed(2);
+      const yoy = +((current.value / base.value - 1) * 100).toFixed(2);
       components.chn = {
         yoy, currentDate: current.date, currentValue: current.value,
         baseDate: base.date, baseValue: base.value,
         ageDays, freshness, weight: 30,
-        valid: freshness === 'ok',
-        source: 'ChinaData.live (PBoC)',
+        valid: freshness !== 'stale',
+        source: chnSource,
       };
     } else {
-      components.chn = { yoy: null, currentDate: current.date, error: 'Sin base YoY 12M',
-        ageDays, freshness, weight: 30, valid: false, source: 'ChinaData.live' };
+      components.chn = { yoy: null, currentDate: current.date,
+        error: 'INVALID_YOY — sin base 12M', ageDays, freshness,
+        weight: 30, valid: false, source: chnSource };
     }
   } else if (manualChinaM2pct != null) {
     components.chn = {
       yoy: manualChinaM2pct, currentDate: null, freshness: 'manual',
       weight: 30, valid: true, source: 'manual override',
     };
-    if (chnDebug) errors.push(`CHN M2 auto: ${chnDebug.stage} (HTTP ${chnDebug.httpStatus})`);
-    else if (rChnM2.reason) errors.push('CHN M2 auto falló: ' + rChnM2.reason?.message);
+    if (rChnM2.reason) errors.push('CHN M2 auto falló: ' + rChnM2.reason?.message);
   } else {
-    const errMsg = chnDebug
-      ? `${chnDebug.stage} · HTTP ${chnDebug.httpStatus} · CT: ${chnDebug.contentType||'—'}`
-      : (rChnM2.reason?.message || 'rejected');
+    const errMsg = rChnM2.reason?.message || 'sin datos';
     errors.push('CHN M2: ' + errMsg);
-    components.chn = { yoy: null, freshness: 'missing', weight: 30, valid: false,
-      error: errMsg, _debug: chnDebug };
+    components.chn = { yoy: null, freshness: 'missing', weight: 30, valid: false, error: errMsg };
   }
 
   // ── Agregación con cobertura dinámica ────────────────────────
