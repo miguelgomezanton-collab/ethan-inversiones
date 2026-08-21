@@ -60,12 +60,18 @@ export async function render(container,{actionsSlot}){
             const thresholds=k==='curvaUSD'?'≥+0.90%→+1 · +0.48-0.89%→0 · <+0.48%→−1':k==='curvaEUR'?'≥+0.60%→+1 · +0.40-0.59%→0 · <+0.40%→−1':'nivel>100 y subiendo→+1 · nivel<100 y bajando→−1 · resto→0';
             const label=k==='curvaUSD'?'Curva USD (10Y−2Y)':k==='curvaEUR'?'Curva EUR (10Y−2Y)'+(i.manual?' ✎':''):'OECD CLI USA ✎';
             const signal=k==='curvaUSD'?(i.value<0?'Invertida — señal histórica de recesión':i.score>0?'≥+0.90% — optimismo de crecimiento':'Comprimiendo — neutral'):k==='curvaEUR'?(i.value<0?'Invertida — señal recesiva en Europa':i.score>0?'≥+0.60% — ciclo expansivo':'Neutral'):(i.value==null?'Sin dato':i.value>100&&i.delta>0?'>100 y subiendo — expansión':i.value>100&&i.delta<=0?'>100 pero perdiendo momentum — desaceleración':i.value<=100&&i.delta<0?'<100 y bajando — contracción':'<100 pero mejorando — recuperación');
-            const trend=i.score>0?'↑ Mejorando':i.score===0?'→ Estable':'↓ Empeorando';
+            // Para LEI: si WARN o STALE, no mostrar "Empeorando" sino estado de freshness
+            const trend=k==='lei'
+              ? (i.freshness==='stale'?'⚠ Pendiente actualización':i.freshness==='warn'?'⚠ Próximo a expirar':i.score>0?'↑ Mejorando':i.score===0?'→ Estable':'↓ Empeorando')
+              : (i.score>0?'↑ Mejorando':i.score===0?'→ Estable':'↓ Empeorando');
+            const trendColor=k==='lei'
+              ? (i.freshness==='stale'?'var(--red)':i.freshness==='warn'?'var(--amber)':c)
+              : c;
             return `<div class="mac-card">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
                 <div style="font-size:10px;font-weight:700;color:var(--text2);">${label}</div>
                 <div style="display:flex;gap:6px;align-items:center;">
-                  <span style="font-size:10px;font-family:var(--mono);color:${c};">${trend}</span>
+                  <span style="font-size:10px;font-family:var(--mono);color:${trendColor};">${trend}</span>
                   <span style="font-size:9px;padding:2px 7px;border-radius:10px;font-family:var(--mono);font-weight:700;background:rgba(${i.score>0?'74,222,128':i.score===0?'251,191,36':'244,113,116'},0.12);color:${c};">Score ${i.score>0?'+':''}${i.score??'—'}</span>
                 </div>
               </div>
@@ -79,13 +85,13 @@ export async function render(container,{actionsSlot}){
               <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--text3);font-family:var(--mono);margin-bottom:6px;"><span style="color:var(--red)">Negativo</span><span>0</span><span style="color:var(--green)">Positivo</span></div>
               <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:3px;">${thresholds}</div>
               <div style="font-size:10px;color:var(--text2);border-top:1px solid var(--border);padding-top:6px;margin-top:6px;">${signal}</div>
-              ${k==='lei'?`<div style="margin-top:8px;background:${i.stale?'rgba(244,113,116,0.07)':'rgba(64,217,192,0.05)'};border:1px solid ${i.stale?'rgba(244,113,116,0.25)':'rgba(64,217,192,0.2)'};border-radius:6px;padding:8px 10px;font-family:var(--mono);font-size:9px;color:${i.stale?'var(--red)':'var(--text3)'};">
-                ${i.stale?'⚠ DATO OBSOLETO — Score bloqueado':'🔍 OECD CLI USA · USALOLITOAASTSAM'}<br>
+              ${k==='lei'?`<div style="margin-top:8px;background:${i.freshness==='stale'?'rgba(244,113,116,0.07)':i.freshness==='warn'?'rgba(251,191,36,0.07)':'rgba(64,217,192,0.05)'};border:1px solid ${i.freshness==='stale'?'rgba(244,113,116,0.25)':i.freshness==='warn'?'rgba(251,191,36,0.25)':'rgba(64,217,192,0.2)'};border-radius:6px;padding:8px 10px;font-family:var(--mono);font-size:9px;color:${i.freshness==='stale'?'var(--red)':i.freshness==='warn'?'var(--amber)':'var(--text3)'};">
+                ${i.freshness==='stale'?'⚠ DATO OBSOLETO — Score bloqueado':i.freshness==='warn'?'⚠ Próximo a expirar — Score activo':'🔍 OECD CLI USA · USALOLITOAASTSAM'}<br>
                 Obs. actual: ${i.date||'—'} | Nivel ${i.value!=null?Number(i.value).toFixed(5):'—'}<br>
                 Obs. anterior: ${i.prevDate||'—'} | Nivel ${i.prevValue!=null?Number(i.prevValue).toFixed(5):'—'}<br>
                 Delta MoM: ${i.delta!=null?(i.delta>0?'+':'')+i.delta.toFixed(5)+' pts':'—'}<br>
                 Regla: nivel>${i.value>100?'✓':'✗'}100 y subiendo>${i.delta>0?'✓':'✗'}0 → Score ${i.score!=null?i.score:'bloqueado'}<br>
-                ${i.stale?`Antigüedad: ~${i.staleMonths} meses (máx. 2)`:'Fuente: FRED USALOLITOAASTSAM (auto)'}
+                Antigüedad: ${i.ageDays} días · ${i.freshness==='ok'?'✓ OK (≤100d)':i.freshness==='warn'?'⚠ WARN (101–130d)':'✗ STALE (>130d)'} · Fuente: FRED USALOLITOAASTSAM
               </div>`:''}
             </div>`;
           }).join('')}

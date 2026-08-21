@@ -533,21 +533,18 @@ export default async function handler(req, res) {
     const prev    = obs[1].value;
     const delta   = +(level - prev).toFixed(5);
     const latestDate = obs[0].date;
-    // Freshness: OECD CLI se publica mensualmente, tolerar hasta 2 meses de lag
-    const ageMonths = (Date.now() - new Date(latestDate).getTime()) / (1000 * 60 * 60 * 24 * 30);
-    const isStale = ageMonths > 2;
+    // Freshness en días (OECD publica dato de mes t ~día 15 de t+2)
+    const ageDays = Math.round((Date.now() - new Date(latestDate).getTime()) / (1000 * 60 * 60 * 24));
+    const freshness = ageDays <= 100 ? 'ok' : ageDays <= 130 ? 'warn' : 'stale';
+    const isStale = freshness === 'stale';
     ind.lei = {
       label: 'OECD CLI USA',
-      value: level,          // nivel del índice (~100)
-      delta,                 // variación MoM en puntos
-      prevValue: prev,
-      date: latestDate,
-      prevDate: obs[1].date,
+      value: level, delta,
+      prevValue: prev, date: latestDate, prevDate: obs[1].date,
       score: isStale ? null : scLEI(level, delta),
-      weight: 1,
-      auto: true,
+      weight: 1, auto: true,
+      freshness, ageDays,
       stale: isStale,
-      staleMonths: Math.round(ageMonths),
     };
   } else {
     errs.push('OECD CLI: ' + rLeiFreD.reason?.message);
