@@ -113,9 +113,7 @@ async function fetchBOJm2() {
 }
 
 // ── CHN M2 — ChinaData.live (PBoC via agregador) ──────────────────
-// Endpoint: https://chinadata.live/api/v2/data/china-m2-money-supply
-// Sin API key · 100 req/IP/día · JSON · fuente: PBoC
-// Cachear en Vercel (req headers) para minimizar consumo de cuota
+// DEBUG: diagnóstico completo de la respuesta antes de parsear
 async function fetchChinaM2() {
   const url = 'https://chinadata.live/api/v2/data/china-m2-money-supply';
   const ctrl = new AbortController();
@@ -124,19 +122,50 @@ async function fetchChinaM2() {
     signal: ctrl.signal,
     headers: { 'User-Agent': 'EthanMacroPlatform/1.0', 'Accept': 'application/json' },
   });
-  if (!r.ok) throw new Error(`ChinaData HTTP ${r.status}`);
-  const d = await r.json();
-  // Estructura esperada: { data: [{ date: 'YYYY-MM', value: NUMBER }, ...] }
-  // value = nivel M2 en unidades originales (100M CNY o similar)
-  const rows = d?.data || d?.results || d?.observations || (Array.isArray(d) ? d : []);
-  if (!rows.length) throw new Error(`ChinaData: sin datos. Keys: ${Object.keys(d||{}).join(',')}`);
-  return rows
+
+  const httpStatus  = r.status;
+  const contentType = r.headers.get('Content-Type') || '';
+  const rawText     = await r.text();
+
+  if (!r.ok) {
+    return { _debug: { stage: 'HTTP_ERROR', httpStatus, contentType, rawText: rawText.slice(0, 500) } };
+  }
+  if (!rawText.trim()) {
+    return { _debug: { stage: 'EMPTY_RESPONSE', httpStatus, contentType } };
+  }
+
+  let parsed;
+  try { parsed = JSON.parse(rawText); }
+  catch(e) {
+    return { _debug: { stage: 'INVALID_JSON', httpStatus, contentType, parseError: e.message, rawText: rawText.slice(0, 500) } };
+  }
+
+  const parsedType = typeof parsed;
+  const isArray    = Array.isArray(parsed);
+  const topKeys    = Object.keys(parsed || {});
+
+  if (parsedType !== 'object' || parsed === null) {
+    return { _debug: { stage: 'UNEXPECTED_SCHEMA', httpStatus, parsedType, isArray, topKeys } };
+  }
+
+  const rows = parsed?.data || parsed?.results || parsed?.observations || (isArray ? parsed : []);
+  if (!rows.length) {
+    return { _debug: { stage: 'NO_OBSERVATIONS', httpStatus, contentType, parsedType, isArray, topKeys, rawSample: rawText.slice(0, 500) } };
+  }
+
+  const obs = rows
     .map(o => ({
-      date:  String(o.date || o.DATE || o.period || o.time || '').slice(0, 7), // YYYY-MM
+      date:  String(o.date || o.DATE || o.period || o.time || '').slice(0, 7),
       value: parseFloat(o.value ?? o.VALUE ?? o.obs_value ?? o.amount ?? o.level ?? NaN),
     }))
-    .filter(o => o.date.match(/^\d{4}-\d{2}$/) && !isNaN(o.value) && o.value > 0)
+    .filter(o => /^\d{4}-\d{2}$/.test(o.date) && !isNaN(o.value) && o.value > 0)
     .sort((a, b) => b.date.localeCompare(a.date));
+
+  if (!obs.length) {
+    return { _debug: { stage: 'NO_OBSERVATIONS', httpStatus, topKeys, rowSample: JSON.stringify(rows.slice(0,2)) } };
+  }
+
+  return obs; // array limpio
 }
 
 // ── Calcular M2 Global USA + EUR + JPN + CHN ────────────────────
@@ -268,10 +297,13 @@ async function calcGlobalM2(fredKey, manualChinaM2pct) {
   }
 
   // ── CHN M2 — ChinaData.live (PBoC) + override manual como fallback ──────────
-  if (rChnM2.status === 'fulfilled' && rChnM2.value?.length >= 2) {
-    const obs = rChnM2.value;
-    const current = obs[0];
-    const base = findYoYBase(obs, current.date);
+  const chnResult = rChnM2.status === 'fulfilled' ? rChnM2.value : null;
+  const chnObs    = Array.isArray(chnResult) ? chnResult : null;
+  const chnDebug  = chnResult?._debug || null;
+
+  if (chnObs && chnObs.length >= 2) {
+    const current = chnObs[0];
+    const base = findYoYBase(chnObs, current.date);
     const { ageDays, freshness } = m2Freshness(current.date);
     if (base) {
       const yoy = +((current.value - base.value) / base.value * 100).toFixed(2);
@@ -287,16 +319,19 @@ async function calcGlobalM2(fredKey, manualChinaM2pct) {
         ageDays, freshness, weight: 30, valid: false, source: 'ChinaData.live' };
     }
   } else if (manualChinaM2pct != null) {
-    // Fallback: override manual si la API falla
     components.chn = {
       yoy: manualChinaM2pct, currentDate: null, freshness: 'manual',
       weight: 30, valid: true, source: 'manual override',
     };
-    if (rChnM2.reason) errors.push('CHN M2 auto falló: ' + rChnM2.reason?.message);
+    if (chnDebug) errors.push(`CHN M2 auto: ${chnDebug.stage} (HTTP ${chnDebug.httpStatus})`);
+    else if (rChnM2.reason) errors.push('CHN M2 auto falló: ' + rChnM2.reason?.message);
   } else {
-    errors.push('CHN M2: ' + (rChnM2.reason?.message || 'sin datos'));
+    const errMsg = chnDebug
+      ? `${chnDebug.stage} · HTTP ${chnDebug.httpStatus} · CT: ${chnDebug.contentType||'—'}`
+      : (rChnM2.reason?.message || 'rejected');
+    errors.push('CHN M2: ' + errMsg);
     components.chn = { yoy: null, freshness: 'missing', weight: 30, valid: false,
-      error: rChnM2.reason?.message || rChnM2.value ? `sin datos tras parseo (keys: ${Object.keys(rChnM2.value||{}).join(',')})` : 'rejected' };
+      error: errMsg, _debug: chnDebug };
   }
 
   // ── Agregación con cobertura dinámica ────────────────────────
