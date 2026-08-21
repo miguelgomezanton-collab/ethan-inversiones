@@ -599,8 +599,8 @@ export default async function handler(req, res) {
     fred('DGS2',         key, 5),
     fred('DFF',          key, 5),
     fred('BAMLC0A4CBBB', key, 5),
-    fred('CPIAUCSL',     key, 14),
-    fred('CPILFESL',     key, 14),
+    fred('CPIAUCSL',     key, 16),
+    fred('CPILFESL',     key, 16),
     fetchFearGreed(),
     fetchVIX(),
     fetchCurvaEUR(),
@@ -635,18 +635,36 @@ export default async function handler(req, res) {
     t2y = { value: rDgs2.value[0].value, date: rDgs2.value[0].date };
   else errs.push('DGS2: ' + rDgs2.reason?.message);
 
-  if (rDff.status === 'fulfilled' && rDff.value[0])
-    ffr = { value: rDff.value[0].value, date: rDff.value[0].date };
-  else errs.push('DFF: ' + rDff.reason?.message);
+  // FFR — FRED DFF (diario). Freshness: ≤7d OK | 8-14d WARN | >14d STALE
+  let ffrMeta = null;
+  if (rDff.status === 'fulfilled' && rDff.value[0]) {
+    const d = rDff.value[0];
+    const ageDays = Math.round((Date.now() - new Date(d.date).getTime()) / 86400000);
+    ffrMeta = { value: d.value, date: d.date, ageDays,
+      freshness: ageDays <= 7 ? 'ok' : ageDays <= 14 ? 'warn' : 'stale' };
+    ffr = { value: d.value, date: d.date };
+  } else errs.push('DFF: ' + rDff.reason?.message);
 
-  if (rCpi.status === 'fulfilled' && rCpi.value.length >= 13) {
-    const l = rCpi.value[0].value, ya = rCpi.value[12].value;
-    cpiYoY = +(((l - ya) / ya) * 100).toFixed(2);
+  // CPI — FRED CPIAUCSL (mensual). YoY por fecha real. Freshness: ≤45d OK | ≤60d WARN | >60d STALE
+  let cpiMeta = null;
+  if (rCpi.status === 'fulfilled' && rCpi.value.length >= 2) {
+    const obs = rCpi.value;
+    const current = obs[0];
+    const base    = findYoYBase(obs, current.date);
+    if (base) {
+      cpiYoY = +(((current.value - base.value) / base.value) * 100).toFixed(2);
+      const ageDays = Math.round((Date.now() - new Date(current.date).getTime()) / 86400000);
+      cpiMeta = { value: current.value, date: current.date, baseDate: base.date,
+        baseValue: base.value, yoy: cpiYoY, ageDays,
+        freshness: ageDays <= 45 ? 'ok' : ageDays <= 60 ? 'warn' : 'stale' };
+    } else errs.push('CPI: sin base YoY 12M');
   } else errs.push('CPI: ' + rCpi.reason?.message);
 
-  if (rCpiCore.status === 'fulfilled' && rCpiCore.value.length >= 13) {
-    const l = rCpiCore.value[0].value, ya = rCpiCore.value[12].value;
-    cpiCoreYoY = +(((l - ya) / ya) * 100).toFixed(2);
+  if (rCpiCore.status === 'fulfilled' && rCpiCore.value.length >= 2) {
+    const obs = rCpiCore.value;
+    const current = obs[0];
+    const base    = findYoYBase(obs, current.date);
+    if (base) cpiCoreYoY = +(((current.value - base.value) / base.value) * 100).toFixed(2);
   } else errs.push('CPICore: ' + rCpiCore.reason?.message);
 
   // ── Construir indicadores con score ──────────
@@ -915,14 +933,26 @@ export default async function handler(req, res) {
     ind.reservas = { label: 'Reservas Bancarias Fed', value: null, date: null, score: null, weight: 1 };
   }
 
-  // 9. Tipo Real (auto)
-  if (ffr && cpiYoY != null) {
+  // 9. Tipo Real (FFR − CPI YoY) — PROVISIONAL
+  // FFR: FRED DFF (diario) | CPI: FRED CPIAUCSL (mensual, YoY por fecha real)
+  if (ffrMeta && cpiMeta) {
+    const isStale = ffrMeta.freshness === 'stale' || cpiMeta.freshness === 'stale';
+    const v = +(ffrMeta.value - cpiMeta.yoy).toFixed(2);
+    ind.tipoReal = {
+      label: 'Tipo Real (FFR−CPI)',
+      value: v, date: ffrMeta.date,
+      ffr: ffrMeta, cpi: cpiMeta,
+      score: isStale ? null : scTipoReal(v),
+      weight: 1, auto: true, stale: isStale,
+    };
+  } else if (ffr && cpiYoY != null) {
+    // Fallback sin metadata completa
     const v = +(ffr.value - cpiYoY).toFixed(2);
     ind.tipoReal = { label: 'Tipo Real (FFR−CPI)', value: v, date: ffr.date,
       score: scTipoReal(v), weight: 1 };
   }
 
-  // 10. BBB Spread — FRED BAMLC0A4CBBB (diario, OAS ICE BofA BBB US Corporate)
+  // 10. BBB Spread — ya implementado arriba
   // Freshness diario: ≤7d OK | 8-10d WARN | >10d STALE
   if (rBbb.status === 'fulfilled' && rBbb.value[0]) {
     const v       = rBbb.value[0].value;
@@ -937,13 +967,23 @@ export default async function handler(req, res) {
     };
   } else errs.push('BBB: ' + rBbb.reason?.message);
 
-  // 11. Fear & Greed / Put-Call proxy (auto)
+  // 11. Fear & Greed — CNN (scraping) con freshness
+  // Clasificación actual: incorrecta (sentimiento ≠ política monetaria) — pendiente reclasificación
   const fg = rFg.status === 'fulfilled' ? rFg.value : null;
   if (fg) {
-    ind.fearGreed = { label: 'Fear & Greed (CNN)', value: fg.value, date: null,
-      score: scFG(fg.value), weight: 1,
+    const ageDays = fg.date ? Math.round((Date.now() - new Date(fg.date).getTime()) / 86400000) : 0;
+    const freshness = ageDays <= 1 ? 'ok' : ageDays <= 3 ? 'warn' : 'stale';
+    ind.fearGreed = {
+      label: 'Fear & Greed (CNN)',
+      value: fg.value, date: fg.date || null,
+      source: fg.source || 'CNN',
       previousClose: fg.previousClose, previousWeek: fg.previousWeek, previousMonth: fg.previousMonth,
-      label_text: fg.label };
+      label_text: fg.label,
+      ageDays: fg.date ? ageDays : null,
+      freshness: fg.date ? freshness : 'unknown',
+      score: scFG(fg.value),  // Fear & Greed siempre puntúa si tiene dato (es diario)
+      weight: 1,
+    };
   } else errs.push('FearGreed: ' + rFg.reason?.message);
 
   // ── Score total ───────────────────────────────

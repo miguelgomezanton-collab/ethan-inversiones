@@ -52,8 +52,14 @@ export async function render(container,{actionsSlot}){
                 ${tr?.value!=null&&tr.value<0?`<div style="position:absolute;right:50%;width:${Math.min(Math.abs(tr.value)*20,50)}%;height:100%;background:var(--red);border-radius:3px 0 0 3px;"></div>`:''}
                 <div style="position:absolute;left:50%;top:0;width:1px;height:100%;background:var(--border2);"></div>
               </div>
-              <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:4px;">≥+1.0%→+1 · +0.5-0.9%→0 · <+0.5%→−1 · peso ×1</div>
-              <div style="font-size:10px;color:var(--text2);line-height:1.5;">${tr?.score>0?'Política neutral-restrictiva — no estimula la economía':tr?.score===0?'Zona neutral':tr?.value!=null?'< +0.5% → excesivamente restrictivo o inflación desbocada':'Sin datos'}</div>
+              <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:4px;">≥+1.0%→+1 · +0.5-0.9%→0 · <+0.5%→−1 · PROVISIONAL · peso ×1</div>
+              <div style="font-size:9px;color:var(--text3);font-family:var(--mono);background:rgba(64,217,192,0.04);border:1px solid rgba(64,217,192,0.15);border-radius:6px;padding:8px 10px;margin-top:6px;line-height:1.8;">
+                🔍 DEBUG Tipo Real<br>
+                FFR (DFF): ${tr?.ffr?.date||'—'} | ${tr?.ffr?.value!=null?f2(tr.ffr.value)+'%':'—'} | ${tr?.ffr?.ageDays!=null?tr.ffr.ageDays+'d':'—'} · ${tr?.ffr?.freshness==='ok'?'✓ OK':tr?.ffr?.freshness==='warn'?'⚠ WARN':'✗ STALE'}<br>
+                CPI (CPIAUCSL): ${tr?.cpi?.date||'—'} | YoY ${tr?.cpi?.yoy!=null?f2(tr.cpi.yoy)+'%':'—'} | base ${tr?.cpi?.baseDate||'—'} | ${tr?.cpi?.ageDays!=null?tr.cpi.ageDays+'d':'—'} · ${tr?.cpi?.freshness==='ok'?'✓ OK':tr?.cpi?.freshness==='warn'?'⚠ WARN':'✗ STALE'}<br>
+                Tipo Real = ${tr?.ffr?.value!=null?f2(tr.ffr.value):'—'} − ${tr?.cpi?.yoy!=null?f2(tr.cpi.yoy):'—'} = ${tr?.value!=null?(tr.value>=0?'+':'')+f2(tr.value)+'%':'—'}<br>
+                Score: ${tr?.score!=null?tr.score:'bloqueado'}${tr?.stale?' · STALE':''} [PROVISIONAL]
+              </div>
             </div>
           </div>
         </div>
@@ -86,7 +92,27 @@ export async function render(container,{actionsSlot}){
           </div>
         </div>
       </div>
-      <div class="co-footer">Fuentes: FRED (DFF, DGS10, DGS2, CPIAUCSL, WRESBAL, BAMLC0A4CBBB)</div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:14px;">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:10px;">
+          Fear & Greed (CNN) <span style="color:var(--amber)">⚠ Clasificación provisional — pertenece a Sentimiento, no Política Monetaria</span>
+        </div>
+        ${macro.coyuntura?.fearGreed ? (() => {
+          const fg = macro.coyuntura.fearGreed;
+          const fsn = f => f==='ok'?'✓ OK':f==='warn'?'⚠ WARN':f==='stale'?'✗ STALE':'— sin fecha';
+          return `
+          <div style="display:flex;gap:16px;align-items:center;">
+            <div style="font-family:var(--serif);font-size:36px;font-weight:600;font-style:italic;color:${fg.score>0?'var(--green)':fg.score===0?'var(--amber)':'var(--red)'};">${fg.value}</div>
+            <div style="flex:1;font-size:9px;font-family:var(--mono);color:var(--text3);background:rgba(64,217,192,0.04);border:1px solid rgba(64,217,192,0.15);border-radius:6px;padding:8px 10px;line-height:1.8;">
+              🔍 DEBUG Fear & Greed<br>
+              Valor: ${fg.value} (${fg.label_text||'—'}) | Fuente: ${fg.source||'—'}<br>
+              Fecha: ${fg.date||'sin fecha'} | Antigüedad: ${fg.ageDays!=null?fg.ageDays+'d':'—'} · ${fsn(fg.freshness)}<br>
+              Anterior cierre: ${fg.previousClose||'—'} | Semana: ${fg.previousWeek||'—'} | Mes: ${fg.previousMonth||'—'}<br>
+              Score: ${fg.score!=null?fg.score:'—'} · <+40→+1 (miedo) | 40-54→0 | >54→−1 (euforia) [PROVISIONAL]
+            </div>
+          </div>`;
+        })() : '<div style="font-size:11px;color:var(--text3);">Sin datos de Fear & Greed</div>'}
+      </div>
+      <div class="co-footer">Fuentes: FRED (DFF, CPIAUCSL, CPIAUCSL base 12M, DGS10, DGS2, WRESBAL, BAMLC0A4CBBB) · CNN Fear & Greed [reclasificación pendiente]</div>
     `;
   }
   document.getElementById('pm-refresh')?.addEventListener('click',()=>load(true));
