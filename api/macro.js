@@ -57,91 +57,74 @@ async function fetchECBm2() {
 }
 
 // ── BOJ M2 Japón — API oficial BOJ Time-Series (Feb 2026) ────────
-// DB: MD02 | code incluye prefijo DB | requiere db + code + startDate + endDate
-// Doble lectura: nivel (NAM2M2MO) + YoY oficial (YAM2M2MO) para validación cruzada
+// Spec: db=MD02, code=MAM1NAM2M2MO (sin prefijo), URLSearchParams
+// Series: nivel (NAM2M2MO) + YoY oficial (YAM2M2MO) en la misma llamada
 async function fetchBOJm2() {
-  // startDate = 15 meses atrás (para base YoY calculado desde niveles)
-  // endDate = mes actual
   const now = new Date();
   const sd  = new Date(); sd.setMonth(sd.getMonth() - 15);
-  const startDate = `${sd.getFullYear()}${String(sd.getMonth()+1).padStart(2,'0')}`;
-  const endDate   = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}`;
-  // Nivel M2 — para calcular YoY propio
-  const urlLevel  = `${BOJ_TS_API}?format=json&lang=en&db=MD02&code=MD02'MAM1NAM2M2MO&startDate=${startDate}&endDate=${endDate}`;
-  // YoY oficial BOJ — para validación cruzada
-  const urlYoY    = `${BOJ_TS_API}?format=json&lang=en&db=MD02&code=MD02'MAM1YAM2M2MO&startDate=${startDate}&endDate=${endDate}`;
-  const url = urlLevel; // principal
+  const fmt = d => `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}`;
+  const startDate = fmt(sd);
+  const endDate   = fmt(now);
+
+  // Parámetros construidos con URLSearchParams — sin concatenar apóstrofes
+  const params = new URLSearchParams({
+    format:    'json',
+    lang:      'en',
+    db:        'MD02',
+    startDate,
+    endDate,
+    code:      'MAM1NAM2M2MO,MAM1YAM2M2MO',  // nivel + YoY oficial
+  });
+  const url = `${BOJ_TS_API}?${params.toString()}`;
+
   const ctrl = new AbortController();
-  setTimeout(() => ctrl.abort(), 12000);
-  try {
-    const r = await fetch(url, {
-      signal: ctrl.signal,
-      headers: { 'User-Agent': 'EthanMacroPlatform/1.0', 'Accept': 'application/json', 'Accept-Encoding': 'gzip' }
-    });
-    if (!r.ok) throw new Error(`BOJ API HTTP ${r.status}`);
-    const d = await r.json();
-    if (d?.STATUS && d.STATUS !== '200') throw new Error(`BOJ API STATUS ${d.STATUS}: ${d.MESSAGE||''}`);
+  setTimeout(() => ctrl.abort(), 15000);
 
-    // Parser flexible — el BOJ puede devolver distintas estructuras
-    function parseBOJjson(d) {
-      // Estructura 1: { DATA: [{ SURVEY_DATES: [...], VALUES: [...] }] }
-      const s1 = d?.DATA?.[0] || d?.data?.[0];
-      if (s1?.SURVEY_DATES?.length) {
-        return s1.SURVEY_DATES.map((date, i) => ({ date: String(date), value: parseFloat(s1.VALUES?.[i] ?? s1.values?.[i]) }));
-      }
-      // Estructura 2: array plano de { date, value }
-      if (Array.isArray(d?.DATA || d?.data)) {
-        const arr = d.DATA || d.data;
-        if (arr[0]?.date || arr[0]?.DATE) {
-          return arr.map(o => ({ date: String(o.date||o.DATE||o.TIME_PERIOD||''), value: parseFloat(o.value||o.VALUE||o.OBS_VALUE) }));
-        }
-      }
-      // Estructura 3: { SERIES: [...] } con objetos fecha/valor
-      const s3 = d?.SERIES || d?.series;
-      if (Array.isArray(s3) && s3[0]?.date) {
-        return s3.map(o => ({ date: String(o.date), value: parseFloat(o.value) }));
-      }
-      throw new Error(`BOJ: estructura no reconocida. Keys: ${Object.keys(d||{}).join(',')}`);
-    }
+  const r = await fetch(url, {
+    signal: ctrl.signal,
+    headers: { 'User-Agent': 'EthanMacroPlatform/1.0', 'Accept': 'application/json' },
+  });
 
-    const rawObs = parseBOJjson(d)
-      .filter(o => o.date && !isNaN(o.value) && o.value > 0)
-      .sort((a, b) => b.date.localeCompare(a.date))
-      .slice(0, 15);
-
-    if (rawObs.length < 2) throw new Error(`BOJ API: solo ${rawObs.length} obs válidas tras parseo`);
-
-    // Doble lectura: YoY oficial para validación cruzada
-    let officialYoY = null;
-    try {
-      const r2 = await fetch(urlYoY, { signal: ctrl.signal, headers: { 'User-Agent': 'EthanMacroPlatform/1.0', 'Accept': 'application/json' } });
-      if (r2.ok) {
-        const d2 = await r2.json();
-        const yoyObs = parseBOJjson(d2).filter(o => o.date && !isNaN(o.value)).sort((a, b) => b.date.localeCompare(a.date));
-        if (yoyObs.length) officialYoY = { value: yoyObs[0].value, date: yoyObs[0].date };
-      }
-    } catch {}
-
-    return { obs: rawObs, source: 'BOJ_API_2026', officialYoY };
-  } catch(e) {
-    // Fallback: ECB RTD para JPN
-    const url2 = 'https://data-api.ecb.europa.eu/service/data/RTD/M.JP.Y.M_M2.J?lastNObservations=15&format=csvdata';
-    const ctrl2 = new AbortController();
-    setTimeout(() => ctrl2.abort(), 10000);
-    const r2 = await fetch(url2, { signal: ctrl2.signal, headers: { 'Accept': 'text/csv' } });
-    if (!r2.ok) throw new Error(`ECB RTD JP M2 HTTP ${r2.status} (BOJ falló: ${e.message})`);
-    const text = await r2.text();
-    const lines = text.trim().split('\n');
-    if (lines.length < 2) throw new Error('ECB RTD JP M2: sin datos');
-    const h = lines[0].split(',');
-    const di = h.indexOf('TIME_PERIOD'), vi = h.indexOf('OBS_VALUE');
-    const obs = lines.slice(1)
-      .map(l => { const c = l.split(','); return { date: c[di], value: parseFloat(c[vi]) }; })
-      .filter(p => !isNaN(p.value) && p.value > 0)
-      .sort((a, b) => b.date.localeCompare(a.date))
-      .slice(0, 15);
-    return { obs, source: 'ECB_RTD_FALLBACK', fallbackReason: e.message };
+  // Log completo si falla
+  if (!r.ok) {
+    const body = await r.text().catch(() => '(sin body)');
+    throw new Error(`BOJ HTTP ${r.status} | URL: ${url} | Body: ${body.slice(0, 300)}`);
   }
+
+  const d = await r.json();
+
+  // Log estructura si STATUS != 200
+  if (d?.STATUS && d.STATUS !== '200') {
+    throw new Error(`BOJ STATUS ${d.STATUS}: ${d.MESSAGE||JSON.stringify(d).slice(0,200)}`);
+  }
+
+  // Parser — el BOJ devuelve array de series en DATA[]
+  function parseSeries(seriesArr, codeFilter) {
+    if (!Array.isArray(seriesArr)) return [];
+    const s = seriesArr.find(s =>
+      (s?.SERIES_CODE || s?.code || '').includes(codeFilter)
+    ) || seriesArr[0];
+    if (!s) return [];
+    const dates  = s.SURVEY_DATES || s.survey_dates || s.DATES || s.dates || [];
+    const values = s.VALUES       || s.values       || s.OBS   || s.obs   || [];
+    return dates
+      .map((date, i) => ({ date: String(date), value: parseFloat(values[i]) }))
+      .filter(o => o.date && !isNaN(o.value))
+      .sort((a, b) => b.date.localeCompare(a.date));
+  }
+
+  const seriesArr = d?.DATA || d?.data || (Array.isArray(d) ? d : [d]);
+  const levelObs  = parseSeries(seriesArr, 'NAM2M2MO');
+  const yoyObs    = parseSeries(seriesArr, 'YAM2M2MO');
+
+  if (!levelObs.length && !yoyObs.length) {
+    throw new Error(`BOJ: sin datos tras parseo. Keys: ${Object.keys(d||{}).join(',')}. Series: ${JSON.stringify(seriesArr).slice(0,300)}`);
+  }
+
+  const officialYoY = yoyObs.length ? { value: yoyObs[0].value, date: yoyObs[0].date } : null;
+  const obs = levelObs.length >= 2 ? levelObs : (officialYoY ? [] : levelObs);
+
+  return { obs, officialYoY, source: 'BOJ_API_2026', url };
 }
 
 // ── Calcular M2 Global USA + EUR + JPN + CHN ────────────────────
