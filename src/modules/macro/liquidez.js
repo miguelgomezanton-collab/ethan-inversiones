@@ -196,7 +196,7 @@ export async function render(container, { actionsSlot }) {
                   `Hace 3M: ${p3m.date||'—'} | base ${p3m.baseDate||'—'}`,
                   `YoY actual: ${liq.impulso.yoyNow!=null?(liq.impulso.yoyNow>=0?'+':'')+f2(liq.impulso.yoyNow)+'%':'—'} | YoY 3M atrás: ${liq.impulso.yoy3mAgo!=null?(liq.impulso.yoy3mAgo>=0?'+':'')+f2(liq.impulso.yoy3mAgo)+'%':'—'}`,
                   `Impulso (diff): ${liq.impulso.value!=null?(liq.impulso.value>=0?'+':'')+f2(liq.impulso.value)+' pp':'—'}`,
-                  `Score: ${liq.impulso.score!=null?liq.impulso.score:'bloqueado'}${liq.impulso.stale?' · STALE':''}`,
+                  `Score: ${liq.impulso.score!=null?liq.impulso.score:'bloqueado'}${liq.impulso.stale?' · STALE':''}${liq.impulso.error?' · ⚠ '+liq.impulso.error:''}`,
                 ].join('<br>');
               })()
             : 'Manual override',

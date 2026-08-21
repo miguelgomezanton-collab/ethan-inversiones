@@ -855,7 +855,7 @@ export default async function handler(req, res) {
     } else {
       ind.impulso = {
         label: 'Impulso Crediticio', value: null, date: current.date,
-        error: !baseNow ? 'Sin base YoY actual' : !obs3m ? 'Sin obs 3M' : 'Sin base YoY 3M',
+        error: !baseNow ? `Sin base YoY actual (buscando ~${new Date(new Date(current.date).getTime()-365*86400000).toISOString().slice(0,10)} en ${tl.length} obs, última ${tl[tl.length-1]?.date})` : !obs3m ? 'Sin obs 3M' : `Sin base YoY 3M (buscando ~${new Date(new Date(obs3m.date).getTime()-365*86400000).toISOString().slice(0,10)} en ${tl.length} obs)`,
         score: null, weight: 2, auto: true,
       };
     }
