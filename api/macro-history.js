@@ -98,7 +98,8 @@ export default async function handler(req, res) {
 
   // ── Fetch FRED histórico ──────────────────────
   const [rSp, rNq, rRu, rAu, rBond, rDxy,
-         rDgs10, rDgs2, rDff, rCpi, rCpiCore, rBbb, rM2v, rWresbal, rTotll, rGdp] =
+         rDgs10, rDgs2, rDff, rCpi, rCpiCore, rBbb, rM2v, rWresbal, rTotll, rGdp,
+         rLei, rM2sl] =
     await Promise.allSettled([
       fred('SP500',     key, 120, 'asc', 'm'),
       fred('SP500',     key, 120, 'asc', 'm'),
@@ -106,16 +107,18 @@ export default async function handler(req, res) {
       fred('GOLDAMGBD228NLBM', key, 120, 'asc', 'm'),
       fred('DGS10',     key, 120, 'asc', 'm'),
       fred('DTWEXBGS',  key, 120, 'asc', 'm'),
-      fred('DGS10',  key, 0, 'asc', '', '2000-01-01'),  // diaria desde 2000 → media mensual
-      fred('DGS2',   key, 0, 'asc', '', '2000-01-01'),
-      fred('DFF',    key, 0, 'asc', '', '2000-01-01'),
-      fred('CPIAUCSL',   key, 132, 'desc'),
+      fred('DGS10',  key, 0, 'asc', '', '1976-01-01'),  // desde 1976 para histórico completo
+      fred('DGS2',   key, 0, 'asc', '', '1976-01-01'),
+      fred('DFF',    key, 0, 'asc', '', '1954-01-01'),
+      fred('CPIAUCSL',   key, 0, 'asc', '', '1947-01-01'),  // asc para YoY histórico
       fred('CPILFESL',   key, 132, 'desc'),
-      fred('BAMLC0A4CBBB', key, 0, 'asc', '', '2000-01-01'),
-      fred('M2V',        key, 36,  'desc'),
-      fred('WRESBAL',    key, 0, 'asc', '', '2000-01-01'),
-      fred('TOTLL',      key, 0, 'asc', '', '2000-01-01'),
-      fred('GDP',        key, 36,  'desc'),
+      fred('BAMLC0A4CBBB', key, 0, 'asc', '', '1997-01-01'),
+      fred('M2V',        key, 0, 'asc', '', '1959-01-01'),
+      fred('WRESBAL',    key, 0, 'asc', '', '1984-01-01'),
+      fred('TOTLL',      key, 0, 'asc', '', '1973-01-01'),
+      fred('GDP',        key, 0, 'asc', '', '1947-01-01'),
+      fred('USALOLITOAASTSAM', key, 0, 'asc', '', '1959-01-01'),  // LEI
+      fred('M2SL',       key, 0, 'asc', '', '1959-01-01'),        // M2 USA proxy M2 Global
     ]);
 
   // ── Procesar series ───────────────────────────
@@ -135,6 +138,9 @@ export default async function handler(req, res) {
   const m2v   = rM2v.status   === 'fulfilled' ? rM2v.value   : null;
   const totll = rTotll.status === 'fulfilled' ? rTotll.value : null;
   const gdp   = rGdp.status   === 'fulfilled' ? rGdp.value   : null;
+  const lei   = rLei.status   === 'fulfilled' ? rLei.value   : null;
+  const m2sl  = rM2sl.status  === 'fulfilled' ? rM2sl.value  : null;
+  const wresbal = rWresbal.status === 'fulfilled' ? rWresbal.value : null;
 
   // Registrar errores
   if (!sp)    errs.push('Yahoo SP500: ' + rSp.reason?.message);
@@ -197,40 +203,162 @@ export default async function handler(req, res) {
     }).filter(Boolean);
   })();
 
-  // Score histórico parcial (Curva USD + Tipo Real)
-  // Construcción por mes canónico YYYY-MM — todas las series se reducen a mensual
-  // BBB excluido — ya contabiliza en 1.2 Liquidez. Cobertura: 2/11 indicadores del motor.
-  const scoreHistory = (() => {
-    if (!curvaUSD || !cpiYoY || !dff) return [];
+  // ── HIST_MACRO_V1_FRED ─────────────────────────────────────────
+  // Macro Score Histórico — Proxy FRED (no es el Macro Score live canónico)
+  // ScoreNorm = scoreRaw / maxScoreDisponible → [-1,+1]
+  // Coverage  = maxScoreDisponible / 15      → [0,1]
+  // Coverage < 0.60 → valid = false
+  const VERSION = 'HIST_MACRO_V1_FRED';
+  const MAX_POSSIBLE = 15; // 1+1+1+3+3+2+2+1+1
+  const COVERAGE_MIN = 0.60;
 
-    // Reducir cada serie a un mapa YYYY-MM → último valor del mes
-    const curvaMap = new Map();
-    curvaUSD.forEach(p => curvaMap.set(p.date.slice(0,7), p.value));
+  // Scoring functions (idénticos al motor live)
+  const scCurvaH  = v => v >= 0.90 ? +1 : v >= 0.48 ?  0 : -1;
+  const scTipoH   = v => v >= 1.00 ? +1 : v >= 0.50 ?  0 : -1;
+  const scLeiH    = (niv, dlt) => niv > 100 && dlt > 0 ? +1 : niv < 100 && dlt < 0 ? -1 : 0;
+  const scM2H     = v => v >= 5.0 ? +3 : v >= 3.0 ? +1 : -3;
+  const scCredH   = v => v >= 3.0 ? +3 : v >= 1.5 ?  0 : -3;
+  const scImpH    = v => v >= 1.0 ? +2 : v >= 0.5 ? +1 : -2;
+  const scVelH    = v => v >= 0.0 ? +2 : v >= -1.5 ? -1 : -2;
+  const scResH    = v => v >= 3.5 ? +1 : v >= 2.5 ? -1 : -2;
+  const scBbbH    = v => v <= 1.00 ? +1 : v <= 1.50 ? 0 : -1;
 
-    const cpiMap = new Map();
-    cpiYoY.forEach(p => cpiMap.set(p.date.slice(0,7), p.value));
-
-    const dffMap = new Map();
-    // DFF es diario desc — tomar el valor más reciente de cada mes
-    dff.forEach(p => {
-      const ym = p.date.slice(0,7);
-      if (!dffMap.has(ym)) dffMap.set(ym, p.value); // desc → primer valor = más reciente
+  // Mapas mensuales — media mensual para diarias, valor mensual para mensuales
+  const curvaMap  = toMonthlyMap(curvaUSD);
+  const dffMonMap = toMonthlyMap(toMonthly(dff));
+  const cpiYoYMap = (() => { const m = new Map(); cpiYoY.forEach(p => m.set(p.date.slice(0,7), p.value)); return m; })();
+  const leiMap    = (() => {
+    if (!lei?.length) return new Map();
+    const m = new Map(); let prev = null;
+    [...lei].sort((a,b)=>a.date.localeCompare(b.date)).forEach(p => {
+      m.set(p.date.slice(0,7), { value: p.value, delta: prev != null ? p.value - prev : 0 });
+      prev = p.value;
     });
-
-    // Iterar sobre los meses que tienen curva
-    const months = [...curvaMap.keys()].sort();
-    return months.map(ym => {
-      const curva = curvaMap.get(ym);
-      const ci    = cpiMap.get(ym);
-      const df    = dffMap.get(ym);
-      if (curva == null || ci == null || df == null) return null;
-      const tr = df - ci;
-      let s = 0;
-      s += curva >= 0.9 ? 1 : curva >= 0.48 ? 0 : -1; // Curva USD [PROVISIONAL]
-      s += tr    >= 1.0 ? 1 : tr    >= 0.5  ? 0 : -1; // Tipo Real [PROVISIONAL]
-      return { date: ym + '-01', value: s, curva, tipoReal: +tr.toFixed(2) };
-    }).filter(Boolean);
+    return m;
   })();
+  const m2slYoYMap = (() => {
+    const ys = yoySeries(m2sl); const m = new Map();
+    ys.forEach(p => m.set(p.date.slice(0,7), p.value)); return m;
+  })();
+  const totllYoYMap = (() => { const m = new Map(); totllYoY.forEach(p => m.set(p.date.slice(0,7), p.value)); return m; })();
+  const gdpYoYMap   = (() => { const m = new Map(); gdpYoY.forEach(p => m.set(p.date.slice(0,7), p.value)); return m; })();
+  // Impulso: YoY actual − YoY hace 3 meses (desde totllYoY)
+  const totllYoYArr = totllYoY ? [...totllYoY].sort((a,b)=>a.date.localeCompare(b.date)) : [];
+  const impMap = (() => {
+    const m = new Map();
+    totllYoYArr.forEach((p, i) => {
+      if (i < 3) return;
+      const p3m = totllYoYArr[i-3];
+      m.set(p.date.slice(0,7), +(p.value - p3m.value).toFixed(2));
+    });
+    return m;
+  })();
+  const velM2Map = (() => { const ys = yoySeries(m2v); const m = new Map(); ys.forEach(p => m.set(p.date.slice(0,7), p.value)); return m; })();
+  const resMap   = (() => {
+    const m = new Map();
+    toMonthly(wresbal).forEach(p => m.set(p.date.slice(0,7), +(p.value / 1_000_000).toFixed(3)));
+    return m;
+  })();
+  const bbbMap   = toMonthlyMap(toMonthly(bbb));
+
+  function toMonthlyMap(arr) {
+    const m = new Map();
+    if (arr?.length) arr.forEach(p => m.set(p.date?.slice(0,7) || p.date, p.value));
+    return m;
+  }
+
+  // Construir matriz mensual desde 1976-01
+  function buildHistMacroV1() {
+    const months = new Set([
+      ...curvaMap.keys(), ...cpiYoYMap.keys(), ...dffMonMap.keys(),
+    ]);
+    const sorted = [...months].filter(ym => ym >= '1976-01').sort();
+
+    return sorted.map(ym => {
+      const comps = {};
+
+      // 1. Curva USD — maxScore 1
+      const curva = curvaMap.get(ym);
+      comps.curvaUSD = curva != null
+        ? { value: curva, score: scCurvaH(curva), maxScore: 1, valid: true, source: 'DGS10-DGS2' }
+        : { value: null, score: null, maxScore: 1, valid: false, source: 'DGS10-DGS2' };
+
+      // 2. Tipo Real — maxScore 1
+      const dffV = dffMonMap.get(ym), cpiV = cpiYoYMap.get(ym);
+      const tr   = dffV != null && cpiV != null ? +(dffV - cpiV).toFixed(2) : null;
+      comps.tipoReal = tr != null
+        ? { value: tr, score: scTipoH(tr), maxScore: 1, valid: true, source: 'DFF-CPIAUCSL' }
+        : { value: null, score: null, maxScore: 1, valid: false, source: 'DFF-CPIAUCSL' };
+
+      // 3. LEI — maxScore 1
+      const leiD = leiMap.get(ym);
+      comps.lei = leiD != null
+        ? { value: leiD.value, score: scLeiH(leiD.value, leiD.delta), maxScore: 1, valid: true, source: 'USALOLITOAASTSAM' }
+        : { value: null, score: null, maxScore: 1, valid: false, source: 'USALOLITOAASTSAM' };
+
+      // 4. M2 USA YoY — maxScore 3 (proxy M2 Global)
+      const m2V = m2slYoYMap.get(ym);
+      comps.m2usa = m2V != null
+        ? { value: m2V, score: scM2H(m2V), maxScore: 3, valid: true, source: 'M2SL_YoY', note: 'proxy M2 Global' }
+        : { value: null, score: null, maxScore: 3, valid: false, source: 'M2SL_YoY' };
+
+      // 5. Crédito vs PIB — maxScore 3
+      const totYoY = totllYoYMap.get(ym), gdpYoYV = gdpYoYMap.get(ym);
+      const credDiff = totYoY != null && gdpYoYV != null ? +(totYoY - gdpYoYV).toFixed(2) : null;
+      comps.creditoVsPib = credDiff != null
+        ? { value: credDiff, score: scCredH(credDiff), maxScore: 3, valid: true, source: 'TOTLL-GDP_YoY' }
+        : { value: null, score: null, maxScore: 3, valid: false, source: 'TOTLL-GDP_YoY' };
+
+      // 6. Impulso Crediticio — maxScore 2
+      const impV = impMap.get(ym);
+      comps.impulso = impV != null
+        ? { value: impV, score: scImpH(impV), maxScore: 2, valid: true, source: 'TOTLL_accel3M' }
+        : { value: null, score: null, maxScore: 2, valid: false, source: 'TOTLL_accel3M' };
+
+      // 7. Velocidad M2 — maxScore 2
+      const velV = velM2Map.get(ym);
+      comps.velM2 = velV != null
+        ? { value: velV, score: scVelH(velV), maxScore: 2, valid: true, source: 'M2V_YoY' }
+        : { value: null, score: null, maxScore: 2, valid: false, source: 'M2V_YoY' };
+
+      // 8. Reservas — maxScore 1
+      const resV = resMap.get(ym);
+      comps.reservas = resV != null
+        ? { value: resV, score: scResH(resV), maxScore: 1, valid: true, source: 'WRESBAL_T' }
+        : { value: null, score: null, maxScore: 1, valid: false, source: 'WRESBAL_T' };
+
+      // 9. BBB Spread — maxScore 1
+      const bbbV = bbbMap.get(ym);
+      comps.bbb = bbbV != null
+        ? { value: bbbV, score: scBbbH(bbbV), maxScore: 1, valid: true, source: 'BAMLC0A4CBBB' }
+        : { value: null, score: null, maxScore: 1, valid: false, source: 'BAMLC0A4CBBB' };
+
+      // Agregación
+      const valid = Object.values(comps).filter(c => c.valid);
+      const scoreRaw    = valid.reduce((s, c) => s + c.score, 0);
+      const maxAvailable = valid.reduce((s, c) => s + c.maxScore, 0);
+      const coverage    = +(maxAvailable / MAX_POSSIBLE).toFixed(3);
+      const scoreNorm   = maxAvailable > 0 ? +(scoreRaw / maxAvailable).toFixed(3) : null;
+
+      return {
+        month: ym,
+        components: comps,
+        scoreRaw,
+        maxAvailable,
+        scoreNorm,
+        coverage,
+        valid: coverage >= COVERAGE_MIN,
+        version: VERSION,
+      };
+    });
+  }
+
+  const histMacroV1 = buildHistMacroV1();
+
+  // Score histórico simplificado para el gráfico (solo válidos)
+  const scoreHistory = histMacroV1
+    .filter(m => m.valid)
+    .map(m => ({ date: m.month + '-01', value: m.scoreNorm, scoreRaw: m.scoreRaw, coverage: m.coverage }));
 
   // ── Correlaciones (retornos mensuales) ────────
   const calcCorr = (indSeries, assetSeries) => {
@@ -268,24 +396,23 @@ export default async function handler(req, res) {
       m2YoY,
       scoreHistory,
       curvaUSD,
-      // Series del selector de variable macro (media mensual, unidad natural)
       macroVars: {
-        US10Y:        { label: 'Treasury 10Y', unit: '%', series: dgs10Monthly,  source: 'FRED DGS10', transform: 'media mensual' },
-        DFF:          { label: 'Fed Funds Rate', unit: '%', series: dffMonthly,  source: 'FRED DFF',   transform: 'media mensual' },
-        CPI_YOY:      { label: 'CPI Headline YoY', unit: '%', series: cpiYoY,   source: 'FRED CPIAUCSL', transform: 'YoY por fecha real' },
-        CORE_CPI_YOY: { label: 'Core CPI YoY', unit: '%', series: cpiCoreYoY,  source: 'FRED CPILFESL', transform: 'YoY por fecha real' },
+        US10Y:        { label: 'Treasury 10Y',      unit: '%', series: dgs10Monthly,  source: 'FRED DGS10',    transform: 'media mensual' },
+        DFF:          { label: 'Fed Funds Rate',     unit: '%', series: dffMonthly,   source: 'FRED DFF',      transform: 'media mensual' },
+        CPI_YOY:      { label: 'CPI Headline YoY',  unit: '%', series: cpiYoY,        source: 'FRED CPIAUCSL', transform: 'YoY por fecha real' },
+        CORE_CPI_YOY: { label: 'Core CPI YoY',      unit: '%', series: cpiCoreYoY,   source: 'FRED CPILFESL', transform: 'YoY por fecha real' },
       },
       _debug: {
-        nCurva:     curvaUSD?.length ?? 0,
-        nCpiYoY:    cpiYoY?.length   ?? 0,
-        nDff:       dff?.length       ?? 0,
-        nScore:     scoreHistory.length,
-        firstScore: scoreHistory[0]?.date,
-        lastScore:  scoreHistory[scoreHistory.length-1]?.date,
+        nScore:        scoreHistory.length,
+        firstScore:    histMacroV1.find(m => m.valid)?.month,
+        lastScore:     [...histMacroV1].reverse().find(m => m.valid)?.month,
         nDgs10Monthly: dgs10Monthly.length,
         nDffMonthly:   dffMonthly.length,
+        version:       VERSION,
+        sampleMonth:   histMacroV1.find(m => m.valid && m.month >= '2020-01'),
       },
     },
+    histMacroV1: histMacroV1.filter(m => m.valid), // matriz completa para Fase 2B
 
     // Para Correlaciones
     correlaciones,

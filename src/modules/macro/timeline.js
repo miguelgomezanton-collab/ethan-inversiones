@@ -170,7 +170,7 @@ export async function render(container, { actionsSlot }) {
     const lP2 = yAxisLabels(yP2, p2top);
     const lP3 = yAxisLabels(yP3, p3top);
 
-    const SCORE_N = 2, TOTAL_N = 11;
+    const SCORE_N = 9, TOTAL_N = 9, MAX_POSS = 15;  // 9 indicadores FRED, MaxScore=15
     const scoreFrom = debug.firstScore ? debug.firstScore.slice(0,7) : '—';
     const scoreLast = debug.lastScore  ? debug.lastScore.slice(0,7)  : '—';
 
@@ -193,7 +193,7 @@ export async function render(container, { actionsSlot }) {
           <!-- Labels de panel -->
           <text x="${PX}" y="${PY+11}" font-family="IBM Plex Mono" font-size="9" fill="var(--green)">S&amp;P 500 (var. % desde inicio ventana)</text>
           <text x="${PX}" y="${p1top+P_H+GAP+11}" font-family="IBM Plex Mono" font-size="9" fill="var(--blue)">${mv.label||currentVar} · ${mv.unit||'%'} · ${mv.source||'FRED'} · ${mv.transform||'media mensual'}</text>
-          <text x="${PX}" y="${p2top+P_H+GAP+11}" font-family="IBM Plex Mono" font-size="9" fill="var(--teal)">Score histórico parcial ${SCORE_N}/${TOTAL_N} (Curva USD + Tipo Real) [PROVISIONAL]</text>
+          <text x="${PX}" y="${p2top+P_H+GAP+11}" font-family="IBM Plex Mono" font-size="9" fill="var(--teal)">Macro Score Histórico · HIST_MACRO_V1_FRED · ScoreNorm [-1,+1] · PROVISIONAL</text>
 
           <!-- Separadores -->
           <line x1="${PX}" y1="${p2top}" x2="${W-PX}" y2="${p2top}" stroke="var(--border)" stroke-width="0.5"/>
@@ -273,7 +273,7 @@ export async function render(container, { actionsSlot }) {
 
       <div class="co-footer" style="margin-top:14px;">
         Fuentes: FRED SP500 (mensual) · FRED DGS10/DFF/CPIAUCSL/CPILFESL ·
-        Score parcial: Curva USD + Tipo Real [${SCORE_N}/${TOTAL_N}] · PARCIAL/PROVISIONAL
+        HIST_MACRO_V1_FRED · 9 indicadores FRED · ScoreNorm=scoreRaw/maxAvailable · PROVISIONAL
       </div>
     `;
 
