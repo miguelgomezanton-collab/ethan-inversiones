@@ -90,8 +90,10 @@ export async function render(container, { actionsSlot }) {
     const minYM = winDates[0], maxYM = winDates[winDates.length-1];
     const minDate = new Date(minYM + '-01'), maxDate = new Date(maxYM + '-01');
 
-    // Filtrar series al rango
+    // SP500: variación % desde primer punto válido de la ventana
     const spF  = spNorm.filter(p => toYM(p.date) >= minYM && toYM(p.date) <= maxYM);
+    const spBase = spF.length ? spF[0].value : 1;
+    const spPct  = spF.map(p => ({ date: p.date, value: +((p.value / spBase - 1) * 100).toFixed(2) }));
     const varF = varSeries.filter(p => toYM(p.date) >= minYM && toYM(p.date) <= maxYM);
     const scF  = scoreHist.filter(p => toYM(p.date) >= minYM && toYM(p.date) <= maxYM);
 
@@ -123,7 +125,7 @@ export async function render(container, { actionsSlot }) {
         .map(p => `${toX(p.date).toFixed(1)},${yFn(p.value).toFixed(1)}`).join(' ');
     }
 
-    const yP1 = makeY(spF.map(p => p.value), p1top);
+    const yP1 = makeY(spPct.map(p => p.value), p1top);
     const yP2 = makeY(varF.map(p => p.value), p2top);
     const yP3 = makeY(scF.map(p => p.value), p3top);
 
@@ -195,7 +197,7 @@ export async function render(container, { actionsSlot }) {
           ${lP3.map(l => `<text x="${(PX-3).toFixed(1)}" y="${(l.y+3).toFixed(1)}" text-anchor="end" font-family="IBM Plex Mono" font-size="7" fill="var(--text3)">${l.label}</text>`).join('')}
 
           <!-- Series -->
-          ${pts(spF, yP1.fn)  ? `<polyline points="${pts(spF, yP1.fn)}"  fill="none" stroke="var(--green)" stroke-width="1.5" stroke-linejoin="round" opacity="0.9"/>` : ''}
+          ${pts(spPct, yP1.fn) ? `<polyline points="${pts(spPct, yP1.fn)}"  fill="none" stroke="var(--green)" stroke-width="1.5" stroke-linejoin="round" opacity="0.9"/>` : ''}
           ${pts(varF, yP2.fn) ? `<polyline points="${pts(varF, yP2.fn)}" fill="none" stroke="var(--blue)"  stroke-width="1.5" stroke-linejoin="round" opacity="0.85"/>` : ''}
           ${pts(scF, yP3.fn)  ? `<polyline points="${pts(scF, yP3.fn)}"  fill="none" stroke="var(--teal)"  stroke-width="2"   stroke-linejoin="round"/>` : ''}
 

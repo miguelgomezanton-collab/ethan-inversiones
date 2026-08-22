@@ -4,9 +4,11 @@
 
 const FRED = 'https://api.stlouisfed.org/fred/series/observations';
 
-async function fred(id, key, limit = 96, order = 'asc', freq = '') {
-  const freqParam = freq ? `&frequency=${freq}` : '';
-  const url = `${FRED}?series_id=${id}&api_key=${key}&file_type=json&sort_order=${order}&limit=${limit}${freqParam}`;
+async function fred(id, key, limit = 96, order = 'asc', freq = '', observationStart = '') {
+  const freqParam  = freq ? `&frequency=${freq}` : '';
+  const startParam = observationStart ? `&observation_start=${observationStart}` : '';
+  const limitParam = observationStart ? '' : `&limit=${limit}`;
+  const url = `${FRED}?series_id=${id}&api_key=${key}&file_type=json&sort_order=${order}${limitParam}${freqParam}${startParam}`;
   const r = await fetch(url);
   if (!r.ok) throw new Error(`FRED ${id}: ${r.status}`);
   const d = await r.json();
@@ -104,15 +106,15 @@ export default async function handler(req, res) {
       fred('GOLDAMGBD228NLBM', key, 120, 'asc', 'm'),
       fred('DGS10',     key, 120, 'asc', 'm'),
       fred('DTWEXBGS',  key, 120, 'asc', 'm'),
-      fred('DGS10',      key, 108, 'desc'),
-      fred('DGS2',       key, 108, 'desc'),
-      fred('DFF',        key, 108, 'desc'),
+      fred('DGS10',  key, 0, 'asc', '', '2000-01-01'),  // diaria desde 2000 → media mensual
+      fred('DGS2',   key, 0, 'asc', '', '2000-01-01'),
+      fred('DFF',    key, 0, 'asc', '', '2000-01-01'),
       fred('CPIAUCSL',   key, 132, 'desc'),
       fred('CPILFESL',   key, 132, 'desc'),
-      fred('BAMLC0A4CBBB', key, 108, 'desc'),
+      fred('BAMLC0A4CBBB', key, 0, 'asc', '', '2000-01-01'),
       fred('M2V',        key, 36,  'desc'),
-      fred('WRESBAL',    key, 108, 'desc'),
-      fred('TOTLL',      key, 108, 'desc'),
+      fred('WRESBAL',    key, 0, 'asc', '', '2000-01-01'),
+      fred('TOTLL',      key, 0, 'asc', '', '2000-01-01'),
       fred('GDP',        key, 36,  'desc'),
     ]);
 
