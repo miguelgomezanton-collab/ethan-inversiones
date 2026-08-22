@@ -4,8 +4,9 @@
 
 const FRED = 'https://api.stlouisfed.org/fred/series/observations';
 
-async function fred(id, key, limit = 96, order = 'asc') {
-  const url = `${FRED}?series_id=${id}&api_key=${key}&file_type=json&sort_order=${order}&limit=${limit}`;
+async function fred(id, key, limit = 96, order = 'asc', freq = '') {
+  const freqParam = freq ? `&frequency=${freq}` : '';
+  const url = `${FRED}?series_id=${id}&api_key=${key}&file_type=json&sort_order=${order}&limit=${limit}${freqParam}`;
   const r = await fetch(url);
   if (!r.ok) throw new Error(`FRED ${id}: ${r.status}`);
   const d = await r.json();
@@ -97,12 +98,12 @@ export default async function handler(req, res) {
   const [rSp, rNq, rRu, rAu, rBond, rDxy,
          rDgs10, rDgs2, rDff, rCpi, rBbb, rM2v, rWresbal, rTotll, rGdp] =
     await Promise.allSettled([
-      fred('SP500',     key, 120, 'asc'),  // S&P 500 mensual — FRED (sustituye Yahoo bloqueado)
-      fred('SP500',     key, 120, 'asc'),  // Nasdaq: sin equivalente directo en FRED, reutilizar SP500
-      fred('SP500',     key, 120, 'asc'),  // Russell: idem
-      fred('GOLDAMGBD228NLBM', key, 120, 'asc'), // Oro — FRED
-      fred('DGS10',     key, 120, 'asc'),  // Proxy bonos: T10Y
-      fred('DTWEXBGS',  key, 120, 'asc'),  // Dólar broad index — FRED
+      fred('SP500',     key, 120, 'asc', 'm'),  // S&P 500 mensual — FRED (diaria→mensual via freq=m)
+      fred('SP500',     key, 120, 'asc', 'm'),  // placeholder Nasdaq
+      fred('SP500',     key, 120, 'asc', 'm'),  // placeholder Russell
+      fred('GOLDAMGBD228NLBM', key, 120, 'asc', 'm'), // Oro mensual
+      fred('DGS10',     key, 120, 'asc', 'm'),  // Proxy bonos
+      fred('DTWEXBGS',  key, 120, 'asc', 'm'),  // Dólar broad index mensual
       fred('DGS10',      key, 108),
       fred('DGS2',       key, 108),
       fred('DFF',        key, 108),
