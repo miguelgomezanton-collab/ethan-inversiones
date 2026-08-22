@@ -115,7 +115,6 @@ export default async function handler(req, res) {
       fred('TOTLL',      key, 108, 'desc'),
       fred('GDP',        key, 36,  'desc'),
     ]);
-    ]);
 
   // ── Procesar series ───────────────────────────
   const sp   = rSp.status   === 'fulfilled' ? rSp.value   : null;
