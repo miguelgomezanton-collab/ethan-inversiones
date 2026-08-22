@@ -84,7 +84,7 @@ export async function render(container, { actionsSlot }) {
               ${trVal>=1.5?'Restricción significativa — históricamente asociada a desaceleración del crédito y presión sobre valoraciones.':
                 trVal>=1.0?'Política restrictiva — frena consumo e inversión por encima de la inflación.':
                 trVal>=0.5?'Zona neutral — la tasa real no estimula ni restringe significativamente.':
-                trVal>=0.0?'Política acomodaticia — tipo real positivo pero bajo, condiciones financieras laxas.':
+                trVal>=0.0?'Tipo real positivo pero bajo. Señal poco restrictiva según umbral provisional.':
                 'Tipo real negativo — política expansiva, potencial riesgo inflacionario estructural.'}
               <em style="color:var(--text3);font-size:10px;">Scoring provisional. Fase 2 incorporará balance Fed y expectativas de tipos.</em>`
             : 'Sin datos de tipo real disponibles.'}
