@@ -333,17 +333,24 @@ async function fetchVIX() {
   if (!r.ok) throw new Error(`Yahoo VIX: ${r.status}`);
   const res = (await r.json()).chart?.result?.[0];
   if (!res) throw new Error('Yahoo VIX: sin datos');
-  const closes = res.indicators?.quote?.[0]?.close?.filter(v => v != null) || [];
-  const current = closes[closes.length - 1];
-  const sma200 = closes.length >= 200
-    ? closes.slice(-200).reduce((a, b) => a + b, 0) / 200
-    : closes.reduce((a, b) => a + b, 0) / closes.length;
+  const timestamps = res.timestamp || [];
+  const closes = res.indicators?.quote?.[0]?.close || [];
+  // Filtrar pares válidos (sin nulls)
+  const valid = timestamps.map((t, i) => ({ t, v: closes[i] })).filter(o => o.v != null);
+  if (valid.length < 200) {
+    return { error: `INVALID_HISTORY: solo ${valid.length} sesiones válidas (necesarias 200 para SMA200)`, valid: false };
+  }
+  const last = valid[valid.length - 1];
+  const current = last.v;
+  const date = new Date(last.t * 1000).toISOString().slice(0, 10);
+  const ageDays = Math.round((Date.now() - last.t * 1000) / 86400000);
+  const freshness = ageDays <= 3 ? 'ok' : ageDays <= 7 ? 'warn' : 'stale';
+  const sma200 = valid.slice(-200).reduce((a, b) => a + b.v, 0) / 200;
   const aboveSMA200 = current > sma200;
   return {
-    value: +current.toFixed(2),
-    sma200: +sma200.toFixed(2),
-    aboveSMA200,
-    signal: aboveSMA200 ? 'Alerta: VIX sobre SMA200 — volatilidad elevada (bajista)' : 'VIX bajo SMA200 — volatilidad contenida',
+    value: +current.toFixed(2), sma200: +sma200.toFixed(2),
+    date, ageDays, freshness, aboveSMA200, sessionsUsed: valid.length, valid: true,
+    signal: aboveSMA200 ? 'Alerta: VIX sobre SMA200 — volatilidad elevada' : 'VIX bajo SMA200 — volatilidad contenida',
   };
 }
 
@@ -979,9 +986,13 @@ export default async function handler(req, res) {
       source: fg.source || 'CNN',
       previousClose: fg.previousClose, previousWeek: fg.previousWeek, previousMonth: fg.previousMonth,
       label_text: fg.label,
-      ageDays: fg.date ? ageDays : null,
-      freshness: fg.date ? freshness : 'unknown',
-      score: scFG(fg.value),  // Fear & Greed siempre puntúa si tiene dato (es diario)
+      ageDays: fg.date ? Math.round((Date.now() - new Date(fg.date).getTime()) / 86400000) : null,
+      freshness: (() => {
+        if (!fg.date) return 'unknown';
+        const d = Math.round((Date.now() - new Date(fg.date).getTime()) / 86400000);
+        return d <= 1 ? 'ok' : d <= 3 ? 'warn' : 'stale';
+      })(),
+      score: scFG(fg.value),
       weight: 1,
     };
   } else errs.push('FearGreed: ' + rFg.reason?.message);
@@ -1014,8 +1025,15 @@ export default async function handler(req, res) {
     cpi:     cpiYoY    != null ? { value: cpiYoY,    date: rCpi.value?.[0]?.date }    : null,
     cpiCore: cpiCoreYoY != null ? { value: cpiCoreYoY, date: rCpiCore.value?.[0]?.date } : null,
     bbb:     ind.bbb   || null,
-    hySpread: rHy.status === 'fulfilled' && rHy.value[0]
-      ? { value: rHy.value[0].value, date: rHy.value[0].date } : null,
+    hySpread: (() => {
+      if (rHy.status === 'fulfilled' && rHy.value[0]) {
+        const o = rHy.value[0];
+        const ageDays = Math.round((Date.now() - new Date(o.date).getTime()) / 86400000);
+        const freshness = ageDays <= 7 ? 'ok' : ageDays <= 10 ? 'warn' : 'stale';
+        return { value: o.value, date: o.date, ageDays, freshness };
+      }
+      return null;
+    })(),
     breakeven1y: (() => {
       // EXPINF1YR — Fed Cleveland (mensual, no diaria → freshness ≤45d OK)
       if (rBreakeven1y.status === 'fulfilled') {
