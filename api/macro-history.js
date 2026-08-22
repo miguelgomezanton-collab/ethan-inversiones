@@ -96,23 +96,25 @@ export default async function handler(req, res) {
 
   // ── Fetch FRED histórico ──────────────────────
   const [rSp, rNq, rRu, rAu, rBond, rDxy,
-         rDgs10, rDgs2, rDff, rCpi, rBbb, rM2v, rWresbal, rTotll, rGdp] =
+         rDgs10, rDgs2, rDff, rCpi, rCpiCore, rBbb, rM2v, rWresbal, rTotll, rGdp] =
     await Promise.allSettled([
-      fred('SP500',     key, 120, 'asc', 'm'),  // S&P 500 mensual — FRED
-      fred('SP500',     key, 120, 'asc', 'm'),  // placeholder Nasdaq
-      fred('SP500',     key, 120, 'asc', 'm'),  // placeholder Russell
-      fred('GOLDAMGBD228NLBM', key, 120, 'asc', 'm'), // Oro mensual
-      fred('DGS10',     key, 120, 'asc', 'm'),  // Proxy bonos
-      fred('DTWEXBGS',  key, 120, 'asc', 'm'),  // Dólar broad index mensual
+      fred('SP500',     key, 120, 'asc', 'm'),
+      fred('SP500',     key, 120, 'asc', 'm'),
+      fred('SP500',     key, 120, 'asc', 'm'),
+      fred('GOLDAMGBD228NLBM', key, 120, 'asc', 'm'),
+      fred('DGS10',     key, 120, 'asc', 'm'),
+      fred('DTWEXBGS',  key, 120, 'asc', 'm'),
       fred('DGS10',      key, 108, 'desc'),
       fred('DGS2',       key, 108, 'desc'),
       fred('DFF',        key, 108, 'desc'),
-      fred('CPIAUCSL',   key, 132, 'desc'),  // desc → datos recientes, luego invertir para YoY
+      fred('CPIAUCSL',   key, 132, 'desc'),
+      fred('CPILFESL',   key, 132, 'desc'),
       fred('BAMLC0A4CBBB', key, 108, 'desc'),
       fred('M2V',        key, 36,  'desc'),
       fred('WRESBAL',    key, 108, 'desc'),
       fred('TOTLL',      key, 108, 'desc'),
       fred('GDP',        key, 36,  'desc'),
+    ]);
     ]);
 
   // ── Procesar series ───────────────────────────
@@ -127,6 +129,7 @@ export default async function handler(req, res) {
   const dgs2  = rDgs2.status  === 'fulfilled' ? rDgs2.value  : null;
   const dff   = rDff.status   === 'fulfilled' ? rDff.value   : null;
   const cpi   = rCpi.status   === 'fulfilled' ? rCpi.value   : null;
+  const cpiCore = rCpiCore.status === 'fulfilled' ? rCpiCore.value : null;
   const bbb   = rBbb.status   === 'fulfilled' ? rBbb.value   : null;
   const m2v   = rM2v.status   === 'fulfilled' ? rM2v.value   : null;
   const totll = rTotll.status === 'fulfilled' ? rTotll.value : null;
@@ -136,9 +139,27 @@ export default async function handler(req, res) {
   if (!sp)    errs.push('Yahoo SP500: ' + rSp.reason?.message);
   if (!dgs10) errs.push('DGS10: '      + rDgs10.reason?.message);
 
-  // Series derivadas — CPI viene desc, invertir para YoY
-  const cpiAsc  = cpi ? [...cpi].reverse() : null;
-  const cpiYoY  = yoySeries(cpiAsc);
+  // Reducir series diarias/diarias a media mensual (YYYY-MM → valor promedio)
+  function toMonthly(arr) {
+    if (!arr?.length) return [];
+    const byMonth = new Map();
+    arr.forEach(p => {
+      const ym = p.date.slice(0,7);
+      if (!byMonth.has(ym)) byMonth.set(ym, []);
+      byMonth.get(ym).push(p.value);
+    });
+    return [...byMonth.entries()]
+      .map(([ym, vals]) => ({ date: ym + '-01', value: +(vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(4) }))
+      .sort((a,b) => a.date.localeCompare(b.date));
+  }
+
+  // Series del selector — media mensual, unidad natural
+  const dgs10Monthly = toMonthly(dgs10);  // Treasury 10Y %
+  const dffMonthly   = toMonthly(dff);    // Fed Funds %
+  const cpiAsc       = cpi     ? [...cpi].reverse()     : null;
+  const cpiCoreAsc   = cpiCore ? [...cpiCore].reverse() : null;
+  const cpiYoY       = yoySeries(cpiAsc);      // CPI Headline YoY
+  const cpiCoreYoY   = yoySeries(cpiCoreAsc);  // Core CPI YoY
   const m2YoY    = yoySeries(m2v);
   const totllYoY = yoySeries(totll);
   const gdpYoY   = yoySeries(gdp);
@@ -245,6 +266,13 @@ export default async function handler(req, res) {
       m2YoY,
       scoreHistory,
       curvaUSD,
+      // Series del selector de variable macro (media mensual, unidad natural)
+      macroVars: {
+        US10Y:        { label: 'Treasury 10Y', unit: '%', series: dgs10Monthly,  source: 'FRED DGS10', transform: 'media mensual' },
+        DFF:          { label: 'Fed Funds Rate', unit: '%', series: dffMonthly,  source: 'FRED DFF',   transform: 'media mensual' },
+        CPI_YOY:      { label: 'CPI Headline YoY', unit: '%', series: cpiYoY,   source: 'FRED CPIAUCSL', transform: 'YoY por fecha real' },
+        CORE_CPI_YOY: { label: 'Core CPI YoY', unit: '%', series: cpiCoreYoY,  source: 'FRED CPILFESL', transform: 'YoY por fecha real' },
+      },
       _debug: {
         nCurva:     curvaUSD?.length ?? 0,
         nCpiYoY:    cpiYoY?.length   ?? 0,
@@ -252,6 +280,8 @@ export default async function handler(req, res) {
         nScore:     scoreHistory.length,
         firstScore: scoreHistory[0]?.date,
         lastScore:  scoreHistory[scoreHistory.length-1]?.date,
+        nDgs10Monthly: dgs10Monthly.length,
+        nDffMonthly:   dffMonthly.length,
       },
     },
 
