@@ -161,11 +161,11 @@ export async function render(container, { actionsSlot }) {
         <!-- Header -->
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
           <div>
-            <span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);">Timeline Histórico</span>
-            <span style="font-size:9px;font-family:var(--mono);color:var(--text2);margin-left:10px;">${minYM} → ${maxYM} · ${winDates.length} meses</span>
+            <span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);">Timeline Histórico · Ventana: ${currentWindow}</span>
+            <span style="font-size:9px;font-family:var(--mono);color:var(--text2);margin-left:10px;">Común SP500+${mv.label||currentVar}: ${minYM} → ${maxYM} · ${winDates.length}m</span>
           </div>
           <div style="font-size:9px;font-family:var(--mono);color:var(--amber);">
-            Score parcial ${SCORE_N}/${TOTAL_N} · PROVISIONAL · ${debug.nScore||scF.length} meses · ${scoreFrom} → ${scoreLast}
+            Score parcial ${SCORE_N}/${TOTAL_N} · ${debug.nScore||scF.length}m · ${debug.firstScore?.slice(0,7)||'—'} → ${debug.lastScore?.slice(0,7)||'—'} · PROVISIONAL
           </div>
         </div>
 

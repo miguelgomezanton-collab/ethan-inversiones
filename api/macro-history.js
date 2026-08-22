@@ -164,7 +164,8 @@ export default async function handler(req, res) {
   const m2YoY    = yoySeries(m2v);
   const totllYoY = yoySeries(totll);
   const gdpYoY   = yoySeries(gdp);
-  const spNorm   = normalizeBase100(sp);
+  const spRaw    = normalizeBase100(sp);  // mantenemos para correlaciones
+  const spNorm   = sp ? [...sp].sort((a,b) => a.date.localeCompare(b.date)) : []; // raw asc para timeline
 
   // Curva USD mensual
   const curvaUSD = (() => {
