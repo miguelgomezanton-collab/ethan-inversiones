@@ -172,22 +172,20 @@ export default async function handler(req, res) {
     }).filter(Boolean);
   })();
 
-  // Score parcial histórico (3 indicadores automáticos)
+  // Score histórico parcial (Curva USD + Tipo Real)
+  // BBB excluido — ya contabiliza en 1.2 Liquidez. Cobertura: 2/11 indicadores del motor.
   const scoreHistory = (() => {
-    if (!curvaUSD || !cpiYoY || !dff || !bbb) return [];
+    if (!curvaUSD || !cpiYoY || !dff) return [];
     const cpiMap = new Map(cpiYoY.map(p => [p.date.slice(0, 7), p.value]));
     const dffMap = new Map(dff.map(p    => [p.date.slice(0, 7), p.value]));
-    const bbbMap = new Map(bbb.map(p    => [p.date.slice(0, 7), p.value]));
     return curvaUSD.map(p => {
       const ci = cpiMap.get(p.date.slice(0, 7));
       const df = dffMap.get(p.date.slice(0, 7));
-      const bb = bbbMap.get(p.date.slice(0, 7));
-      if (ci == null || df == null || bb == null) return null;
+      if (ci == null || df == null) return null;
       const tr = df - ci;
       let s = 0;
-      s += p.value >= 0.9 ? 1 : p.value >= 0.48 ? 0 : -1; // Curva
-      s += tr >= 1 ? 1 : tr >= 0.5 ? 0 : -1;              // Tipo Real
-      s += bb <= 1 ? 1 : bb <= 1.5 ? 0 : -1;              // BBB
+      s += p.value >= 0.9 ? 1 : p.value >= 0.48 ? 0 : -1; // Curva USD [PROVISIONAL]
+      s += tr >= 1 ? 1 : tr >= 0.5 ? 0 : -1;              // Tipo Real [PROVISIONAL]
       return { date: p.date, value: s };
     }).filter(Boolean);
   })();

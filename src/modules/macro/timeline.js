@@ -28,8 +28,14 @@ export async function render(container, { actionsSlot }) {
     const cpiYoY    = tl.cpiYoY   || [];
     const scoreHist = tl.scoreHistory || [];
 
-    // Determinar rango de fechas desde los datos
-    const allDates = [...spNorm, ...cpiYoY, ...scoreHist].map(p => new Date(p.date + '-01'));
+    // Fix parsing de fechas: normalizar a YYYY-MM siempre
+    function toYM(dateStr) {
+      return String(dateStr || '').slice(0, 7); // YYYY-MM-DD → YYYY-MM
+    }
+
+    const allDates = [...spNorm, ...cpiYoY, ...scoreHist]
+      .map(p => new Date(toYM(p.date) + '-01'))
+      .filter(d => !isNaN(d));
     if (allDates.length === 0) {
       el.innerHTML = `<div class="empty"><div class="empty-icon">⚠</div><div class="empty-title">Sin datos históricos</div></div>`;
       return;
@@ -48,7 +54,7 @@ export async function render(container, { actionsSlot }) {
     const minVal = Math.min(...allVals, -10), maxVal = Math.max(...allVals, 10);
 
     function toX(dateStr) {
-      const d = new Date(dateStr + '-01');
+      const d = new Date(toYM(dateStr) + '-01');
       return PX + (d - minDate) / (maxDate - minDate) * (W - 2 * PX);
     }
     function toY(val) {
@@ -74,7 +80,7 @@ export async function render(container, { actionsSlot }) {
       <div class="mac-card" style="margin-bottom:14px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
           <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:var(--text3);">
-            SP500 normalizado · CPI YoY · Score Parcial (3 indicadores auto) · ${minDate.getFullYear()}–${maxDate.getFullYear()}
+            SP500 normalizado · CPI YoY · Score histórico parcial (3/11 indicadores) · ${minDate.getFullYear()}–${maxDate.getFullYear()}
           </div>
           <div style="display:flex;gap:14px;">
             ${[['var(--green)','SP500 (norm.)'],['var(--red)','CPI YoY'],['var(--teal)','Score parcial ×15']].map(([c,l])=>
@@ -94,44 +100,37 @@ export async function render(container, { actionsSlot }) {
           <text x="${(W - PX - 30).toFixed(1)}" y="${(PY + 8).toFixed(1)}" font-family="IBM Plex Mono" font-size="8" fill="${mainCol}">${s >= 0 ? '+' : ''}${s}</text>
         </svg>
         <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:8px;">
-          Score parcial = Curva USD + Tipo Real + BBB Spread (×15 para visibilidad). Rango: −3 a +3. Score completo requiere M2 Global, LEI e Impulso (manuales).
+          Score histórico parcial = Curva USD + Tipo Real (×15 para visibilidad). Cobertura: 2/11 indicadores del motor actual.
+          BBB excluido del score histórico (ya contabiliza en 1.2 Liquidez).
+          Fase 2: Macro Score histórico canónico con todos los indicadores.
           ${hist.errors?.length ? ' · ⚠ ' + hist.errors.slice(0, 2).join(', ') : ''}
         </div>
       </div>
 
-      <div class="mac-card">
-        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:var(--text3);margin-bottom:12px;">Períodos Históricos con Configuración Similar</div>
-        <table style="width:100%;border-collapse:collapse;font-size:11px;">
-          <thead><tr style="background:var(--surface2);">
-            <th style="padding:8px 12px;text-align:left;font-size:9px;text-transform:uppercase;color:var(--text3);border-bottom:1px solid var(--border);">Período</th>
-            <th style="padding:8px 12px;text-align:center;font-size:9px;color:var(--text3);border-bottom:1px solid var(--border);">Curva USD</th>
-            <th style="padding:8px 12px;text-align:center;font-size:9px;color:var(--text3);border-bottom:1px solid var(--border);">CPI YoY</th>
-            <th style="padding:8px 12px;text-align:center;font-size:9px;color:var(--text3);border-bottom:1px solid var(--border);">Tipo Real</th>
-            <th style="padding:8px 12px;text-align:center;font-size:9px;color:var(--text3);border-bottom:1px solid var(--border);">SP500 +6m</th>
-            <th style="padding:8px 12px;text-align:center;font-size:9px;color:var(--text3);border-bottom:1px solid var(--border);">SP500 +12m</th>
-            <th style="padding:8px 12px;text-align:left;font-size:9px;color:var(--text3);border-bottom:1px solid var(--border);">Contexto</th>
-          </tr></thead>
-          <tbody>
-            ${[
-              {p:'Jun 2022', c:'-0.04%',cpi:'9.1%', tr:'-3.7%',s6:'-14%',s12:'-18%',ctx:'Pico inflación · Fed subiendo agresivamente',s6c:'var(--red)',  s12c:'var(--red)'},
-              {p:'Oct 2019', c:'+0.15%',cpi:'1.8%', tr:'+3.5%',s6:'+8%', s12:'+19%',ctx:'Curva recuperando · Fed bajando tipos',    s6c:'var(--green)',s12c:'var(--green)'},
-              {p:'Nov 2018', c:'+0.21%',cpi:'2.2%', tr:'+0.2%',s6:'-7%', s12:'+14%',ctx:'QT + trade war · luego Fed pivotó',        s6c:'var(--red)',  s12c:'var(--green)'},
-              {p:'Dic 2007', c:'+0.74%',cpi:'4.1%', tr:'+1.1%',s6:'-12%',s12:'-38%',ctx:'Crisis subprime · spreads disparados',     s6c:'var(--red)',  s12c:'var(--red)'},
-              {p:'Mar 2020', c:'+0.48%',cpi:'+1.5%',tr:'+3.5%',s6:'+39%',s12:'+53%',ctx:'COVID · Fed QE masivo → rebote brutal',   s6c:'var(--green)',s12c:'var(--green)'},
-            ].map(r => `<tr>
-              <td style="padding:9px 12px;border-bottom:1px solid var(--border);font-weight:600;">${r.p}</td>
-              <td style="padding:9px 12px;text-align:center;border-bottom:1px solid var(--border);font-family:var(--mono);color:${r.c.startsWith('-')?'var(--red)':'var(--green)'};">${r.c}</td>
-              <td style="padding:9px 12px;text-align:center;border-bottom:1px solid var(--border);font-family:var(--mono);color:var(--amber);">${r.cpi}</td>
-              <td style="padding:9px 12px;text-align:center;border-bottom:1px solid var(--border);font-family:var(--mono);color:${parseFloat(r.tr)>0?'var(--green)':'var(--red)'};">${r.tr}</td>
-              <td style="padding:9px 12px;text-align:center;border-bottom:1px solid var(--border);font-family:var(--mono);font-weight:700;color:${r.s6c};">${r.s6}</td>
-              <td style="padding:9px 12px;text-align:center;border-bottom:1px solid var(--border);font-family:var(--mono);font-weight:700;color:${r.s12c};">${r.s12}</td>
-              <td style="padding:9px 12px;border-bottom:1px solid var(--border);font-size:10px;color:var(--text2);">${r.ctx}</td>
-            </tr>`).join('')}
-          </tbody>
-        </table>
-        <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:10px;">Rendimientos históricos documentados. No constituyen garantía de rendimientos futuros.</div>
+      <!-- ANALOGÍAS HISTÓRICAS — FASE 2 -->
+      <div class="mac-card" style="background:rgba(251,191,36,0.04);border-color:rgba(251,191,36,0.2);">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:var(--text3);margin-bottom:10px;">
+          Analogías Históricas <span style="color:var(--amber);margin-left:8px;">⏳ Fase 2 — Motor de Similitud Pendiente</span>
+        </div>
+        <div style="font-size:11px;color:var(--text2);line-height:1.7;margin-bottom:12px;">
+          La tabla anterior contenía 5 episodios seleccionados manualmente. Ha sido eliminada porque no representa una metodología auditable.
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;font-size:10px;color:var(--text3);font-family:var(--mono);">
+          <div style="background:var(--surface2);border-radius:8px;padding:12px 14px;">
+            <div style="color:var(--text2);font-weight:700;margin-bottom:6px;">Fase 2 · Motor de Similitud</div>
+            Vector macro mensual normalizado → distancia coseno → top N análogos históricos
+          </div>
+          <div style="background:var(--surface2);border-radius:8px;padding:12px 14px;">
+            <div style="color:var(--text2);font-weight:700;margin-bottom:6px;">Fase 2 · Retornos Forward</div>
+            S&amp;P 500 +3m / +6m / +12m calculados automáticamente desde histórico Yahoo Finance
+          </div>
+          <div style="background:var(--surface2);border-radius:8px;padding:12px 14px;">
+            <div style="color:var(--text2);font-weight:700;margin-bottom:6px;">Fase 2 · Cobertura mínima</div>
+            Solo emitir analogía si el vector histórico comparte ≥ N indicadores con el vector actual
+          </div>
+        </div>
       </div>
-      <div class="co-footer" style="margin-top:14px;">Calculado en servidor · Yahoo Finance (SP500) · FRED (CPIAUCSL, DGS10, DGS2, DFF, BAMLC0A4CBBB) · sin API key en frontend</div>
+      <div class="co-footer" style="margin-top:14px;">Fuentes: Yahoo Finance (SP500 mensual) · FRED (CPIAUCSL, DGS10, DGS2, DFF) · Score histórico: Curva USD + Tipo Real · Fase 2: motor de similitud pendiente</div>
     `;
   }
 
