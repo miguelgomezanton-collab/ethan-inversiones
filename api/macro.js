@@ -1017,18 +1017,17 @@ export default async function handler(req, res) {
     hySpread: rHy.status === 'fulfilled' && rHy.value[0]
       ? { value: rHy.value[0].value, date: rHy.value[0].date } : null,
     breakeven1y: (() => {
-      // EXPINF1YR — Fed de Cleveland (modelo, no breakeven TIPS de mercado)
-      // Nota: UI muestra "T1YIE" pero la serie real es EXPINF1YR o MICH como fallback
+      // EXPINF1YR — Fed Cleveland (mensual, no diaria → freshness ≤45d OK)
       if (rBreakeven1y.status === 'fulfilled') {
         const valid = rBreakeven1y.value.find(o => o.value != null && !isNaN(o.value));
         if (valid) {
           const ageDays = Math.round((Date.now() - new Date(valid.date).getTime()) / 86400000);
-          const freshness = ageDays <= 7 ? 'ok' : ageDays <= 10 ? 'warn' : 'stale';
+          const freshness = ageDays <= 45 ? 'ok' : ageDays <= 60 ? 'warn' : 'stale';
           return { value: valid.value, date: valid.date, series: 'EXPINF1YR',
             label: 'Expectativa inflación 1Y — Cleveland Fed', ageDays, freshness };
         }
       }
-      // Fallback: MICH (Univ. Michigan, encuesta mensual)
+      // Fallback: MICH (mensual → misma freshness)
       if (rMich?.status === 'fulfilled') {
         const valid = rMich.value.find(o => o.value != null && !isNaN(o.value));
         if (valid) {
