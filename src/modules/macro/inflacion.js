@@ -80,31 +80,39 @@ export async function render(container,{actionsSlot}){
           </div>
 
           ${rc?`<div class="mac-card" style="background:rgba(${rc.nivel==='bajo'?'74,222,128':rc.nivel==='moderado'?'251,191,36':'244,113,116'},0.04);border-color:rgba(${rc.nivel==='bajo'?'74,222,128':rc.nivel==='moderado'?'251,191,36':'244,113,116'},0.2);">
-            <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:10px;">Riesgo de Contagio (Coyuntural → Estructural)</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+              <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);">Índice de Persistencia Inflacionaria</div>
+              <div style="font-size:8px;font-family:var(--mono);color:var(--amber);">HEURÍSTICO · PROVISIONAL</div>
+            </div>
             <div style="display:flex;align-items:center;gap:14px;margin-bottom:12px;">
               <div style="text-align:center;flex-shrink:0;">
-                <div style="font-family:var(--serif);font-size:44px;font-weight:600;font-style:italic;color:${rc.nivel==='bajo'?'var(--green)':rc.nivel==='moderado'?'var(--amber)':'var(--red)'};">${rc.pct}%</div>
-                <div style="font-size:9px;color:var(--text3);font-family:var(--mono);">probabilidad</div>
+                <div style="font-family:var(--serif);font-size:44px;font-weight:600;font-style:italic;color:${rc.nivel==='bajo'?'var(--green)':rc.nivel==='moderado'?'var(--amber)':'var(--red)'};">${rc.pct}</div>
+                <div style="font-size:9px;color:var(--text3);font-family:var(--mono);">/ 100 · NO ES PROBABILIDAD</div>
               </div>
               <div>
                 <div style="font-size:12px;font-weight:700;color:${rc.nivel==='bajo'?'var(--green)':rc.nivel==='moderado'?'var(--amber)':'var(--red)'};margin-bottom:4px;text-transform:uppercase;">${rc.nivel}</div>
+                <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:6px;">Tipo: <strong style="color:${rc.tipo==='coyuntural'?'var(--amber)':'var(--red)'};">${rc.tipo.toUpperCase()}</strong> · gap ${f1(rc.gap)} pp ${rc.tipo==='coyuntural'?'≥':'<'} 0.5 pp [umbral provisional]</div>
                 <div style="font-size:11px;color:var(--text2);line-height:1.5;">${rc.label}</div>
               </div>
             </div>
-            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:10px;">
-              <div style="background:var(--surface2);border-radius:6px;padding:8px;text-align:center;"><div style="font-size:8px;color:var(--text3);text-transform:uppercase;margin-bottom:3px;">Headline</div><div style="font-family:var(--mono);font-size:14px;font-weight:700;color:${cpiCol};">${f1(rc.headline)}%</div></div>
-              <div style="background:var(--surface2);border-radius:6px;padding:8px;text-align:center;"><div style="font-size:8px;color:var(--text3);text-transform:uppercase;margin-bottom:3px;">Core</div><div style="font-family:var(--mono);font-size:14px;font-weight:700;color:${coreCol};">${f1(rc.core)}%</div></div>
-              <div style="background:var(--surface2);border-radius:6px;padding:8px;text-align:center;"><div style="font-size:8px;color:var(--text3);text-transform:uppercase;margin-bottom:3px;">Tipo</div><div style="font-family:var(--mono);font-size:12px;font-weight:700;color:${rc.tipo==='coyuntural'?'var(--amber)':'var(--red)'};">${rc.tipo.toUpperCase()}</div></div>
+            <!-- DEBUG -->
+            <div style="font-size:9px;font-family:var(--mono);color:var(--text3);background:rgba(64,217,192,0.04);border:1px solid rgba(64,217,192,0.15);border-radius:6px;padding:8px 10px;margin-bottom:10px;line-height:1.8;">
+              🔍 DEBUG Persistencia Inflacionaria<br>
+              Headline (CPIAUCSL): ${f1(rc.headline)}%<br>
+              Core (CPILFESL): ${f1(rc.core)}%<br>
+              Gap Headline−Core: ${rc.gap>=0?'+':''}${f1(rc.gap)} pp → ${rc.tipo.toUpperCase()} (gap ${rc.tipo==='coyuntural'?'≥':'<'} 0.5 pp)<br>
+              Índice heurístico: ${rc.pct}/100 · regla: CPI≤2.5→10 | ≤3.0→20 | ≤3.5→30 | ≤4.0→50 | >4.0→75<br>
+              Horizonte de vigilancia: 3–6 meses [PROVISIONAL · regla fija no calculada]
             </div>
             <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;font-size:8px;font-family:var(--mono);text-align:center;">
-              <div style="background:rgba(74,222,128,0.08);border-radius:4px;padding:5px;"><div style="color:var(--green);">0-3m</div><div style="color:var(--text3);margin-top:2px;">Seguro</div></div>
-              <div style="background:rgba(251,191,36,0.1);border:1px solid rgba(251,191,36,0.25);border-radius:4px;padding:5px;"><div style="color:var(--amber);">3-6m</div><div style="color:var(--text3);margin-top:2px;">⚠ Riesgo</div></div>
+              <div style="background:rgba(74,222,128,0.08);border-radius:4px;padding:5px;"><div style="color:var(--green);">0–3m</div><div style="color:var(--text3);margin-top:2px;">Sin señal</div></div>
+              <div style="background:rgba(251,191,36,0.1);border:1px solid rgba(251,191,36,0.25);border-radius:4px;padding:5px;"><div style="color:var(--amber);">3–6m</div><div style="color:var(--text3);margin-top:2px;">Vigilancia</div></div>
               <div style="background:rgba(244,113,116,0.08);border-radius:4px;padding:5px;"><div style="color:var(--red);">6m+</div><div style="color:var(--text3);margin-top:2px;">Estructural</div></div>
             </div>
           </div>`:''}
         </div>
       </div>
-      <div class="co-footer">Fuentes: FRED (CPIAUCSL, CPILFESL, T1YIE, T5YIE)</div>
+      <div class="co-footer">Fuentes: FRED (CPIAUCSL, CPILFESL, EXPINF1YR, T5YIE) · Expectativa 1Y: Cleveland Fed (primaria) / Univ. Michigan (fallback)</div>
     `;
   }
   document.getElementById('inf-refresh')?.addEventListener('click',()=>load(true));

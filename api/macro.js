@@ -1077,6 +1077,7 @@ export default async function handler(req, res) {
 
   return res.status(200).json({
     updatedAt: new Date().toISOString(),
+    _version: 'macro-v2026-08-22-breakeven-freshness-fix',
     scoreTotal,
     availableScore,
     coverage,
