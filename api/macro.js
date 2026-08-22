@@ -540,6 +540,10 @@ function scBBB(v) {
   return -1;
 }
 // Indicador 11: Fear & Greed / Put-Call proxy (×1)
+// Sentiment Score — Risk-On/Risk-Off (independiente del contrarian)
+function scFG_sent(v)  { return v < 25 ? -1 : v < 55 ? 0 : +1; }
+function scVIX_sent(aboveSMA200) { return aboveSMA200 ? -1 : +1; }
+function scHY_sent(v)  { return v < 3.5 ? +1 : v <= 5.0 ? 0 : -1; }
 function scFG(v) {
   if (v < 40)  return +1;   // miedo = oportunidad contrarian
   if (v <= 54) return  0;
@@ -1086,12 +1090,33 @@ export default async function handler(req, res) {
     wti:   rWti.status   === 'fulfilled' ? rWti.value   : null,
     brent: rBrent.status === 'fulfilled' ? rBrent.value : null,
   };
-  if (rVix.status !== 'fulfilled') errs.push('VIX: ' + rVix.reason?.message);
+  // Riesgo contagio
+  const rc = cpiYoY != null && cpiCoreYoY != null ? riesgoContagio(cpiYoY, cpiCoreYoY) : null;
   if (rBreakeven1y.status !== 'fulfilled') errs.push('T1YIE: ' + rBreakeven1y.reason?.message);
   if (rBreakeven5y.status !== 'fulfilled') errs.push('T5YIE: ' + rBreakeven5y.reason?.message);
 
-  // Riesgo contagio
-  const rc = cpiYoY != null && cpiCoreYoY != null ? riesgoContagio(cpiYoY, cpiCoreYoY) : null;
+  // Sentiment Score — Risk-On/Risk-Off con cobertura
+  const sentComponents = [];
+  if (ind.fearGreed?.freshness !== 'stale' && ind.fearGreed?.value != null)
+    sentComponents.push({ key: 'fg',  score: scFG_sent(ind.fearGreed.value),  weight: 1 });
+  if (seg.vix?.valid && seg.vix?.aboveSMA200 != null)
+    sentComponents.push({ key: 'vix', score: scVIX_sent(seg.vix.aboveSMA200), weight: 1 });
+  if (seg.hySpread?.freshness !== 'stale' && seg.hySpread?.value != null)
+    sentComponents.push({ key: 'hy',  score: scHY_sent(seg.hySpread.value),   weight: 1 });
+  const sentRaw      = sentComponents.reduce((s, c) => s + c.score, 0);
+  const sentAvail    = sentComponents.length;
+  const sentCoverage = +(sentAvail / 3).toFixed(2);
+  const sentRegime   = sentAvail < 2 ? 'INSUFFICIENT DATA'
+    : sentRaw >= 2 ? 'Risk-On'
+    : sentRaw >= 0 ? 'Neutral'
+    : 'Risk-Off';
+  const sentContrarian = ind.fearGreed?.value != null
+    ? (ind.fearGreed.value <= 25 ? 'OPORTUNIDAD CONTRARIAN'
+      : ind.fearGreed.value >= 75 ? 'PRECAUCIÓN CONTRARIAN'
+      : 'NEUTRAL')
+    : null;
+  const sentimentScore = { raw: sentRaw, available: sentAvail, coverage: sentCoverage,
+    regime: sentRegime, contrarian: sentContrarian, components: sentComponents, provisional: true };
 
   return res.status(200).json({
     updatedAt: new Date().toISOString(),
@@ -1129,6 +1154,7 @@ export default async function handler(req, res) {
     // Todos los indicadores con score (para debug y Kelly)
     indicators: ind,
     scoreDetail,
+    sentimentScore,
     errors: errs.length ? errs : undefined,
   });
 }
