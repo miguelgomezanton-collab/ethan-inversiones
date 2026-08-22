@@ -18,18 +18,25 @@ export async function render(container, { actionsSlot }) {
     const tr  = co.tipoReal;
     const ffr = seg.ffr;
 
-    // Dirección reciente FFR — buscar por fecha real (t−91 días), no por posición
-    // DFF es diario: ffrHistory viene desc, necesitamos obs más cercana a hace ~3 meses
+    // Dirección reciente FFR — buscar la observación más cercana a currentDate − 91 días
+    // DFF es diario: ffrHistory viene desc con ~100 obs (~5 meses de historia)
     const ffrHistory = seg.ffrHistory || [];
     const currentFfrDate = ffr?.date ? new Date(ffr.date).getTime() : null;
     const target3mMs = currentFfrDate ? currentFfrDate - 91 * 24 * 60 * 60 * 1000 : null;
-    const ffr3m = target3mMs ? ffrHistory.reduce((best, o) => {
-      const diff = Math.abs(new Date(o.date).getTime() - target3mMs);
-      return (!best || diff < Math.abs(new Date(best.date).getTime() - target3mMs)) ? o : best;
-    }, null) : null;
-    const ffr3mGapDays = ffr3m ? Math.round(Math.abs(new Date(ffr3m.date).getTime() - target3mMs) / 86400000) : null;
+    const target3mDate = target3mMs ? new Date(target3mMs).toISOString().slice(0,10) : null;
+    // Minimizar abs(date − target) entre TODAS las observaciones disponibles
+    const ffr3m = target3mMs && ffrHistory.length > 0
+      ? ffrHistory.reduce((best, o) => {
+          const diff = Math.abs(new Date(o.date).getTime() - target3mMs);
+          const bestDiff = best ? Math.abs(new Date(best.date).getTime() - target3mMs) : Infinity;
+          return diff < bestDiff ? o : best;
+        }, null)
+      : null;
+    const ffr3mGapDays = ffr3m
+      ? Math.round(Math.abs(new Date(ffr3m.date).getTime() - target3mMs) / 86400000)
+      : null;
     const ffr3mValid = ffr3mGapDays != null && ffr3mGapDays <= 7;
-    // Delta en puntos básicos (pb = pp × 100)
+    // Delta en puntos básicos
     const ffrDeltaPb = (ffr && ffr3m && ffr3mValid)
       ? Math.round((ffr.value - ffr3m.value) * 100)
       : null;
@@ -139,8 +146,10 @@ export async function render(container, { actionsSlot }) {
           <div style="font-size:9px;color:var(--text3);font-family:var(--mono);background:rgba(64,217,192,0.04);border:1px solid rgba(64,217,192,0.15);border-radius:6px;padding:8px 10px;margin-top:6px;line-height:1.8;">
             🔍 DEBUG Dirección FFR<br>
             Actual: ${ffr?.date||'—'} | ${ffr?.value!=null?f2(ffr.value)+'%':'—'}<br>
-            Ref. ~3M: ${ffr3m?.date||'—'} | ${ffr3m?.value!=null?f2(ffr3m.value)+'%':'—'}${!ffr3mValid&&ffr3m?' ⚠ gap '+ffr3mGapDays+'d >7d':ffr3m?' ✓':''}}<br>
-            Δ3M: ${ffrDeltaPb!=null?(ffrDeltaPb>=0?'+':'')+ffrDeltaPb+' pb':'—'} · gap al objetivo: ${ffr3mGapDays!=null?ffr3mGapDays+'d':'—'} · ${ffr3mValid?'✓ OK (≤7d)':'⚠ fuera tolerancia ±7d'}<br>
+            Objetivo 3M: ${target3mDate||'—'}<br>
+            Referencia: ${ffr3m?.date||'—'} | ${ffr3m?.value!=null?f2(ffr3m.value)+'%':'—'}<br>
+            Gap objetivo: ${ffr3mGapDays!=null?ffr3mGapDays+'d':'—'} · ${ffr3mValid?'✓ OK (≤7d)':'⚠ fuera tolerancia ±7d'+(ffrHistory.length<90?' — solo '+ffrHistory.length+' obs disponibles':'')}<br>
+            Δ3M: ${ffrDeltaPb!=null?(ffrDeltaPb>=0?'+':'')+ffrDeltaPb+' pb':'— (inválido)'}<br>
             <span style="color:var(--amber)">⚠ Proxy acciones pasadas Fed — no forward-looking. Fase 2 → CME Futures.</span>
           </div>
         </div>
