@@ -209,7 +209,7 @@ export default async function handler(req, res) {
   // Coverage  = maxScoreDisponible / 15      → [0,1]
   // Coverage < 0.60 → valid = false
   const VERSION = 'HIST_MACRO_V1_FRED';
-  const MAX_POSSIBLE = 15; // 1+1+1+3+3+2+2+1+1
+  const MAX_POSSIBLE = 14; // 1+1+1+3+3+2+2+1 (BBB excluido del score — doble conteo con Liquidez)
   const COVERAGE_MIN = 0.60;
 
   // Scoring functions (idénticos al motor live)
@@ -220,13 +220,15 @@ export default async function handler(req, res) {
   const scCredH   = v => v >= 3.0 ? +3 : v >= 1.5 ?  0 : -3;
   const scImpH    = v => v >= 1.0 ? +2 : v >= 0.5 ? +1 : -2;
   const scVelH    = v => v >= 0.0 ? +2 : v >= -1.5 ? -1 : -2;
-  const scResH    = v => v >= 3.5 ? +1 : v >= 2.5 ? -1 : -2;
+  const scResH    = v => v >= 3.5 ? +1 : -1;  // maxScore=1: solo +1/-1 para mantener invariante |score|<=maxScore
   const scBbbH    = v => v <= 1.00 ? +1 : v <= 1.50 ? 0 : -1;
 
   // Mapas mensuales — media mensual para diarias, valor mensual para mensuales
   const curvaMap  = toMonthlyMap(curvaUSD);
   const dffMonMap = toMonthlyMap(toMonthly(dff));
-  const cpiYoYMap = (() => { const m = new Map(); cpiYoY.forEach(p => m.set(p.date.slice(0,7), p.value)); return m; })();
+  // cpiYoY para el histórico: cpi viene asc (desde 1947), calcular YoY directamente sin invertir
+  const cpiYoYHistArr = yoySeries(cpi);  // cpi ya es asc desde fetch
+  const cpiYoYMap = (() => { const m = new Map(); cpiYoYHistArr.forEach(p => m.set(p.date.slice(0,7), p.value)); return m; })();
   const leiMap    = (() => {
     if (!lei?.length) return new Map();
     const m = new Map(); let prev = null;
@@ -327,18 +329,32 @@ export default async function handler(req, res) {
         ? { value: resV, score: scResH(resV), maxScore: 1, valid: true, source: 'WRESBAL_T' }
         : { value: null, score: null, maxScore: 1, valid: false, source: 'WRESBAL_T' };
 
-      // 9. BBB Spread — maxScore 1
+      // 9. BBB Spread — almacenado en vector para analogías, score=0 (excluido del Macro Score)
+      // BBB ya contribuye en 1.2 Liquidez — doble conteo si se incluye aquí
       const bbbV = bbbMap.get(ym);
       comps.bbb = bbbV != null
-        ? { value: bbbV, score: scBbbH(bbbV), maxScore: 1, valid: true, source: 'BAMLC0A4CBBB' }
-        : { value: null, score: null, maxScore: 1, valid: false, source: 'BAMLC0A4CBBB' };
+        ? { value: bbbV, score: 0, maxScore: 0, valid: true, source: 'BAMLC0A4CBBB', note: 'almacenado para analogías, excluido del score (→ Liquidez)' }
+        : { value: null, score: null, maxScore: 0, valid: false, source: 'BAMLC0A4CBBB' };
 
-      // Agregación
-      const valid = Object.values(comps).filter(c => c.valid);
+      // Agregación — BBB con maxScore=0 no suma al denominador
+      const valid = Object.values(comps).filter(c => c.valid && c.maxScore > 0);
       const scoreRaw    = valid.reduce((s, c) => s + c.score, 0);
       const maxAvailable = valid.reduce((s, c) => s + c.maxScore, 0);
       const coverage    = +(maxAvailable / MAX_POSSIBLE).toFixed(3);
       const scoreNorm   = maxAvailable > 0 ? +(scoreRaw / maxAvailable).toFixed(3) : null;
+
+      // HARD invariants — verificar consistencia matemática
+      const violations = [];
+      Object.entries(comps).forEach(([k, c]) => {
+        if (c.valid && c.maxScore > 0 && c.score != null) {
+          if (Math.abs(c.score) > c.maxScore)
+            violations.push(`${k}: |score|=${Math.abs(c.score)} > maxScore=${c.maxScore}`);
+        }
+      });
+      if (scoreNorm != null && (scoreNorm < -1.001 || scoreNorm > 1.001))
+        violations.push(`scoreNorm=${scoreNorm} fuera de [-1,+1]`);
+      if (maxAvailable > 0 && Math.abs(scoreRaw) > maxAvailable)
+        violations.push(`|scoreRaw|=${Math.abs(scoreRaw)} > maxAvailable=${maxAvailable}`);
 
       return {
         month: ym,
@@ -347,7 +363,8 @@ export default async function handler(req, res) {
         maxAvailable,
         scoreNorm,
         coverage,
-        valid: coverage >= COVERAGE_MIN,
+        valid: coverage >= COVERAGE_MIN && violations.length === 0,
+        violations: violations.length ? violations : undefined,
         version: VERSION,
       };
     });
@@ -408,6 +425,8 @@ export default async function handler(req, res) {
         lastScore:     [...histMacroV1].reverse().find(m => m.valid)?.month,
         nTotal:        histMacroV1.length,
         nValid:        histMacroV1.filter(m => m.valid).length,
+        nViolations:   histMacroV1.filter(m => m.violations?.length).length,
+        sampleViolation: histMacroV1.find(m => m.violations?.length),
         version:       VERSION,
         maxPossible:   MAX_POSSIBLE,
         // Meses de auditoría — para validación cruzada

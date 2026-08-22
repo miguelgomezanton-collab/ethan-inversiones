@@ -271,7 +271,8 @@ export async function render(container, { actionsSlot }) {
                 ${m.month} · ScoreNorm <span style="color:${snCol}">${m.scoreNorm>=0?'+':''}${m.scoreNorm?.toFixed(3)}</span>
                 · Raw ${m.scoreRaw>=0?'+':''}${m.scoreRaw} / ${m.maxAvailable}
                 · Coverage ${Math.round(m.coverage*100)}%
-                · Válidos ${Object.values(comps).filter(c=>c.valid).length}/9
+                · Válidos ${Object.values(comps).filter(c=>c.valid&&c.maxScore>0).length}/8
+                ${m.violations?.length ? `<span style="color:var(--red)">⚠ ${m.violations.length} VIOLACIÓN(ES): ${m.violations.join(' | ')}</span>` : ''}
               </div>
               <table style="width:100%;border-collapse:collapse;font-size:9px;">
                 <thead><tr>
