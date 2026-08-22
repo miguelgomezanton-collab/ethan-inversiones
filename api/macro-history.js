@@ -175,20 +175,37 @@ export default async function handler(req, res) {
   })();
 
   // Score histórico parcial (Curva USD + Tipo Real)
+  // Construcción por mes canónico YYYY-MM — todas las series se reducen a mensual
   // BBB excluido — ya contabiliza en 1.2 Liquidez. Cobertura: 2/11 indicadores del motor.
   const scoreHistory = (() => {
     if (!curvaUSD || !cpiYoY || !dff) return [];
-    const cpiMap = new Map(cpiYoY.map(p => [p.date.slice(0, 7), p.value]));
-    const dffMap = new Map(dff.map(p    => [p.date.slice(0, 7), p.value]));
-    return curvaUSD.map(p => {
-      const ci = cpiMap.get(p.date.slice(0, 7));
-      const df = dffMap.get(p.date.slice(0, 7));
-      if (ci == null || df == null) return null;
+
+    // Reducir cada serie a un mapa YYYY-MM → último valor del mes
+    const curvaMap = new Map();
+    curvaUSD.forEach(p => curvaMap.set(p.date.slice(0,7), p.value));
+
+    const cpiMap = new Map();
+    cpiYoY.forEach(p => cpiMap.set(p.date.slice(0,7), p.value));
+
+    const dffMap = new Map();
+    // DFF es diario desc — tomar el valor más reciente de cada mes
+    dff.forEach(p => {
+      const ym = p.date.slice(0,7);
+      if (!dffMap.has(ym)) dffMap.set(ym, p.value); // desc → primer valor = más reciente
+    });
+
+    // Iterar sobre los meses que tienen curva
+    const months = [...curvaMap.keys()].sort();
+    return months.map(ym => {
+      const curva = curvaMap.get(ym);
+      const ci    = cpiMap.get(ym);
+      const df    = dffMap.get(ym);
+      if (curva == null || ci == null || df == null) return null;
       const tr = df - ci;
       let s = 0;
-      s += p.value >= 0.9 ? 1 : p.value >= 0.48 ? 0 : -1; // Curva USD [PROVISIONAL]
-      s += tr >= 1 ? 1 : tr >= 0.5 ? 0 : -1;              // Tipo Real [PROVISIONAL]
-      return { date: p.date, value: s };
+      s += curva >= 0.9 ? 1 : curva >= 0.48 ? 0 : -1; // Curva USD [PROVISIONAL]
+      s += tr    >= 1.0 ? 1 : tr    >= 0.5  ? 0 : -1; // Tipo Real [PROVISIONAL]
+      return { date: ym + '-01', value: s, curva, tipoReal: +tr.toFixed(2) };
     }).filter(Boolean);
   })();
 
@@ -223,11 +240,19 @@ export default async function handler(req, res) {
 
     // Para Timeline
     timeline: {
-      spNorm,        // SP500 normalizado base 100
-      cpiYoY,        // CPI YoY mensual
-      m2YoY,         // Velocidad M2 YoY (proxy)
-      scoreHistory,  // Score parcial mes a mes
-      curvaUSD,      // Para referencia
+      spNorm,
+      cpiYoY,
+      m2YoY,
+      scoreHistory,
+      curvaUSD,
+      _debug: {
+        nCurva:     curvaUSD?.length ?? 0,
+        nCpiYoY:    cpiYoY?.length   ?? 0,
+        nDff:       dff?.length       ?? 0,
+        nScore:     scoreHistory.length,
+        firstScore: scoreHistory[0]?.date,
+        lastScore:  scoreHistory[scoreHistory.length-1]?.date,
+      },
     },
 
     // Para Correlaciones

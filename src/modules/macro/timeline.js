@@ -83,10 +83,13 @@ export async function render(container, { actionsSlot }) {
     const scF   = scoreHist.filter(p => toYM(p.date) >= minYM && toYM(p.date) <= maxYM);
 
     // Cobertura del score histórico
-    const SCORE_COMPONENTS = 2; // Curva USD + Tipo Real (BBB excluido por duplicidad con Liquidez)
+    const debug = hist.timeline?._debug || {};
+    const SCORE_COMPONENTS = 2;
     const TOTAL_INDICATORS = 11;
     const coverageLabel = `${SCORE_COMPONENTS}/${TOTAL_INDICATORS} indicadores`;
-    const scoreFrom = scF.length ? toYM(scF[0].date) : '—';
+    const scoreFrom = debug.firstScore ? debug.firstScore.slice(0,7) : (scF.length ? toYM(scF[0].date) : '—');
+    const scoreLast = debug.lastScore  ? debug.lastScore.slice(0,7)  : '—';
+    const scoreN    = debug.nScore     ?? scF.length;
 
     // SVG dimensiones — 3 paneles sincronizados
     const W = 820, PX = 40, PY = 8;
@@ -154,7 +157,7 @@ export async function render(container, { actionsSlot }) {
             <span style="font-size:9px;font-family:var(--mono);color:var(--text2);margin-left:10px;">${minYM} → ${maxYM}</span>
           </div>
           <div style="font-size:9px;font-family:var(--mono);color:var(--amber);">
-            Score histórico: ${coverageLabel} · PARCIAL / PROVISIONAL · desde ${scoreFrom}
+            Score histórico: ${coverageLabel} · PARCIAL / PROVISIONAL · ${scoreN} meses · ${scoreFrom} → ${scoreLast}
           </div>
         </div>
 
