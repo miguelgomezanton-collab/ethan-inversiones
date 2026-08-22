@@ -101,9 +101,9 @@ export default async function handler(req, res) {
          rDgs10, rDgs2, rDff, rCpi, rCpiCore, rBbb, rM2v, rWresbal, rTotll, rGdp,
          rLei, rM2sl] =
     await Promise.allSettled([
-      fred('SP500',     key, 120, 'asc', 'm'),
-      fred('SP500',     key, 120, 'asc', 'm'),
-      fred('SP500',     key, 120, 'asc', 'm'),
+      fred('SP500',     key, 0, 'asc', 'm', '1976-01-01'),  // histórico completo para forward returns
+      fred('SP500',     key, 0, 'asc', 'm', '1976-01-01'),  // placeholder
+      fred('SP500',     key, 0, 'asc', 'm', '1976-01-01'),  // placeholder
       fred('GOLDAMGBD228NLBM', key, 120, 'asc', 'm'),
       fred('DGS10',     key, 120, 'asc', 'm'),
       fred('DTWEXBGS',  key, 120, 'asc', 'm'),
@@ -464,8 +464,18 @@ export default async function handler(req, res) {
     ? (() => { const d = new Date(latestValid.month+'-01'); d.setMonth(d.getMonth()-EXCLUDE_LAST); return d.toISOString().slice(0,7); })()
     : '2099-01';
 
-  function findAnalogies(queryVector, queryMonth, topN = 10) {
-    const candidates = histMacroV1.filter(m => m.valid && m.month <= cutoffYM);
+  // findAnalogies v2: deduplicación ±6M + walk-forward opcional
+  function findAnalogies(queryVector, queryMonth, topN = 10, opts = {}) {
+    const { walkForward = false, dedupMonths = 6 } = opts;
+
+    // Candidatos: excluir los últimos EXCLUDE_LAST meses (para query=actual)
+    // En modo walk-forward: solo meses ANTERIORES al queryMonth
+    const maxMonth = walkForward && queryMonth ? queryMonth : cutoffYM;
+    // Excluir también el propio queryMonth (leakage)
+    const candidates = histMacroV1.filter(m =>
+      m.valid && m.month < maxMonth
+    );
+
     const scored = candidates.map(m => {
       const mv  = getVector(m);
       const res = cosineSim(queryVector, mv);
@@ -475,31 +485,43 @@ export default async function handler(req, res) {
       const r12 = spReturn(m.month, 12);
       const dd  = maxDrawdown(m.month, 12);
       return {
-        month:        m.month,
-        similarity:   res.sim,
-        dimsUsed:     res.dims,
-        coverage:     m.coverage,
-        scoreNorm:    m.scoreNorm,
-        scoreRaw:     m.scoreRaw,
-        sp3m:         r3,
-        sp6m:         r6,
-        sp12m:        r12,
-        maxDD12m:     dd,
-        components:   m.components,
+        month: m.month, similarity: res.sim, dimsUsed: res.dims,
+        coverage: m.coverage, scoreNorm: m.scoreNorm, scoreRaw: m.scoreRaw,
+        sp3m: r3, sp6m: r6, sp12m: r12, maxDD12m: dd, components: m.components,
       };
     }).filter(Boolean);
 
-    scored.sort((a,b) => b.similarity - a.similarity);
-    return scored.slice(0, topN);
+    scored.sort((a, b) => b.similarity - a.similarity);
+
+    // Deduplicación temporal ±dedupMonths: selección greedy de episodios independientes
+    const selected = [];
+    const excluded = new Set();
+    for (const c of scored) {
+      if (selected.length >= topN) break;
+      if (excluded.has(c.month)) continue;
+      selected.push(c);
+      // Excluir todos los meses en ±dedupMonths alrededor del seleccionado
+      const base = new Date(c.month + '-01');
+      for (let d = -dedupMonths; d <= dedupMonths; d++) {
+        const t = new Date(base);
+        t.setMonth(t.getMonth() + d);
+        excluded.add(t.toISOString().slice(0, 7));
+      }
+    }
+    return selected;
   }
 
   // Calcular analogías para el mes actual y para los 3 meses de prueba
-  const analogyCurrent  = latestVector ? findAnalogies(latestVector, latestValid?.month, 10) : [];
+  // Analogías actuales: excluir últimos 12M (no walk-forward, query=presente)
+  const analogyCurrent  = latestVector
+    ? findAnalogies(latestVector, latestValid?.month, 10, { walkForward: false, dedupMonths: 6 })
+    : [];
+  // Pruebas de validación: walk-forward estricto (solo meses ANTERIORES al mes auditado)
   const analogyProbe = ['2022-10','2020-04','2018-12','2008-09'].map(ym => {
     const m = histMacroV1.find(h => h.month === ym);
     if (!m?.valid) return { month: ym, error: 'no válido' };
     const v = getVector(m);
-    const top = findAnalogies(v, ym, 5);
+    const top = findAnalogies(v, ym, 5, { walkForward: true, dedupMonths: 6 });
     return { month: ym, analogies: top };
   });
 
@@ -604,7 +626,7 @@ export default async function handler(req, res) {
     analogies: {
       current:   { month: latestValid?.month, vector: latestVector, top10: analogyCurrent, summary: summarize(analogyCurrent) },
       probes:    analogyProbe,
-      version:   'SIMILARITY_V1_COSINE_ZSCORE_WIN',
+      version:   'SIMILARITY_V2_COSINE_ZSCORE_WIN_DEDUP6M',
       minDims:   MIN_DIMS,
       excludeLast: EXCLUDE_LAST,
     },
