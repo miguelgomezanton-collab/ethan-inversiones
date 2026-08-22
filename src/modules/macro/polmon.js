@@ -130,7 +130,7 @@ export async function render(container, { actionsSlot }) {
             DFF: ${tr?.ffr?.date||'—'} | ${tr?.ffr?.value!=null?f2(tr.ffr.value)+'%':'—'} | ${fsn(tr?.ffr?.freshness)}<br>
             CPI: ${tr?.cpi?.date||'—'} | YoY ${tr?.cpi?.yoy!=null?f2(tr.cpi.yoy)+'%':'—'} | base ${tr?.cpi?.baseDate||'—'} | ${fsn(tr?.cpi?.freshness)}<br>
             = ${tr?.ffr?.value!=null?f2(tr.ffr.value):'—'} − ${tr?.cpi?.yoy!=null?f2(tr.cpi.yoy):'—'} = ${tr?.value!=null?(tr.value>=0?'+':'')+f2(tr.value)+'%':'—'}<br>
-            Score: ${tr?.score!=null?tr.score:'bloqueado'}${tr?.stale?' · STALE':''} · ≥+1.0→+1 · ≥+0.5→0 · <+0.5→−1 [PROVISIONAL]
+            Score: ${tr?.score!=null?tr.score:'bloqueado'}${tr?.stale?' · STALE':''} · ≥+1.0→+1 · ≥+0.5→0 · <+0.5→−1 [PROVISIONAL] · +1=restrictivo, −1=acomodaticio
           </div>
         </div>
 
