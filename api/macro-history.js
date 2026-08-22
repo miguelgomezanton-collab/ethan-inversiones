@@ -372,6 +372,152 @@ export default async function handler(req, res) {
 
   const histMacroV1 = buildHistMacroV1();
 
+  // ── Fase 2B: Motor de Analogías ────────────────────────────────
+  // Vector: [curvaUSD, tipoReal, lei, m2usa, creditoVsPib, impulso, velM2, reservas, bbb]
+  // BBB entra en similitud (no en score) — ayuda a distinguir estrés financiero
+  const VECTOR_KEYS   = ['curvaUSD','tipoReal','lei','m2usa','creditoVsPib','impulso','velM2','reservas','bbb'];
+  const VECTOR_MAXSC  = { curvaUSD:1, tipoReal:1, lei:1, m2usa:3, creditoVsPib:3, impulso:2, velM2:2, reservas:1, bbb:1 };
+  const MIN_DIMS      = 6;  // mínimo 6 de 9 dimensiones comunes
+  const EXCLUDE_LAST  = 12; // excluir últimos 12 meses del histórico
+
+  // Construir mapa SP500 mensual para retornos forward
+  const spMap = new Map(spNorm.map(p => [p.date.slice(0,7), p.value]));
+
+  function spReturn(fromYM, monthsForward) {
+    const from = spMap.get(fromYM);
+    if (from == null || from === 0) return null;
+    // Buscar mes t+N (puede no ser exacto — tomar el más próximo dentro de ±1 mes)
+    const target = new Date(fromYM + '-01');
+    target.setMonth(target.getMonth() + monthsForward);
+    const targetYM = target.toISOString().slice(0,7);
+    const to = spMap.get(targetYM) || spMap.get(
+      // fallback ±1 mes
+      (() => { const t2 = new Date(target); t2.setMonth(t2.getMonth()-1); return t2.toISOString().slice(0,7); })()
+    );
+    if (to == null) return null;
+    return +((to / from - 1) * 100).toFixed(2);
+  }
+
+  function maxDrawdown(fromYM, months) {
+    const from = spMap.get(fromYM);
+    if (from == null || from === 0) return null;
+    let peak = from, maxDD = 0;
+    for (let i = 1; i <= months; i++) {
+      const t = new Date(fromYM + '-01');
+      t.setMonth(t.getMonth() + i);
+      const v = spMap.get(t.toISOString().slice(0,7));
+      if (v == null) continue;
+      if (v > peak) peak = v;
+      const dd = (v - peak) / peak * 100;
+      if (dd < maxDD) maxDD = dd;
+    }
+    return +maxDD.toFixed(2);
+  }
+
+  // Extraer vector normalizado (z-score winsorizado) de un mes histórico
+  // Normalización global: media/std sobre todos los meses válidos por dimensión
+  const dimStats = {};
+  VECTOR_KEYS.forEach(k => {
+    const vals = histMacroV1.filter(m => m.components[k]?.valid && m.components[k]?.value != null)
+      .map(m => m.components[k].value);
+    if (!vals.length) { dimStats[k] = { mean: 0, std: 1 }; return; }
+    const mean = vals.reduce((a,b)=>a+b,0) / vals.length;
+    const std  = Math.sqrt(vals.map(v=>(v-mean)**2).reduce((a,b)=>a+b,0) / vals.length) || 1;
+    // Winsorizacion p5-p95
+    const sorted = [...vals].sort((a,b)=>a-b);
+    const p5  = sorted[Math.floor(sorted.length * 0.05)];
+    const p95 = sorted[Math.floor(sorted.length * 0.95)];
+    dimStats[k] = { mean, std, p5, p95 };
+  });
+
+  function normalize(k, v) {
+    const { mean, std, p5, p95 } = dimStats[k] || { mean: 0, std: 1 };
+    const w = Math.max(p5 ?? v, Math.min(p95 ?? v, v)); // winsorize
+    return (w - mean) / std;
+  }
+
+  function getVector(monthObj) {
+    const v = {};
+    VECTOR_KEYS.forEach(k => {
+      const c = monthObj.components?.[k];
+      if (c?.valid && c?.value != null) v[k] = normalize(k, c.value);
+    });
+    return v;
+  }
+
+  function cosineSim(va, vb) {
+    const keys = Object.keys(va).filter(k => vb[k] != null);
+    if (keys.length < MIN_DIMS) return null;
+    const dot  = keys.reduce((s,k) => s + va[k]*vb[k], 0);
+    const normA = Math.sqrt(keys.reduce((s,k) => s + va[k]**2, 0));
+    const normB = Math.sqrt(keys.reduce((s,k) => s + vb[k]**2, 0));
+    if (normA === 0 || normB === 0) return null;
+    return { sim: +(dot / (normA * normB)).toFixed(4), dims: keys.length };
+  }
+
+  // Vector del mes más reciente válido (para búsqueda de analogías desde el presente)
+  const latestValid = [...histMacroV1].reverse().find(m => m.valid);
+  const latestVector = latestValid ? getVector(latestValid) : null;
+
+  // Meses históricos elegibles: válidos, al menos 12 meses antes del último
+  const cutoffYM = latestValid
+    ? (() => { const d = new Date(latestValid.month+'-01'); d.setMonth(d.getMonth()-EXCLUDE_LAST); return d.toISOString().slice(0,7); })()
+    : '2099-01';
+
+  function findAnalogies(queryVector, queryMonth, topN = 10) {
+    const candidates = histMacroV1.filter(m => m.valid && m.month <= cutoffYM);
+    const scored = candidates.map(m => {
+      const mv  = getVector(m);
+      const res = cosineSim(queryVector, mv);
+      if (!res) return null;
+      const r3  = spReturn(m.month, 3);
+      const r6  = spReturn(m.month, 6);
+      const r12 = spReturn(m.month, 12);
+      const dd  = maxDrawdown(m.month, 12);
+      return {
+        month:        m.month,
+        similarity:   res.sim,
+        dimsUsed:     res.dims,
+        coverage:     m.coverage,
+        scoreNorm:    m.scoreNorm,
+        scoreRaw:     m.scoreRaw,
+        sp3m:         r3,
+        sp6m:         r6,
+        sp12m:        r12,
+        maxDD12m:     dd,
+        components:   m.components,
+      };
+    }).filter(Boolean);
+
+    scored.sort((a,b) => b.similarity - a.similarity);
+    return scored.slice(0, topN);
+  }
+
+  // Calcular analogías para el mes actual y para los 3 meses de prueba
+  const analogyCurrent  = latestVector ? findAnalogies(latestVector, latestValid?.month, 10) : [];
+  const analogyProbe = ['2022-10','2020-04','2018-12','2008-09'].map(ym => {
+    const m = histMacroV1.find(h => h.month === ym);
+    if (!m?.valid) return { month: ym, error: 'no válido' };
+    const v = getVector(m);
+    const top = findAnalogies(v, ym, 5);
+    return { month: ym, analogies: top };
+  });
+
+  // Resumen estadístico de analogías
+  function summarize(analogies) {
+    const r6  = analogies.map(a => a.sp6m).filter(v => v != null);
+    const r12 = analogies.map(a => a.sp12m).filter(v => v != null);
+    const dd  = analogies.map(a => a.maxDD12m).filter(v => v != null);
+    const median = arr => { if (!arr.length) return null; const s = [...arr].sort((a,b)=>a-b); return s[Math.floor(s.length/2)]; };
+    return {
+      medianSp6m:   median(r6),
+      medianSp12m:  median(r12),
+      medianMaxDD:  median(dd),
+      pctPositive12m: r12.length ? +(r12.filter(v=>v>0).length/r12.length*100).toFixed(1) : null,
+      n: analogies.length,
+    };
+  }
+
   // ── Test global de invariantes (sobre TODOS los meses) ─────────
   const globalViolations = [];
   let nScoreNormOOB = 0, nAbsViolation = 0, nCoverageOOB = 0;
@@ -454,7 +600,14 @@ export default async function handler(req, res) {
         }),
       },
     },
-    histMacroV1: histMacroV1.filter(m => m.valid), // matriz completa para Fase 2B
+    histMacroV1: histMacroV1.filter(m => m.valid),
+    analogies: {
+      current:   { month: latestValid?.month, vector: latestVector, top10: analogyCurrent, summary: summarize(analogyCurrent) },
+      probes:    analogyProbe,
+      version:   'SIMILARITY_V1_COSINE_ZSCORE_WIN',
+      minDims:   MIN_DIMS,
+      excludeLast: EXCLUDE_LAST,
+    },
 
     // Para Correlaciones
     correlaciones,

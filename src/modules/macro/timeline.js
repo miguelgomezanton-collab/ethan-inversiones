@@ -47,6 +47,97 @@ export async function render(container, { actionsSlot }) {
     }
   }
 
+    function buildAnalogiasHTML(an) {
+      if (!an || !an.current || !an.current.top10 || !an.current.top10.length) {
+        return '<div class="mac-card" style="background:rgba(251,191,36,0.04);border-color:rgba(251,191,36,0.2);"><div style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text3);">Analogías Históricas — sin datos suficientes</div></div>';
+      }
+      const cur = an.current, sum = cur.summary, top = cur.top10;
+      const f1  = v => v != null ? (v>=0?'+':'')+v.toFixed(1)+'%' : '—';
+      const f3  = v => v != null ? (v>=0?'+':'')+v.toFixed(3) : '—';
+      const col = v => v == null ? 'var(--text3)' : v > 0 ? 'var(--green)' : 'var(--red)';
+      const sc  = v => v > 0.8 ? 'var(--green)' : v > 0.5 ? 'var(--amber)' : 'var(--red)';
+
+      const summaryCards = [
+        ['Mediana S&P +6m',  sum.medianSp6m,  true],
+        ['Mediana S&P +12m', sum.medianSp12m, true],
+        ['% positivas +12m', sum.pctPositive12m != null ? sum.pctPositive12m + '%' : null, false],
+        ['Mediana MaxDD 12m', sum.medianMaxDD, true],
+      ].map(([label, val, isRet]) =>
+        '<div style="background:var(--surface2);border-radius:8px;padding:10px;text-align:center;">' +
+          '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:4px;">' + label + '</div>' +
+          '<div style="font-family:var(--serif);font-size:20px;font-weight:600;font-style:italic;color:' + (isRet ? col(typeof val === 'string' ? parseFloat(val) : val) : 'var(--text1)') + ';">' +
+            (isRet && val != null ? (val >= 0 ? '+' : '') + parseFloat(val).toFixed(1) + '%' : val || '—') +
+          '</div></div>'
+      ).join('');
+
+      const topRows = top.map((a, i) =>
+        '<tr style="border-bottom:1px solid var(--border);' + (i === 0 ? 'background:rgba(64,217,192,0.04);' : '') + '">' +
+          '<td style="padding:6px 8px;font-family:var(--mono);color:var(--text1);">' + a.month + '</td>' +
+          '<td style="padding:6px 8px;text-align:right;font-family:var(--mono);color:' + sc(a.similarity) + ';">' + (a.similarity*100).toFixed(1) + '%</td>' +
+          '<td style="padding:6px 8px;text-align:right;font-family:var(--mono);color:var(--text3);">' + a.dimsUsed + '/9</td>' +
+          '<td style="padding:6px 8px;text-align:right;font-family:var(--mono);color:' + col(a.scoreNorm) + ';">' + f3(a.scoreNorm) + '</td>' +
+          '<td style="padding:6px 8px;text-align:right;font-family:var(--mono);color:' + col(a.sp3m) + ';">' + f1(a.sp3m) + '</td>' +
+          '<td style="padding:6px 8px;text-align:right;font-family:var(--mono);color:' + col(a.sp6m) + ';">' + f1(a.sp6m) + '</td>' +
+          '<td style="padding:6px 8px;text-align:right;font-family:var(--mono);color:' + col(a.sp12m) + ';">' + f1(a.sp12m) + '</td>' +
+          '<td style="padding:6px 8px;text-align:right;font-family:var(--mono);color:var(--red);">' + f1(a.maxDD12m) + '</td>' +
+        '</tr>'
+      ).join('');
+
+      const probeBlocks = (an.probes || []).map(probe => {
+        if (probe.error) return '<div style="font-size:10px;color:var(--text3);margin-bottom:8px;">' + probe.month + ': ' + probe.error + '</div>';
+        const rows = (probe.analogies || []).map(a =>
+          '<tr style="border-top:1px solid var(--border);">' +
+            '<td style="padding:2px 6px;color:var(--text1);">' + a.month + '</td>' +
+            '<td style="padding:2px 6px;text-align:right;color:' + sc(a.similarity) + ';">' + (a.similarity*100).toFixed(1) + '%</td>' +
+            '<td style="padding:2px 6px;text-align:right;color:var(--text3);">' + a.dimsUsed + '</td>' +
+            '<td style="padding:2px 6px;text-align:right;color:' + col(a.scoreNorm) + ';">' + f3(a.scoreNorm) + '</td>' +
+            '<td style="padding:2px 6px;text-align:right;color:' + col(a.sp3m) + ';">' + f1(a.sp3m) + '</td>' +
+            '<td style="padding:2px 6px;text-align:right;color:' + col(a.sp6m) + ';">' + f1(a.sp6m) + '</td>' +
+            '<td style="padding:2px 6px;text-align:right;color:' + col(a.sp12m) + ';">' + f1(a.sp12m) + '</td>' +
+            '<td style="padding:2px 6px;text-align:right;color:var(--red);">' + f1(a.maxDD12m) + '</td>' +
+          '</tr>'
+        ).join('');
+        return '<div style="margin-bottom:12px;">' +
+          '<div style="font-size:10px;font-weight:700;color:var(--teal);margin-bottom:4px;font-family:var(--mono);">' + probe.month + '</div>' +
+          '<table style="width:100%;border-collapse:collapse;font-size:9px;font-family:var(--mono);">' +
+            '<tr style="color:var(--text3);"><td style="padding:2px 6px;">Mes</td><td style="padding:2px 6px;text-align:right;">Sim.</td>' +
+            '<td style="padding:2px 6px;text-align:right;">D</td><td style="padding:2px 6px;text-align:right;">Score</td>' +
+            '<td style="padding:2px 6px;text-align:right;">+3m</td><td style="padding:2px 6px;text-align:right;">+6m</td>' +
+            '<td style="padding:2px 6px;text-align:right;">+12m</td><td style="padding:2px 6px;text-align:right;">DD</td></tr>' +
+            rows +
+          '</table></div>';
+      }).join('');
+
+      return (
+        '<div class="mac-card" style="margin-bottom:14px;">' +
+          '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px;">' +
+            '<div><span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);">Analogías Históricas</span>' +
+            '<span style="font-size:9px;font-family:var(--mono);color:var(--text2);margin-left:8px;">' + cur.month + ' · Top ' + top.length + ' · ' + an.version + '</span></div>' +
+            '<div style="font-size:9px;font-family:var(--mono);color:var(--text3);">Mín. ' + an.minDims + '/9 dims · excl. últimos ' + an.excludeLast + 'm · coseno z-score winsorizado</div>' +
+          '</div>' +
+          '<div style="font-size:10px;color:var(--amber);font-family:var(--mono);margin-bottom:10px;">⚠ Comportamiento histórico posterior de configuraciones similares — no es forecast</div>' +
+          '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px;">' + summaryCards + '</div>' +
+          '<table style="width:100%;border-collapse:collapse;font-size:10px;">' +
+            '<thead><tr style="background:var(--surface2);">' +
+              '<th style="padding:6px 8px;text-align:left;font-size:9px;color:var(--text3);">Mes</th>' +
+              '<th style="padding:6px 8px;text-align:right;font-size:9px;color:var(--text3);">Simil.</th>' +
+              '<th style="padding:6px 8px;text-align:right;font-size:9px;color:var(--text3);">Dims</th>' +
+              '<th style="padding:6px 8px;text-align:right;font-size:9px;color:var(--text3);">ScoreNorm</th>' +
+              '<th style="padding:6px 8px;text-align:right;font-size:9px;color:var(--text3);">S&P +3m</th>' +
+              '<th style="padding:6px 8px;text-align:right;font-size:9px;color:var(--text3);">S&P +6m</th>' +
+              '<th style="padding:6px 8px;text-align:right;font-size:9px;color:var(--text3);">S&P +12m</th>' +
+              '<th style="padding:6px 8px;text-align:right;font-size:9px;color:var(--text3);">MaxDD 12m</th>' +
+            '</tr></thead>' +
+            '<tbody>' + topRows + '</tbody>' +
+          '</table>' +
+        '</div>' +
+        '<div class="mac-card" style="margin-bottom:14px;">' +
+          '<div style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:10px;">🔍 Validación — Top 5 de meses de referencia</div>' +
+          probeBlocks +
+        '</div>'
+      );
+    }
+
   function paint(macro, hist) {
     const el = document.getElementById('tl-wrap');
     const tl  = hist.timeline || {};
@@ -311,27 +402,8 @@ export async function render(container, { actionsSlot }) {
         }).join('')}
       </div>
 
-      <!-- ANALOGÍAS FASE 2 -->
-      <div class="mac-card" style="background:rgba(251,191,36,0.04);border-color:rgba(251,191,36,0.2);">
-        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:var(--text3);margin-bottom:10px;">
-          Analogías Históricas <span style="color:var(--amber);margin-left:8px;">⏳ Fase 2 — Motor de Similitud Pendiente</span>
-        </div>
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;font-size:10px;color:var(--text3);font-family:var(--mono);">
-          <div style="background:var(--surface2);border-radius:8px;padding:12px 14px;">
-            <div style="color:var(--text2);font-weight:700;margin-bottom:6px;">Motor de Similitud</div>
-            Vector macro mensual normalizado → distancia coseno → top N análogos con cobertura mínima
-          </div>
-          <div style="background:var(--surface2);border-radius:8px;padding:12px 14px;">
-            <div style="color:var(--text2);font-weight:700;margin-bottom:6px;">Retornos Forward</div>
-            S&amp;P 500 +3m / +6m / +12m calculados automáticamente desde histórico FRED SP500
-          </div>
-          <div style="background:var(--surface2);border-radius:8px;padding:12px 14px;">
-            <div style="color:var(--text2);font-weight:700;margin-bottom:6px;">Macro Score Canónico</div>
-            Reconstrucción desde 2000 con alta cobertura y metodología homogénea al motor actual
-          </div>
-        </div>
-      </div>
-
+      <!-- ANALOGÍAS HISTÓRICAS — FASE 2B -->
+      ${buildAnalogiasHTML(hist.analogies)}
       <div class="co-footer" style="margin-top:14px;">
         Fuentes: FRED SP500 (mensual) · FRED DGS10/DFF/CPIAUCSL/CPILFESL ·
         HIST_MACRO_V1_FRED · ${debug.version||"HIST_MACRO_V1_FRED"} · ${debug.nScore||scF.length} meses válidos (coverage≥60%) · ${debug.firstScore?.slice(0,7)||"—"} → ${debug.lastScore?.slice(0,7)||"—"} · PROVISIONAL
