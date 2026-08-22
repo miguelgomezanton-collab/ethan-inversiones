@@ -406,10 +406,15 @@ export default async function handler(req, res) {
         nScore:        scoreHistory.length,
         firstScore:    histMacroV1.find(m => m.valid)?.month,
         lastScore:     [...histMacroV1].reverse().find(m => m.valid)?.month,
-        nDgs10Monthly: dgs10Monthly.length,
-        nDffMonthly:   dffMonthly.length,
+        nTotal:        histMacroV1.length,
+        nValid:        histMacroV1.filter(m => m.valid).length,
         version:       VERSION,
-        sampleMonth:   histMacroV1.find(m => m.valid && m.month >= '2020-01'),
+        maxPossible:   MAX_POSSIBLE,
+        // Meses de auditoría — para validación cruzada
+        auditMonths: ['2026-06','2022-10','2020-04','2018-12'].map(ym => {
+          const m = histMacroV1.find(h => h.month === ym);
+          return m || { month: ym, valid: false, error: 'no encontrado' };
+        }),
       },
     },
     histMacroV1: histMacroV1.filter(m => m.valid), // matriz completa para Fase 2B

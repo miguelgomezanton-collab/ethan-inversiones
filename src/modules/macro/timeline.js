@@ -247,9 +247,67 @@ export async function render(container, { actionsSlot }) {
         <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:8px;line-height:1.7;">
           Serie: ${mv.source||'—'} · Frecuencia origen: ${currentVar.includes('YOY')?'mensual':'diaria'} ·
           Transformación: ${mv.transform||'media mensual'} · Período: ${minYM} → ${maxYM} · N meses válidos: ${varF.length}<br>
-          Score parcial: Curva USD + Tipo Real · ${debug.nScore||0} meses · ${scoreFrom} → ${scoreLast} · BBB excluido (→ 1.2 Liquidez)
+          ${debug.version||'HIST_MACRO_V1_FRED'} · 9 indicadores (Curva USD, Tipo Real, LEI, M2USA, Crédito/PIB, Impulso, VelM2, Reservas, BBB) · ${debug.nValid||'—'} meses válidos (cov≥60%) de ${debug.nTotal||'—'} totales · ${debug.firstScore||'—'} → ${debug.lastScore||'—'}
           ${hist.errors?.length ? ' · ⚠ ' + hist.errors.slice(0,2).join(', ') : ''}
         </div>
+      </div>
+
+      <!-- AUDITORÍA HIST_MACRO_V1_FRED -->
+      <div class="mac-card" style="margin-bottom:14px;font-family:var(--mono);">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:10px;">
+          🔍 Auditoría HIST_MACRO_V1_FRED — 4 meses de referencia
+          <span style="color:var(--text3);font-weight:400;margin-left:8px;">
+            ${debug.nValid||'—'} meses válidos (cov≥60%) de ${debug.nTotal||'—'} totales · MaxPossible=${debug.maxPossible||15} · ${debug.version||'—'}
+          </span>
+        </div>
+        ${(debug.auditMonths||[]).map(m => {
+          if (!m.valid) return `<div style="font-size:10px;color:var(--text3);margin-bottom:12px;">${m.month}: N/A — ${m.error||'cobertura insuficiente'}</div>`;
+          const comps = m.components || {};
+          const IND_ORDER = ['curvaUSD','tipoReal','lei','m2usa','creditoVsPib','impulso','velM2','reservas','bbb'];
+          const snCol = m.scoreNorm > 0.2 ? 'var(--green)' : m.scoreNorm < -0.2 ? 'var(--red)' : 'var(--amber)';
+          return `
+            <div style="margin-bottom:16px;border-bottom:1px solid var(--border);padding-bottom:12px;">
+              <div style="font-size:10px;color:var(--teal);margin-bottom:6px;font-weight:700;">
+                ${m.month} · ScoreNorm <span style="color:${snCol}">${m.scoreNorm>=0?'+':''}${m.scoreNorm?.toFixed(3)}</span>
+                · Raw ${m.scoreRaw>=0?'+':''}${m.scoreRaw} / ${m.maxAvailable}
+                · Coverage ${Math.round(m.coverage*100)}%
+                · Válidos ${Object.values(comps).filter(c=>c.valid).length}/9
+              </div>
+              <table style="width:100%;border-collapse:collapse;font-size:9px;">
+                <thead><tr>
+                  <th style="text-align:left;padding:3px 6px;color:var(--text3);">Indicador</th>
+                  <th style="text-align:right;padding:3px 6px;color:var(--text3);">Valor</th>
+                  <th style="text-align:right;padding:3px 6px;color:var(--text3);">Score</th>
+                  <th style="text-align:right;padding:3px 6px;color:var(--text3);">Max</th>
+                  <th style="text-align:left;padding:3px 6px;color:var(--text3);">Fuente</th>
+                  <th style="text-align:center;padding:3px 6px;color:var(--text3);">OK</th>
+                </tr></thead>
+                <tbody>
+                  ${IND_ORDER.map(k => {
+                    const c = comps[k];
+                    if (!c) return '';
+                    const sc = c.score != null ? (c.score>=0?'+':'')+c.score : '—';
+                    const vl = c.value != null ? (typeof c.value === 'number' ? c.value.toFixed(2) : c.value) : '—';
+                    const col = c.valid ? (c.score > 0 ? 'var(--green)' : c.score < 0 ? 'var(--red)' : 'var(--amber)') : 'var(--text3)';
+                    return `<tr style="border-bottom:1px solid var(--border);">
+                      <td style="padding:3px 6px;color:var(--text2);">${k}</td>
+                      <td style="padding:3px 6px;text-align:right;color:var(--text1);">${vl}</td>
+                      <td style="padding:3px 6px;text-align:right;color:${col};font-weight:700;">${sc}</td>
+                      <td style="padding:3px 6px;text-align:right;color:var(--text3);">±${c.maxScore||1}</td>
+                      <td style="padding:3px 6px;color:var(--text3);font-size:8px;">${c.source||'—'}${c.note?' · '+c.note:''}</td>
+                      <td style="padding:3px 6px;text-align:center;">${c.valid?'✓':'✗'}</td>
+                    </tr>`;
+                  }).join('')}
+                  <tr style="background:var(--surface2);">
+                    <td style="padding:4px 6px;font-weight:700;color:var(--text1);">TOTAL</td>
+                    <td colspan="2" style="padding:4px 6px;text-align:right;font-weight:700;color:${snCol};">Raw ${m.scoreRaw>=0?'+':''}${m.scoreRaw} / ${m.maxAvailable} = Norm ${m.scoreNorm>=0?'+':''}${m.scoreNorm?.toFixed(3)}</td>
+                    <td style="padding:4px 6px;text-align:right;color:var(--text3);">15</td>
+                    <td colspan="2" style="padding:4px 6px;color:var(--text3);">Coverage ${Math.round(m.coverage*100)}% ${m.coverage>=0.6?'✓ válido':'✗ N/A'}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>`;
+        }).join('')}
       </div>
 
       <!-- ANALOGÍAS FASE 2 -->
