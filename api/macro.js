@@ -1017,28 +1017,50 @@ export default async function handler(req, res) {
     hySpread: rHy.status === 'fulfilled' && rHy.value[0]
       ? { value: rHy.value[0].value, date: rHy.value[0].date } : null,
     breakeven1y: (() => {
-      // EXPINF1YR — Fed de Cleveland (más preciso que T1YIE)
+      // EXPINF1YR — Fed de Cleveland (modelo, no breakeven TIPS de mercado)
+      // Nota: UI muestra "T1YIE" pero la serie real es EXPINF1YR o MICH como fallback
       if (rBreakeven1y.status === 'fulfilled') {
         const valid = rBreakeven1y.value.find(o => o.value != null && !isNaN(o.value));
-        if (valid) return { value: valid.value, date: valid.date, series: 'EXPINF1YR' };
+        if (valid) {
+          const ageDays = Math.round((Date.now() - new Date(valid.date).getTime()) / 86400000);
+          const freshness = ageDays <= 7 ? 'ok' : ageDays <= 10 ? 'warn' : 'stale';
+          return { value: valid.value, date: valid.date, series: 'EXPINF1YR',
+            label: 'Expectativa inflación 1Y — Cleveland Fed', ageDays, freshness };
+        }
       }
-      // Fallback: MICH (Univ. Michigan)
+      // Fallback: MICH (Univ. Michigan, encuesta mensual)
       if (rMich?.status === 'fulfilled') {
         const valid = rMich.value.find(o => o.value != null && !isNaN(o.value));
-        if (valid) return { value: valid.value, date: valid.date, series: 'MICH' };
+        if (valid) {
+          const ageDays = Math.round((Date.now() - new Date(valid.date).getTime()) / 86400000);
+          const freshness = ageDays <= 45 ? 'ok' : ageDays <= 60 ? 'warn' : 'stale';
+          return { value: valid.value, date: valid.date, series: 'MICH',
+            label: 'Expectativa inflación 1Y — Univ. Michigan (fallback)', ageDays, freshness };
+        }
       }
       errs.push('EXPINF1YR+MICH: sin datos válidos');
       return null;
     })(),
     breakeven5y: (() => {
+      // T5YIE — Breakeven TIPS 5Y (mercado)
       if (rBreakeven5y.status === 'fulfilled') {
         const valid = rBreakeven5y.value.find(o => o.value != null && !isNaN(o.value));
-        if (valid) return { value: valid.value, date: valid.date };
+        if (valid) {
+          const ageDays = Math.round((Date.now() - new Date(valid.date).getTime()) / 86400000);
+          const freshness = ageDays <= 7 ? 'ok' : ageDays <= 10 ? 'warn' : 'stale';
+          return { value: valid.value, date: valid.date, series: 'T5YIE',
+            label: 'Breakeven inflación 5Y — TIPS mercado', ageDays, freshness };
+        }
       }
-      // Fallback a T5YIFR
+      // Fallback: T5YIFR (5Y forward 5Y)
       if (rBreakeven5yAlt.status === 'fulfilled') {
         const valid = rBreakeven5yAlt.value.find(o => o.value != null && !isNaN(o.value));
-        if (valid) return { value: valid.value, date: valid.date, series: 'T5YIFR' };
+        if (valid) {
+          const ageDays = Math.round((Date.now() - new Date(valid.date).getTime()) / 86400000);
+          const freshness = ageDays <= 7 ? 'ok' : ageDays <= 10 ? 'warn' : 'stale';
+          return { value: valid.value, date: valid.date, series: 'T5YIFR',
+            label: 'Forward inflación 5Y5Y (fallback)', ageDays, freshness };
+        }
       }
       errs.push('T5YIE+T5YIFR: sin datos válidos');
       return null;
