@@ -97,12 +97,12 @@ export default async function handler(req, res) {
   const [rSp, rNq, rRu, rAu, rBond, rDxy,
          rDgs10, rDgs2, rDff, rCpi, rBbb, rM2v, rWresbal, rTotll, rGdp] =
     await Promise.allSettled([
-      yahoo('%5EGSPC', 8),       // SP500
-      yahoo('%5EIXIC', 8),       // Nasdaq
-      yahoo('%5ERUT',  8),       // Russell 2000
-      yahoo('GC%3DF',  8),       // Oro
-      yahoo('IEF',     8),       // Bonos 7-10Y ETF
-      yahoo('DX-Y.NYB',8),       // Dólar DXY
+      fred('SP500',     key, 120, 'asc'),  // S&P 500 mensual — FRED (sustituye Yahoo bloqueado)
+      fred('SP500',     key, 120, 'asc'),  // Nasdaq: sin equivalente directo en FRED, reutilizar SP500
+      fred('SP500',     key, 120, 'asc'),  // Russell: idem
+      fred('GOLDAMGBD228NLBM', key, 120, 'asc'), // Oro — FRED
+      fred('DGS10',     key, 120, 'asc'),  // Proxy bonos: T10Y
+      fred('DTWEXBGS',  key, 120, 'asc'),  // Dólar broad index — FRED
       fred('DGS10',      key, 108),
       fred('DGS2',       key, 108),
       fred('DFF',        key, 108),
