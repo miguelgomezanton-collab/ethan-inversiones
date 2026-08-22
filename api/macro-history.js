@@ -414,36 +414,51 @@ export default async function handler(req, res) {
     return +maxDD.toFixed(2);
   }
 
-  // Extraer vector normalizado (z-score winsorizado) de un mes histórico
-  // Normalización global: media/std sobre todos los meses válidos por dimensión
-  const dimStats = {};
-  VECTOR_KEYS.forEach(k => {
-    const vals = histMacroV1.filter(m => m.components[k]?.valid && m.components[k]?.value != null)
-      .map(m => m.components[k].value);
-    if (!vals.length) { dimStats[k] = { mean: 0, std: 1 }; return; }
-    const mean = vals.reduce((a,b)=>a+b,0) / vals.length;
-    const std  = Math.sqrt(vals.map(v=>(v-mean)**2).reduce((a,b)=>a+b,0) / vals.length) || 1;
-    // Winsorizacion p5-p95
-    const sorted = [...vals].sort((a,b)=>a-b);
-    const p5  = sorted[Math.floor(sorted.length * 0.05)];
-    const p95 = sorted[Math.floor(sorted.length * 0.95)];
-    dimStats[k] = { mean, std, p5, p95 };
-  });
+  // Normalización point-in-time (z-score winsorizado)
+  // Para cada mes t, stats calculados SOLO con datos disponibles hasta t
+  // Evita look-ahead bias en validación histórica
+  // Cache de stats por mes para eficiencia
+  const _statsCache = new Map();
 
-  function normalize(k, v) {
-    const { mean, std, p5, p95 } = dimStats[k] || { mean: 0, std: 1 };
-    const w = Math.max(p5 ?? v, Math.min(p95 ?? v, v)); // winsorize
+  function getDimStats(upToMonth) {
+    if (_statsCache.has(upToMonth)) return _statsCache.get(upToMonth);
+    const eligible = histMacroV1.filter(m => m.valid && m.month <= upToMonth);
+    const stats = {};
+    VECTOR_KEYS.forEach(k => {
+      const vals = eligible
+        .filter(m => m.components[k]?.valid && m.components[k]?.value != null)
+        .map(m => m.components[k].value);
+      if (!vals.length) { stats[k] = { mean: 0, std: 1, p5: 0, p95: 0 }; return; }
+      const mean = vals.reduce((a,b) => a+b, 0) / vals.length;
+      const std  = Math.sqrt(vals.map(v => (v-mean)**2).reduce((a,b) => a+b, 0) / vals.length) || 1;
+      const sorted = [...vals].sort((a,b) => a-b);
+      const p5  = sorted[Math.floor(sorted.length * 0.05)] ?? sorted[0];
+      const p95 = sorted[Math.floor(sorted.length * 0.95)] ?? sorted[sorted.length-1];
+      stats[k] = { mean, std, p5, p95 };
+    });
+    _statsCache.set(upToMonth, stats);
+    return stats;
+  }
+
+  function normalize(k, v, upToMonth) {
+    const stats = getDimStats(upToMonth);
+    const { mean, std, p5, p95 } = stats[k] || { mean: 0, std: 1, p5: v, p95: v };
+    const w = Math.max(p5, Math.min(p95, v));
     return (w - mean) / std;
   }
 
-  function getVector(monthObj) {
+  function getVector(monthObj, upToMonth) {
+    const refMonth = upToMonth || monthObj.month;
     const v = {};
     VECTOR_KEYS.forEach(k => {
       const c = monthObj.components?.[k];
-      if (c?.valid && c?.value != null) v[k] = normalize(k, c.value);
+      if (c?.valid && c?.value != null) v[k] = normalize(k, c.value, refMonth);
     });
     return v;
   }
+
+  // Para el mes actual (producción) usamos todos los datos disponibles
+  const latestMonth = latestValid?.month || '2099-01';
 
   function cosineSim(va, vb) {
     const keys = Object.keys(va).filter(k => vb[k] != null);
@@ -457,7 +472,7 @@ export default async function handler(req, res) {
 
   // Vector del mes más reciente válido (para búsqueda de analogías desde el presente)
   const latestValid = [...histMacroV1].reverse().find(m => m.valid);
-  const latestVector = latestValid ? getVector(latestValid) : null;
+  const latestVector = latestValid ? getVector(latestValid, latestMonth) : null;
 
   // Meses históricos elegibles: válidos, al menos 12 meses antes del último
   const cutoffYM = latestValid
@@ -489,7 +504,8 @@ export default async function handler(req, res) {
     const candidates = histMacroV1.filter(m => m.valid && m.month <= maxMonth);
 
     const scored = candidates.map(m => {
-      const mv  = getVector(m);
+      // Point-in-time: normalizar candidato con stats disponibles hasta su propio mes
+      const mv  = getVector(m, m.month);
       const res = cosineSim(queryVector, mv);
       if (!res) return null;
       if (res.sim < SIM_MIN) return null;   // HARD: similarity ≥ 60%
@@ -535,9 +551,10 @@ export default async function handler(req, res) {
   const analogyProbe = ['2022-10','2020-04','2018-12','2008-09'].map(ym => {
     const m = histMacroV1.find(h => h.month === ym);
     if (!m?.valid) return { month: ym, error: 'no válido' };
-    const v = getVector(m);
-    const top = findAnalogies(v, ym, 5, { walkForward: true, dedupMonths: 6 });
-    return { month: ym, analogies: top };
+    // Point-in-time: normalizar el query con stats disponibles hasta el mes de referencia
+    const v = getVector(m, ym);
+    const top = findAnalogies(v, ym, 10, { walkForward: true });
+    return { month: ym, analogies: top, queryVector: v };
   });
 
   // Resumen estadístico de analogías
@@ -641,7 +658,7 @@ export default async function handler(req, res) {
     analogies: {
       current:   { month: latestValid?.month, vector: latestVector, top10: analogyCurrent, summary: summarize(analogyCurrent) },
       probes:    analogyProbe,
-      version:   'SIMILARITY_V2_COSINE_ZSCORE_WIN_DEDUP6M',
+      version:   'SIMILARITY_V2_PIT_COSINE_ZSCORE_WIN_DEDUP6M',
       minDims:   MIN_DIMS,
       excludeLast: EXCLUDE_LAST,
     },
