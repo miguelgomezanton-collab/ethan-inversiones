@@ -247,7 +247,7 @@ export async function render(container, { actionsSlot }) {
         <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:8px;line-height:1.7;">
           Serie: ${mv.source||'—'} · Frecuencia origen: ${currentVar.includes('YOY')?'mensual':'diaria'} ·
           Transformación: ${mv.transform||'media mensual'} · Período: ${minYM} → ${maxYM} · N meses válidos: ${varF.length}<br>
-          ${debug.version||'HIST_MACRO_V1_FRED'} · 9 indicadores (Curva USD, Tipo Real, LEI, M2USA, Crédito/PIB, Impulso, VelM2, Reservas, BBB) · ${debug.nValid||'—'} meses válidos (cov≥60%) de ${debug.nTotal||'—'} totales · ${debug.firstScore||'—'} → ${debug.lastScore||'—'}
+          ${debug.version||'HIST_MACRO_V1_FRED'} · 8 ind. score + BBB (analogías) · ${debug.nValid||'—'}/${debug.nTotal||'—'} meses válidos · ${debug.firstScore||'—'} → ${debug.lastScore||'—'} · <span style="color:${debug.invariantsPass?'var(--green)':'var(--red)'}">${debug.invariantStatus||'—'}</span>
           ${hist.errors?.length ? ' · ⚠ ' + hist.errors.slice(0,2).join(', ') : ''}
         </div>
       </div>
@@ -257,7 +257,7 @@ export async function render(container, { actionsSlot }) {
         <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:10px;">
           🔍 Auditoría HIST_MACRO_V1_FRED — 4 meses de referencia
           <span style="color:var(--text3);font-weight:400;margin-left:8px;">
-            ${debug.nValid||'—'} meses válidos (cov≥60%) de ${debug.nTotal||'—'} totales · MaxPossible=${debug.maxPossible||15} · ${debug.version||'—'}
+            ${debug.nValid||'—'}/${debug.nTotal||'—'} meses válidos · MaxPossible=${debug.maxPossible||14} · BBB Max Macro:0/Analogías:±1 · <span style="color:${debug.invariantsPass?'var(--green)':'var(--red)'}">${debug.invariantStatus||'—'}</span>
           </span>
         </div>
         ${(debug.auditMonths||[]).map(m => {
@@ -302,8 +302,8 @@ export async function render(container, { actionsSlot }) {
                   <tr style="background:var(--surface2);">
                     <td style="padding:4px 6px;font-weight:700;color:var(--text1);">TOTAL</td>
                     <td colspan="2" style="padding:4px 6px;text-align:right;font-weight:700;color:${snCol};">Raw ${m.scoreRaw>=0?'+':''}${m.scoreRaw} / ${m.maxAvailable} = Norm ${m.scoreNorm>=0?'+':''}${m.scoreNorm?.toFixed(3)}</td>
-                    <td style="padding:4px 6px;text-align:right;color:var(--text3);">15</td>
-                    <td colspan="2" style="padding:4px 6px;color:var(--text3);">Coverage ${Math.round(m.coverage*100)}% ${m.coverage>=0.6?'✓ válido':'✗ N/A'}</td>
+                    <td style="padding:4px 6px;text-align:right;color:var(--text3);">${debug.maxPossible||14}</td>
+                    <td colspan="2" style="padding:4px 6px;color:var(--text3);">Coverage ${Math.round(m.coverage*100)}% (${m.maxAvailable}/${debug.maxPossible||14}) ${m.coverage>=0.6?'✓ válido':'✗ N/A'}</td>
                   </tr>
                 </tbody>
               </table>

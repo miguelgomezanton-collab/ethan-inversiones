@@ -206,7 +206,7 @@ export default async function handler(req, res) {
   // ── HIST_MACRO_V1_FRED ─────────────────────────────────────────
   // Macro Score Histórico — Proxy FRED (no es el Macro Score live canónico)
   // ScoreNorm = scoreRaw / maxScoreDisponible → [-1,+1]
-  // Coverage  = maxScoreDisponible / 15      → [0,1]
+  // Coverage  = maxScoreDisponible / 14      → [0,1]  (BBB excluido del denominador)
   // Coverage < 0.60 → valid = false
   const VERSION = 'HIST_MACRO_V1_FRED';
   const MAX_POSSIBLE = 14; // 1+1+1+3+3+2+2+1 (BBB excluido del score — doble conteo con Liquidez)
@@ -333,8 +333,8 @@ export default async function handler(req, res) {
       // BBB ya contribuye en 1.2 Liquidez — doble conteo si se incluye aquí
       const bbbV = bbbMap.get(ym);
       comps.bbb = bbbV != null
-        ? { value: bbbV, score: 0, maxScore: 0, valid: true, source: 'BAMLC0A4CBBB', note: 'almacenado para analogías, excluido del score (→ Liquidez)' }
-        : { value: null, score: null, maxScore: 0, valid: false, source: 'BAMLC0A4CBBB' };
+        ? { value: bbbV, score: 0, maxScore: 0, maxAnalogias: 1, valid: true, source: 'BAMLC0A4CBBB', note: 'Max Macro: 0 | Analogías: ±1' }
+        : { value: null, score: null, maxScore: 0, maxAnalogias: 1, valid: false, source: 'BAMLC0A4CBBB' };
 
       // Agregación — BBB con maxScore=0 no suma al denominador
       const valid = Object.values(comps).filter(c => c.valid && c.maxScore > 0);
@@ -371,6 +371,22 @@ export default async function handler(req, res) {
   }
 
   const histMacroV1 = buildHistMacroV1();
+
+  // ── Test global de invariantes (sobre TODOS los meses) ─────────
+  const globalViolations = [];
+  let nScoreNormOOB = 0, nAbsViolation = 0, nCoverageOOB = 0;
+  histMacroV1.forEach(m => {
+    if (m.violations?.length) {
+      nAbsViolation += m.violations.length;
+      globalViolations.push({ month: m.month, v: m.violations });
+    }
+    if (m.scoreNorm != null && (m.scoreNorm < -1.001 || m.scoreNorm > 1.001)) nScoreNormOOB++;
+    if (m.coverage > 1.001) nCoverageOOB++;
+  });
+  const invariantsPass = nAbsViolation === 0 && nScoreNormOOB === 0 && nCoverageOOB === 0;
+  const invariantStatus = invariantsPass
+    ? `✓ PASS — todos los invariantes OK sobre ${histMacroV1.length} meses`
+    : `✗ FAIL — ${nAbsViolation} violaciones |score|>max, ${nScoreNormOOB} scoreNorm OOB, ${nCoverageOOB} coverage OOB`;
 
   // Score histórico simplificado para el gráfico (solo válidos)
   const scoreHistory = histMacroV1
@@ -425,8 +441,10 @@ export default async function handler(req, res) {
         lastScore:     [...histMacroV1].reverse().find(m => m.valid)?.month,
         nTotal:        histMacroV1.length,
         nValid:        histMacroV1.filter(m => m.valid).length,
-        nViolations:   histMacroV1.filter(m => m.violations?.length).length,
-        sampleViolation: histMacroV1.find(m => m.violations?.length),
+        nViolations:   nAbsViolation,
+        invariantsPass,
+        invariantStatus,
+        firstViolation: globalViolations[0] || null,
         version:       VERSION,
         maxPossible:   MAX_POSSIBLE,
         // Meses de auditoría — para validación cruzada
