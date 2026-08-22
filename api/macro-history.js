@@ -458,7 +458,7 @@ export default async function handler(req, res) {
   }
 
   // Para el mes actual (producción) usamos todos los datos disponibles
-  const latestMonth = latestValid?.month || '2099-01';
+  // latestMonth se declara después de latestValid más abajo
 
   function cosineSim(va, vb) {
     const keys = Object.keys(va).filter(k => vb[k] != null);
@@ -471,7 +471,8 @@ export default async function handler(req, res) {
   }
 
   // Vector del mes más reciente válido (para búsqueda de analogías desde el presente)
-  const latestValid = [...histMacroV1].reverse().find(m => m.valid);
+  const latestValid  = [...histMacroV1].reverse().find(m => m.valid);
+  const latestMonth  = latestValid?.month || '2099-01';
   const latestVector = latestValid ? getVector(latestValid, latestMonth) : null;
 
   // Meses históricos elegibles: válidos, al menos 12 meses antes del último
