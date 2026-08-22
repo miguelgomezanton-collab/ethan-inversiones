@@ -375,7 +375,7 @@ async function fetchFearGreed() {
           previousClose: d.previousClose?.score != null ? Math.round(d.previousClose.score) : null,
           previousWeek:  d.previousWeek?.score  != null ? Math.round(d.previousWeek.score)  : null,
           previousMonth: d.previousMonth?.score != null ? Math.round(d.previousMonth.score) : null,
-          source: 'CNN' };
+          date: new Date().toISOString().slice(0,10), source: 'CNN' };
       }
       const fg = d?.fear_and_greed;
       if (fg?.score != null) {
@@ -383,7 +383,7 @@ async function fetchFearGreed() {
           previousClose: fg.previous_close  != null ? Math.round(fg.previous_close)  : null,
           previousWeek:  fg.previous_1_week  != null ? Math.round(fg.previous_1_week)  : null,
           previousMonth: fg.previous_1_month != null ? Math.round(fg.previous_1_month) : null,
-          source: 'CNN' };
+          date: new Date().toISOString().slice(0,10), source: 'CNN' };
       }
     } catch {}
   }
@@ -415,7 +415,7 @@ async function fetchFearGreed() {
           if (value >= 0 && value <= 100) {
             const label = value >= 75 ? 'Extreme Greed' : value >= 55 ? 'Greed' :
                           value >= 45 ? 'Neutral' : value >= 25 ? 'Fear' : 'Extreme Fear';
-            return { value, label, source: 'MacroMicro/CNN' };
+            return { value, label, date: new Date().toISOString().slice(0,10), source: 'MacroMicro/CNN' };
           }
         }
       }
@@ -452,7 +452,7 @@ async function fetchFearGreed() {
         const label = score >= 75 ? 'Extreme Greed' : score >= 55 ? 'Greed' :
                       score >= 45 ? 'Neutral' : score >= 25 ? 'Fear' : 'Extreme Fear';
         return { value: score, label, previousClose: calcScore(prevVix),
-          vix: vix.toFixed(1), source: 'VIX sintético' };
+          vix: vix.toFixed(1), date: new Date().toISOString().slice(0,10), source: 'VIX sintético' };
       } catch {}
     }
   } catch {}
