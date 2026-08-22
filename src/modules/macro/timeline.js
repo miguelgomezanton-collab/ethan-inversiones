@@ -112,6 +112,7 @@ export async function render(container, { actionsSlot }) {
       return span > 0 ? PX + (d - minDate) / span * (W - 2*PX) : PX;
     }
 
+    // makeY genérico
     function makeY(vals, top) {
       const v = vals.filter(x => x != null && isFinite(x));
       if (!v.length) return { fn: () => top + P_H/2, min: 0, max: 0 };
@@ -119,13 +120,30 @@ export async function render(container, { actionsSlot }) {
       const pad = (mx - mn) * 0.12 || 0.5;
       return { fn: val => top + PY + (1 - (val-(mn-pad))/((mx+pad)-(mn-pad))) * (P_H - 2*PY), min: mn-pad, max: mx+pad };
     }
+    // makeY para SP500 % — fuerza 0 en rango, ticks en múltiplos de 50%
+    function makeYpct(vals, top) {
+      const v = vals.filter(x => x != null && isFinite(x));
+      if (!v.length) return { fn: () => top + P_H/2, min: 0, max: 0, ticks: [] };
+      const mn = Math.min(0, ...v);  // siempre incluir 0
+      const mx = Math.max(0, ...v);
+      const pad = (mx - mn) * 0.08 || 5;
+      const rangeMin = mn - pad, rangeMax = mx + pad;
+      const fn = val => top + PY + (1 - (val - rangeMin) / (rangeMax - rangeMin)) * (P_H - 2*PY);
+      // Ticks en múltiplos de 50% que caigan en el rango
+      const tickStep = mx > 200 ? 50 : mx > 100 ? 25 : 10;
+      const tPct = [];
+      for (let t = Math.ceil(rangeMin/tickStep)*tickStep; t <= rangeMax; t += tickStep) {
+        tPct.push(t);
+      }
+      return { fn, min: rangeMin, max: rangeMax, ticks: tPct };
+    }
 
     function pts(series, yFn) {
       return series.filter(p => p.value != null && isFinite(p.value))
         .map(p => `${toX(p.date).toFixed(1)},${yFn(p.value).toFixed(1)}`).join(' ');
     }
 
-    const yP1 = makeY(spPct.map(p => p.value), p1top);
+    const yP1 = makeYpct(spPct.map(p => p.value), p1top);
     const yP2 = makeY(varF.map(p => p.value), p2top);
     const yP3 = makeY(scF.map(p => p.value), p3top);
 
@@ -148,7 +166,7 @@ export async function render(container, { actionsSlot }) {
       });
     }
 
-    const lP1 = yAxisLabels(yP1, p1top);
+    const lP1 = (yP1.ticks || []).map(t => ({ y: yP1.fn(t), label: (t>=0?"+":"")+t+"%" }));
     const lP2 = yAxisLabels(yP2, p2top);
     const lP3 = yAxisLabels(yP3, p3top);
 
@@ -181,7 +199,8 @@ export async function render(container, { actionsSlot }) {
           <line x1="${PX}" y1="${p2top}" x2="${W-PX}" y2="${p2top}" stroke="var(--border)" stroke-width="0.5"/>
           <line x1="${PX}" y1="${p3top}" x2="${W-PX}" y2="${p3top}" stroke="var(--border)" stroke-width="0.5"/>
 
-          <!-- Cero P2 y P3 -->
+          <!-- Línea 0% P1, P2 y P3 -->
+          <line x1="${PX}" y1="${yP1.fn(0).toFixed(1)}" x2="${W-PX}" y2="${yP1.fn(0).toFixed(1)}" stroke="var(--green)" stroke-width="1" stroke-dasharray="4" opacity="0.5"/>
           ${yP2.fn(0) > p2top && yP2.fn(0) < p2top+P_H ? `<line x1="${PX}" y1="${yP2.fn(0).toFixed(1)}" x2="${W-PX}" y2="${yP2.fn(0).toFixed(1)}" stroke="var(--border2)" stroke-width="0.8" stroke-dasharray="4"/>` : ''}
           <line x1="${PX}" y1="${yP3.fn(0).toFixed(1)}" x2="${W-PX}" y2="${yP3.fn(0).toFixed(1)}" stroke="var(--border2)" stroke-width="0.8" stroke-dasharray="4"/>
 
@@ -209,6 +228,17 @@ export async function render(container, { actionsSlot }) {
             return `<circle cx="${cx}" cy="${cy}" r="4" fill="${mainCol}"/>
                     <text x="${(+cx+6).toFixed(1)}" y="${(+cy+4).toFixed(1)}" font-family="IBM Plex Mono" font-size="9" fill="${mainCol}">${s>=0?'+':''}${s}</text>`;
           })() : ''}
+          <!-- Overlay tooltip -->
+          <rect id="tl-overlay" x="${PX}" y="${p1top}" width="${W-2*PX}" height="${p3top+P_H-p1top}" fill="transparent" style="cursor:crosshair;"/>
+          <line id="tl-cursor" x1="${PX}" y1="${p1top}" x2="${PX}" y2="${p3top+P_H}" stroke="var(--text3)" stroke-width="0.8" stroke-dasharray="3" opacity="0" pointer-events="none"/>
+          <g id="tl-tooltip" opacity="0" pointer-events="none">
+            <rect id="tl-tt-bg" x="0" y="0" width="220" height="72" rx="5" fill="var(--surface)" stroke="var(--border)" stroke-width="1"/>
+            <text id="tl-tt-date" x="8" y="15" font-family="IBM Plex Mono" font-size="9" fill="var(--teal)">—</text>
+            <text id="tl-tt-sp"   x="8" y="28" font-family="IBM Plex Mono" font-size="9" fill="var(--green)">S&amp;P 500: —</text>
+            <text id="tl-tt-var"  x="8" y="41" font-family="IBM Plex Mono" font-size="9" fill="var(--blue)">—: —</text>
+            <text id="tl-tt-sc"   x="8" y="54" font-family="IBM Plex Mono" font-size="9" fill="var(--teal)">Score: —</text>
+            <text id="tl-tt-note" x="8" y="67" font-family="IBM Plex Mono" font-size="8" fill="var(--text3)">PROVISIONAL</text>
+          </g>
         </svg>
 
         <!-- Debug/auditoría -->
@@ -246,6 +276,59 @@ export async function render(container, { actionsSlot }) {
         Score parcial: Curva USD + Tipo Real [${SCORE_N}/${TOTAL_N}] · PARCIAL/PROVISIONAL
       </div>
     `;
+
+    // Tooltip interactivo
+    const svgEl     = el.querySelector('svg');
+    const overlay   = el.querySelector('#tl-overlay');
+    const cursor    = el.querySelector('#tl-cursor');
+    const tooltip   = el.querySelector('#tl-tooltip');
+    const ttBg      = el.querySelector('#tl-tt-bg');
+    const ttDate    = el.querySelector('#tl-tt-date');
+    const ttSp      = el.querySelector('#tl-tt-sp');
+    const ttVar     = el.querySelector('#tl-tt-var');
+    const ttSc      = el.querySelector('#tl-tt-sc');
+
+    // Índices por mes
+    const spMap  = new Map(spPct.map(p => [toYM(p.date), p.value]));
+    const varMap = new Map(varF.map(p => [toYM(p.date), p.value]));
+    const scMap  = new Map(scF.map(p => [toYM(p.date), p.value]));
+
+    if (overlay && svgEl) {
+      overlay.addEventListener('mousemove', e => {
+        const rect  = svgEl.getBoundingClientRect();
+        const svgW  = W, svgH = TOTAL_H;
+        const scaleX = svgW / rect.width;
+        const mouseX = (e.clientX - rect.left) * scaleX;
+
+        // Mes más cercano
+        const frac   = (mouseX - PX) / (W - 2*PX);
+        const ts     = minDate.getTime() + frac * (maxDate.getTime() - minDate.getTime());
+        const hoverD = new Date(ts);
+        const hYM    = `${hoverD.getFullYear()}-${String(hoverD.getMonth()+1).padStart(2,'0')}`;
+
+        const spV  = spMap.get(hYM);
+        const varV = varMap.get(hYM);
+        const scV  = scMap.get(hYM);
+
+        cursor.setAttribute('x1', mouseX); cursor.setAttribute('x2', mouseX);
+        cursor.setAttribute('opacity', '1');
+
+        ttDate.textContent = hYM;
+        ttSp.textContent   = spV  != null ? `S&P 500: ${spV >= 0 ? '+' : ''}${spV.toFixed(1)}%` : 'S&P 500: —';
+        ttVar.textContent  = varV != null ? `${mv.label||currentVar}: ${varV.toFixed(2)}${mv.unit||'%'}` : `${mv.label||currentVar}: —`;
+        ttSc.textContent   = scV  != null ? `Score parcial: ${scV >= 0 ? '+' : ''}${scV}` : 'Score: —';
+
+        // Posición tooltip — derecha o izquierda según posición
+        const ttX = mouseX + 10 < W - 230 ? mouseX + 10 : mouseX - 230;
+        const ttY = p1top + 5;
+        tooltip.setAttribute('transform', `translate(${ttX},${ttY})`);
+        tooltip.setAttribute('opacity', '1');
+      });
+      overlay.addEventListener('mouseleave', () => {
+        cursor.setAttribute('opacity', '0');
+        tooltip.setAttribute('opacity', '0');
+      });
+    }
   }
 
   // Event listeners
