@@ -41,10 +41,10 @@ export async function render(container, { actionsSlot }) {
     const toYM = d => String(d || '').slice(0, 7);
 
     // Período común efectivo entre las tres series
-    const scoreDates = new Set(scoreHist.map(p => toYM(p.date)));
-    const spDates    = new Set(spNorm.map(p => toYM(p.date)));
-    const cpiDates   = new Set(cpiYoY.map(p => toYM(p.date)));
-    const commonDates = [...scoreDates].filter(d => spDates.has(d) && cpiDates.has(d)).sort();
+    // Período común SP500 + CPI (el score se superpone donde esté disponible)
+    const spDates   = new Set(spNorm.map(p => toYM(p.date)));
+    const cpiDates  = new Set(cpiYoY.map(p => toYM(p.date)));
+    const commonDates = [...spDates].filter(d => cpiDates.has(d)).sort();
 
     if (commonDates.length === 0) {
       el.innerHTML = `<div class="empty"><div class="empty-icon">⚠</div><div class="empty-title">Sin período común entre las series</div></div>`;
