@@ -47,10 +47,13 @@ export async function render(container, { actionsSlot }) {
     const commonDates = [...spDates].filter(d => cpiDates.has(d)).sort();
 
     if (commonDates.length === 0) {
+      const spSample  = [...spDates].sort().slice(-3).join(', ');
+      const cpiSample = [...cpiDates].sort().slice(-3).join(', ');
       el.innerHTML = `<div class="empty"><div class="empty-icon">⚠</div><div class="empty-title">Sin período común</div>
         <div class="empty-desc" style="font-family:var(--mono);font-size:10px;text-align:left;max-width:600px;margin:0 auto;">
           spNorm: ${spNorm.length} obs · cpiYoY: ${cpiYoY.length} obs · scoreHist: ${scoreHist.length} obs<br>
-          spNorm[0]: ${spNorm[0]?.date||'—'} · cpiYoY[0]: ${cpiYoY[0]?.date||'—'}<br>
+          spNorm últimas 3 fechas: ${spSample}<br>
+          cpiYoY últimas 3 fechas: ${cpiSample}<br>
           errors: ${JSON.stringify(hist.errors||[])}
         </div></div>`;
       return;
