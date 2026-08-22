@@ -220,13 +220,15 @@ export async function render(container, { actionsSlot }) {
           ${pts(varF, yP2.fn) ? `<polyline points="${pts(varF, yP2.fn)}" fill="none" stroke="var(--blue)"  stroke-width="1.5" stroke-linejoin="round" opacity="0.85"/>` : ''}
           ${pts(scF, yP3.fn)  ? `<polyline points="${pts(scF, yP3.fn)}"  fill="none" stroke="var(--teal)"  stroke-width="2"   stroke-linejoin="round"/>` : ''}
 
-          <!-- Punto actual score -->
+          <!-- Punto actual score — muestra ScoreNorm, no raw -->
           ${scF.length ? (() => {
             const last = scF[scF.length-1];
             const cx = toX(last.date).toFixed(1);
             const cy = yP3.fn(last.value).toFixed(1);
-            return `<circle cx="${cx}" cy="${cy}" r="4" fill="${mainCol}"/>
-                    <text x="${(+cx+6).toFixed(1)}" y="${(+cy+4).toFixed(1)}" font-family="IBM Plex Mono" font-size="9" fill="${mainCol}">${s>=0?'+':''}${s}</text>`;
+            const snLabel = last.value != null ? (last.value >= 0 ? '+' : '') + last.value.toFixed(2) : '—';
+            const snCol = last.value > 0.2 ? 'var(--green)' : last.value < -0.2 ? 'var(--red)' : 'var(--amber)';
+            return `<circle cx="${cx}" cy="${cy}" r="4" fill="${snCol}"/>
+                    <text x="${(+cx+6).toFixed(1)}" y="${(+cy+4).toFixed(1)}" font-family="IBM Plex Mono" font-size="9" fill="${snCol}">${snLabel}</text>`;
           })() : ''}
           <!-- Overlay tooltip -->
           <rect id="tl-overlay" x="${PX}" y="${p1top}" width="${W-2*PX}" height="${p3top+P_H-p1top}" fill="transparent" style="cursor:crosshair;"/>
@@ -273,7 +275,7 @@ export async function render(container, { actionsSlot }) {
 
       <div class="co-footer" style="margin-top:14px;">
         Fuentes: FRED SP500 (mensual) · FRED DGS10/DFF/CPIAUCSL/CPILFESL ·
-        HIST_MACRO_V1_FRED · 9 indicadores FRED · ScoreNorm=scoreRaw/maxAvailable · PROVISIONAL
+        HIST_MACRO_V1_FRED · ${debug.version||"HIST_MACRO_V1_FRED"} · ${debug.nScore||scF.length} meses válidos (coverage≥60%) · ${debug.firstScore?.slice(0,7)||"—"} → ${debug.lastScore?.slice(0,7)||"—"} · PROVISIONAL
       </div>
     `;
 
@@ -291,7 +293,7 @@ export async function render(container, { actionsSlot }) {
     // Índices por mes
     const spMap  = new Map(spPct.map(p => [toYM(p.date), p.value]));
     const varMap = new Map(varF.map(p => [toYM(p.date), p.value]));
-    const scMap  = new Map(scF.map(p => [toYM(p.date), p.value]));
+    const scMap  = new Map(scF.map(p => [toYM(p.date), p])); // objeto completo para tooltip
 
     if (overlay && svgEl) {
       overlay.addEventListener('mousemove', e => {
@@ -316,7 +318,14 @@ export async function render(container, { actionsSlot }) {
         ttDate.textContent = hYM;
         ttSp.textContent   = spV  != null ? `S&P 500: ${spV >= 0 ? '+' : ''}${spV.toFixed(1)}%` : 'S&P 500: —';
         ttVar.textContent  = varV != null ? `${mv.label||currentVar}: ${varV.toFixed(2)}${mv.unit||'%'}` : `${mv.label||currentVar}: —`;
-        ttSc.textContent   = scV  != null ? `Score parcial: ${scV >= 0 ? '+' : ''}${scV}` : 'Score: —';
+        if (scV != null) {
+          const snLabel  = (scV.value != null ? (scV.value>=0?'+':'')+scV.value.toFixed(2) : '—');
+          const rawLabel = (scV.scoreRaw != null ? (scV.scoreRaw>=0?'+':'')+scV.scoreRaw : '—');
+          const covLabel = scV.coverage != null ? Math.round(scV.coverage*100)+'%' : '—';
+          ttSc.textContent = `ScoreNorm ${snLabel} · Raw ${rawLabel} · Cov ${covLabel}`;
+        } else {
+          ttSc.textContent = 'Score: — (N/A o sin datos)';
+        }
 
         // Posición tooltip — derecha o izquierda según posición
         const ttX = mouseX + 10 < W - 230 ? mouseX + 10 : mouseX - 230;
