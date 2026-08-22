@@ -1096,27 +1096,29 @@ export default async function handler(req, res) {
   if (rBreakeven5y.status !== 'fulfilled') errs.push('T5YIE: ' + rBreakeven5y.reason?.message);
 
   // Sentiment Score — Risk-On/Risk-Off con cobertura
-  const sentComponents = [];
-  if (ind.fearGreed?.freshness !== 'stale' && ind.fearGreed?.value != null)
-    sentComponents.push({ key: 'fg',  score: scFG_sent(ind.fearGreed.value),  weight: 1 });
-  if (seg.vix?.valid && seg.vix?.aboveSMA200 != null)
-    sentComponents.push({ key: 'vix', score: scVIX_sent(seg.vix.aboveSMA200), weight: 1 });
-  if (seg.hySpread?.freshness !== 'stale' && seg.hySpread?.value != null)
-    sentComponents.push({ key: 'hy',  score: scHY_sent(seg.hySpread.value),   weight: 1 });
-  const sentRaw      = sentComponents.reduce((s, c) => s + c.score, 0);
-  const sentAvail    = sentComponents.length;
-  const sentCoverage = +(sentAvail / 3).toFixed(2);
-  const sentRegime   = sentAvail < 2 ? 'INSUFFICIENT DATA'
-    : sentRaw >= 2 ? 'Risk-On'
-    : sentRaw >= 0 ? 'Neutral'
-    : 'Risk-Off';
-  const sentContrarian = ind.fearGreed?.value != null
-    ? (ind.fearGreed.value <= 25 ? 'OPORTUNIDAD CONTRARIAN'
-      : ind.fearGreed.value >= 75 ? 'PRECAUCIÓN CONTRARIAN'
-      : 'NEUTRAL')
-    : null;
-  const sentimentScore = { raw: sentRaw, available: sentAvail, coverage: sentCoverage,
-    regime: sentRegime, contrarian: sentContrarian, components: sentComponents, provisional: true };
+  let sentimentScore = { raw: 0, available: 0, coverage: 0, regime: 'INSUFFICIENT DATA', contrarian: null, components: [], provisional: true };
+  try {
+    const sentComponents = [];
+    if (ind.fearGreed?.freshness !== 'stale' && ind.fearGreed?.value != null)
+      sentComponents.push({ key: 'fg',  score: scFG_sent(ind.fearGreed.value),  weight: 1 });
+    if (seguimiento.vix?.valid && seguimiento.vix?.aboveSMA200 != null)
+      sentComponents.push({ key: 'vix', score: scVIX_sent(seguimiento.vix.aboveSMA200), weight: 1 });
+    if (seguimiento.hySpread?.freshness !== 'stale' && seguimiento.hySpread?.value != null)
+      sentComponents.push({ key: 'hy',  score: scHY_sent(seguimiento.hySpread.value),   weight: 1 });
+    const sentRaw      = sentComponents.reduce((s, c) => s + c.score, 0);
+    const sentAvail    = sentComponents.length;
+    const sentCoverage = +(sentAvail / 3).toFixed(2);
+    const sentRegime   = sentAvail < 2 ? 'INSUFFICIENT DATA'
+      : sentRaw >= 2 ? 'Risk-On' : sentRaw >= 0 ? 'Neutral' : 'Risk-Off';
+    const sentContrarian = ind.fearGreed?.value != null
+      ? (ind.fearGreed.value <= 25 ? 'OPORTUNIDAD CONTRARIAN'
+        : ind.fearGreed.value >= 75 ? 'PRECAUCIÓN CONTRARIAN' : 'NEUTRAL')
+      : null;
+    sentimentScore = { raw: sentRaw, available: sentAvail, coverage: sentCoverage,
+      regime: sentRegime, contrarian: sentContrarian, components: sentComponents, provisional: true };
+  } catch(e) {
+    errs.push('SentimentScore error: ' + e.message);
+  }
 
   return res.status(200).json({
     updatedAt: new Date().toISOString(),
