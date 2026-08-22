@@ -464,51 +464,66 @@ export default async function handler(req, res) {
     ? (() => { const d = new Date(latestValid.month+'-01'); d.setMonth(d.getMonth()-EXCLUDE_LAST); return d.toISOString().slice(0,7); })()
     : '2099-01';
 
-  // findAnalogies v2: deduplicación ±6M + walk-forward opcional
-  function findAnalogies(queryVector, queryMonth, topN = 10, opts = {}) {
-    const { walkForward = false, dedupMonths = 6 } = opts;
+  // findAnalogies v2.2 — HARDENED
+  // Requisitos candidato: ≥6/9 dims, similarity ≥60%, todos los forward metrics disponibles
+  // Producción: excluir últimos 12M, deduplicación ±6M
+  // Walk-forward: candidateDate <= referenceDate - 12M, deduplicación ±6M
+  // Top 10 máximo — NO rellenar si no alcanzan el umbral
+  const SIM_MIN   = 0.60;
+  const DEDUP_M   = 6;
 
-    // Candidatos: excluir los últimos EXCLUDE_LAST meses (para query=actual)
-    // En modo walk-forward: solo meses ANTERIORES al queryMonth
-    const maxMonth = walkForward && queryMonth ? queryMonth : cutoffYM;
-    // Excluir también el propio queryMonth (leakage)
-    const candidates = histMacroV1.filter(m =>
-      m.valid && m.month < maxMonth
-    );
+  function addMonths(ym, n) {
+    const d = new Date(ym + '-01');
+    d.setMonth(d.getMonth() + n);
+    return d.toISOString().slice(0, 7);
+  }
+
+  function findAnalogies(queryVector, queryMonth, topN = 10, opts = {}) {
+    const { walkForward = false } = opts;
+
+    // Límite temporal de candidatos
+    const maxMonth = walkForward && queryMonth
+      ? addMonths(queryMonth, -12)   // walk-forward: ≤ referenceDate - 12M
+      : addMonths(latestValid?.month || queryMonth, -EXCLUDE_LAST); // producción: excluir últimos 12M
+
+    const candidates = histMacroV1.filter(m => m.valid && m.month <= maxMonth);
 
     const scored = candidates.map(m => {
       const mv  = getVector(m);
       const res = cosineSim(queryVector, mv);
       if (!res) return null;
+      if (res.sim < SIM_MIN) return null;   // HARD: similarity ≥ 60%
+      if (res.dims < MIN_DIMS) return null; // HARD: ≥ 6/9 dims (ya en cosineSim, doble check)
+
       const r3  = spReturn(m.month, 3);
       const r6  = spReturn(m.month, 6);
       const r12 = spReturn(m.month, 12);
       const dd  = maxDrawdown(m.month, 12);
+
+      // HARD: todos los forward metrics disponibles
+      if (r3 == null || r6 == null || r12 == null || dd == null) return null;
+
       return {
         month: m.month, similarity: res.sim, dimsUsed: res.dims,
         coverage: m.coverage, scoreNorm: m.scoreNorm, scoreRaw: m.scoreRaw,
-        sp3m: r3, sp6m: r6, sp12m: r12, maxDD12m: dd, components: m.components,
+        sp3m: r3, sp6m: r6, sp12m: r12, maxDD12m: dd,
       };
     }).filter(Boolean);
 
     scored.sort((a, b) => b.similarity - a.similarity);
 
-    // Deduplicación temporal ±dedupMonths: selección greedy de episodios independientes
+    // Deduplicación ±DEDUP_M: greedy, episodios independientes
     const selected = [];
     const excluded = new Set();
     for (const c of scored) {
       if (selected.length >= topN) break;
       if (excluded.has(c.month)) continue;
       selected.push(c);
-      // Excluir todos los meses en ±dedupMonths alrededor del seleccionado
-      const base = new Date(c.month + '-01');
-      for (let d = -dedupMonths; d <= dedupMonths; d++) {
-        const t = new Date(base);
-        t.setMonth(t.getMonth() + d);
-        excluded.add(t.toISOString().slice(0, 7));
+      for (let d = -DEDUP_M; d <= DEDUP_M; d++) {
+        excluded.add(addMonths(c.month, d));
       }
     }
-    return selected;
+    return selected;  // máximo topN, puede ser menos si no hay suficientes elegibles
   }
 
   // Calcular analogías para el mes actual y para los 3 meses de prueba
