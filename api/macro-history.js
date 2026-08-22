@@ -98,21 +98,21 @@ export default async function handler(req, res) {
   const [rSp, rNq, rRu, rAu, rBond, rDxy,
          rDgs10, rDgs2, rDff, rCpi, rBbb, rM2v, rWresbal, rTotll, rGdp] =
     await Promise.allSettled([
-      fred('SP500',     key, 120, 'asc', 'm'),  // S&P 500 mensual — FRED (diaria→mensual via freq=m)
+      fred('SP500',     key, 120, 'asc', 'm'),  // S&P 500 mensual — FRED
       fred('SP500',     key, 120, 'asc', 'm'),  // placeholder Nasdaq
       fred('SP500',     key, 120, 'asc', 'm'),  // placeholder Russell
       fred('GOLDAMGBD228NLBM', key, 120, 'asc', 'm'), // Oro mensual
       fred('DGS10',     key, 120, 'asc', 'm'),  // Proxy bonos
       fred('DTWEXBGS',  key, 120, 'asc', 'm'),  // Dólar broad index mensual
-      fred('DGS10',      key, 108),
-      fred('DGS2',       key, 108),
-      fred('DFF',        key, 108),
-      fred('CPIAUCSL',   key, 120),
-      fred('BAMLC0A4CBBB', key, 108),
-      fred('M2V',        key, 36),
-      fred('WRESBAL',    key, 108),
-      fred('TOTLL',      key, 108),
-      fred('GDP',        key, 36),
+      fred('DGS10',      key, 108, 'desc'),
+      fred('DGS2',       key, 108, 'desc'),
+      fred('DFF',        key, 108, 'desc'),
+      fred('CPIAUCSL',   key, 132, 'desc'),  // desc → datos recientes, luego invertir para YoY
+      fred('BAMLC0A4CBBB', key, 108, 'desc'),
+      fred('M2V',        key, 36,  'desc'),
+      fred('WRESBAL',    key, 108, 'desc'),
+      fred('TOTLL',      key, 108, 'desc'),
+      fred('GDP',        key, 36,  'desc'),
     ]);
 
   // ── Procesar series ───────────────────────────
@@ -136,8 +136,9 @@ export default async function handler(req, res) {
   if (!sp)    errs.push('Yahoo SP500: ' + rSp.reason?.message);
   if (!dgs10) errs.push('DGS10: '      + rDgs10.reason?.message);
 
-  // ── Series derivadas ─────────────────────────
-  const cpiYoY   = yoySeries(cpi);
+  // Series derivadas — CPI viene desc, invertir para YoY
+  const cpiAsc  = cpi ? [...cpi].reverse() : null;
+  const cpiYoY  = yoySeries(cpiAsc);
   const m2YoY    = yoySeries(m2v);
   const totllYoY = yoySeries(totll);
   const gdpYoY   = yoySeries(gdp);
