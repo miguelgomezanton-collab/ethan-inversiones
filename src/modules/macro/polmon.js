@@ -18,17 +18,28 @@ export async function render(container, { actionsSlot }) {
     const tr  = co.tipoReal;
     const ffr = seg.ffr;
 
-    // Dirección reciente FFR (últimas 3 obs desde seg.ffrHistory si existe)
+    // Dirección reciente FFR — buscar por fecha real (t−91 días), no por posición
+    // DFF es diario: ffrHistory viene desc, necesitamos obs más cercana a hace ~3 meses
     const ffrHistory = seg.ffrHistory || [];
-    const ffr3m = ffrHistory.length >= 2 ? ffrHistory[ffrHistory.length - 1] : null;
-    const ffrDelta3m = ffr && ffr3m ? +(ffr.value - ffr3m.value).toFixed(2) : null;
-    const ffrDir = ffrDelta3m == null ? '—'
-      : ffrDelta3m > 0.25 ? '↑ Subiendo'
-      : ffrDelta3m < -0.25 ? '↓ Bajando'
+    const currentFfrDate = ffr?.date ? new Date(ffr.date).getTime() : null;
+    const target3mMs = currentFfrDate ? currentFfrDate - 91 * 24 * 60 * 60 * 1000 : null;
+    const ffr3m = target3mMs ? ffrHistory.reduce((best, o) => {
+      const diff = Math.abs(new Date(o.date).getTime() - target3mMs);
+      return (!best || diff < Math.abs(new Date(best.date).getTime() - target3mMs)) ? o : best;
+    }, null) : null;
+    const ffr3mGapDays = ffr3m ? Math.round(Math.abs(new Date(ffr3m.date).getTime() - target3mMs) / 86400000) : null;
+    const ffr3mValid = ffr3mGapDays != null && ffr3mGapDays <= 7;
+    // Delta en puntos básicos (pb = pp × 100)
+    const ffrDeltaPb = (ffr && ffr3m && ffr3mValid)
+      ? Math.round((ffr.value - ffr3m.value) * 100)
+      : null;
+    const ffrDir = ffrDeltaPb == null ? '—'
+      : ffrDeltaPb > 25  ? '↑ Endureciendo'
+      : ffrDeltaPb < -25 ? '↓ Relajando'
       : '→ Estable';
-    const ffrDirCol = ffrDelta3m == null ? 'var(--text3)'
-      : ffrDelta3m > 0.25 ? 'var(--red)'
-      : ffrDelta3m < -0.25 ? 'var(--green)'
+    const ffrDirCol = ffrDeltaPb == null ? 'var(--text3)'
+      : ffrDeltaPb > 25  ? 'var(--red)'
+      : ffrDeltaPb < -25 ? 'var(--green)'
       : 'var(--amber)';
 
     // Stance — basado exclusivamente en tipo real (mismos umbrales que scTipoReal)
@@ -121,15 +132,16 @@ export async function render(container, { actionsSlot }) {
           <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:8px;">
             Dirección reciente · FFR 3M <span style="float:right;color:var(--amber)">FASE 1</span>
           </div>
-          <div style="font-family:var(--serif);font-size:28px;font-weight:600;font-style:italic;color:${ffrDirCol};">
-            ${ffrDelta3m != null ? (ffrDelta3m>=0?'+':'')+f2(ffrDelta3m)+'pp' : '—'}
+          <div style="font-family:var(--serif);font-size:36px;font-weight:600;font-style:italic;color:${ffrDirCol};">
+            ${ffrDeltaPb != null ? (ffrDeltaPb>=0?'+':'')+ffrDeltaPb+' pb' : '—'}
           </div>
           <div style="font-size:16px;color:${ffrDirCol};margin:6px 0;font-family:var(--mono);">${ffrDir}</div>
-          <div style="font-size:9px;color:var(--text3);font-family:var(--mono);line-height:1.7;">
-            FFR actual: ${ffr?.value!=null?f2(ffr.value)+'%':'—'}<br>
-            FFR hace ~3M: ${ffr3m?.value!=null?f2(ffr3m.value)+'%':'—'} (${ffr3m?.date||'—'})<br>
-            <span style="color:var(--amber)">⚠ Proxy: mide lo que hizo la Fed, no expectativas futuras.</span><br>
-            Fase 2 → Fed Funds Futures (CME)
+          <div style="font-size:9px;color:var(--text3);font-family:var(--mono);background:rgba(64,217,192,0.04);border:1px solid rgba(64,217,192,0.15);border-radius:6px;padding:8px 10px;margin-top:6px;line-height:1.8;">
+            🔍 DEBUG Dirección FFR<br>
+            Actual: ${ffr?.date||'—'} | ${ffr?.value!=null?f2(ffr.value)+'%':'—'}<br>
+            Ref. ~3M: ${ffr3m?.date||'—'} | ${ffr3m?.value!=null?f2(ffr3m.value)+'%':'—'}${!ffr3mValid&&ffr3m?' ⚠ gap '+ffr3mGapDays+'d >7d':ffr3m?' ✓':''}}<br>
+            Δ3M: ${ffrDeltaPb!=null?(ffrDeltaPb>=0?'+':'')+ffrDeltaPb+' pb':'—'} · gap al objetivo: ${ffr3mGapDays!=null?ffr3mGapDays+'d':'—'} · ${ffr3mValid?'✓ OK (≤7d)':'⚠ fuera tolerancia ±7d'}<br>
+            <span style="color:var(--amber)">⚠ Proxy acciones pasadas Fed — no forward-looking. Fase 2 → CME Futures.</span>
           </div>
         </div>
       </div>
@@ -144,7 +156,7 @@ export async function render(container, { actionsSlot }) {
         </div>
       </div>
 
-      <div class="co-footer">Fuentes: FRED DFF · FRED CPIAUCSL · Fear &amp; Greed → reclasificado a 1.5 Sentimiento (pendiente) · Reservas/BBB → 1.2 Liquidez</div>
+      <div class="co-footer">Fuentes: FRED DFF · FRED CPIAUCSL · Reservas/BBB → 1.2 Liquidez</div>
     `;
   }
 

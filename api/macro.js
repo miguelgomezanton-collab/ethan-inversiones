@@ -597,7 +597,7 @@ export default async function handler(req, res) {
   ] = await Promise.allSettled([
     fred('DGS10',        key, 5),
     fred('DGS2',         key, 5),
-    fred('DFF',          key, 5),
+    fred('DFF',          key, 100),   // diario — necesita ~91 obs para 3M de dirección
     fred('BAMLC0A4CBBB', key, 5),
     fred('CPIAUCSL',     key, 16),
     fred('CPILFESL',     key, 16),
