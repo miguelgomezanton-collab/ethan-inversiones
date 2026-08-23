@@ -774,12 +774,17 @@ export default async function handler(req, res) {
       return { ...bucket, nMonths: months.length, byHorizon };
     });
 
-    // Análisis por quintiles — N equilibrado (~78 obs por grupo)
-    const validMonths = histMacroV1.filter(m => m.valid && m.scoreNorm != null)
-      .sort((a,b) => a.scoreNorm - b.scoreNorm);
-    const Q = Math.ceil(validMonths.length / 5);
-    quintiles = [0,1,2,3,4].map(i => {
-      const slice = validMonths.slice(i*Q, (i+1)*Q);
+    // Quintiles equilibrados: rank secuencial (ScoreNorm ASC, month ASC)
+    // Rompe empates por mes — N≈igual aunque ScoreNorm sea discreto
+    const validMonths = histMacroV1
+      .filter(m => m.valid && m.scoreNorm != null)
+      .sort((a,b) => a.scoreNorm - b.scoreNorm || a.month.localeCompare(b.month));
+    const totalN = validMonths.length;
+    validMonths.forEach((m, i) => { m._quintile = Math.min(5, Math.floor(i * 5 / totalN) + 1); });
+    const qGroups = [1,2,3,4,5].map(q => validMonths.filter(m => m._quintile === q));
+    const qNs = qGroups.map(g => g.length);
+    const qBalanced = Math.max(...qNs) - Math.min(...qNs) <= 1;
+    quintiles = qGroups.map((slice, qi) => {
       const byHorizon = {};
       for (const h of REGIME_HORIZONS) {
         const returns = slice.map(m => spReturn(m.month, h)).filter(v => v != null);
@@ -792,11 +797,11 @@ export default async function handler(req, res) {
           medianDD: med([...dds].sort((a,b)=>a-b)),
         };
       }
+      const scores = slice.map(m => m.scoreNorm);
       return {
-        quintile: i+1,
-        nMonths:  slice.length,
-        minScore: +slice[0]?.scoreNorm.toFixed(3),
-        maxScore: +slice[slice.length-1]?.scoreNorm.toFixed(3),
+        quintile: qi+1, nMonths: slice.length, balanced: qBalanced,
+        minScore: +Math.min(...scores).toFixed(3),
+        maxScore: +Math.max(...scores).toFixed(3),
         byHorizon,
       };
     });

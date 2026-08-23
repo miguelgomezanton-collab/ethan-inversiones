@@ -205,7 +205,8 @@ export async function render(container, { actionsSlot }) {
       <div class="mac-card" style="margin-bottom:14px;">
         <div style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:10px;">
           Quintiles ScoreNorm → S&amp;P 500 Forward Return
-          <span style="font-weight:400;margin-left:6px;">N equilibrado · ¿existe monotonicidad?</span>
+          <span style="font-weight:400;margin-left:6px;">N equilibrado por rank secuencial · ¿existe monotonicidad?</span>
+          ${hist.quintiles?.[0]?.balanced !== undefined ? '<span style="color:'+(hist.quintiles[0].balanced?'var(--green)':'var(--red)')+';">'+( hist.quintiles[0].balanced ? ' ✓ BALANCE OK' : ' ✗ QUINTILE_BALANCE_FAIL')+'</span>' : ''}
         </div>
         <table style="width:100%;border-collapse:collapse;font-size:10px;">
           <thead><tr style="background:var(--surface2);">
