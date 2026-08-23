@@ -551,11 +551,58 @@ export default async function handler(req, res) {
   // Pruebas de validación: walk-forward estricto (solo meses ANTERIORES al mes auditado)
   const analogyProbe = ['2022-10','2020-04','2018-12','2008-09'].map(ym => {
     const m = histMacroV1.find(h => h.month === ym);
-    if (!m?.valid) return { month: ym, error: 'no válido' };
-    // Point-in-time: normalizar el query con stats disponibles hasta el mes de referencia
+    if (!m?.valid) return { month: ym, error: 'no válido en histMacroV1' };
+
     const v = getVector(m, ym);
     const top = findAnalogies(v, ym, 10, { walkForward: true });
-    return { month: ym, analogies: top, queryVector: v };
+
+    // ── Diagnóstico de pipeline ──────────────────────────────────
+    const maxMonth = addMonths(ym, -12);
+    const diag = { month: ym };
+
+    const s0 = histMacroV1;
+    diag.universeTotal = s0.length;
+
+    const s1 = s0.filter(c => c.valid);
+    diag.afterValid = s1.length;
+
+    const s2 = s1.filter(c => c.month <= maxMonth);
+    diag.afterEmbargo = s2.length;
+
+    const s3 = s2.filter(c => c.coverage >= COVERAGE_MIN);
+    diag.afterCoverage = s3.length;
+
+    // Top candidatos ANTES de los filtros duros — para ver por qué se rechazan
+    const topRaw = s3.map(c => {
+      const cv  = getVector(c, c.month);
+      const res = cosineSim(v, cv);
+      if (!res) return null;
+      const r3  = spReturn(c.month, 3);
+      const r6  = spReturn(c.month, 6);
+      const r12 = spReturn(c.month, 12);
+      const dd  = maxDrawdown(c.month, 12);
+      // Determinar razón de rechazo
+      const reasons = [];
+      if (res.sim < SIM_MIN) reasons.push(`sim=${(res.sim*100).toFixed(1)}%<60%`);
+      if (res.dims < MIN_DIMS) reasons.push(`dims=${res.dims}<6`);
+      if (r3  == null) reasons.push('sp3m=null');
+      if (r6  == null) reasons.push('sp6m=null');
+      if (r12 == null) reasons.push('sp12m=null');
+      if (dd  == null) reasons.push('dd=null');
+      return {
+        month: c.month, sim: res.sim, dims: res.dims,
+        scoreNorm: c.scoreNorm, coverage: c.coverage,
+        sp3m: r3, sp6m: r6, sp12m: r12, maxDD12m: dd,
+        eligible: reasons.length === 0,
+        rejectionReasons: reasons,
+      };
+    }).filter(Boolean).sort((a,b) => b.sim - a.sim);
+
+    diag.afterSimCalc   = topRaw.length;
+    diag.eligibleCount  = topRaw.filter(c => c.eligible).length;
+    diag.top15Raw       = topRaw.slice(0, 15); // top 15 antes de filtros finales
+
+    return { month: ym, analogies: top, queryVector: v, diag };
   });
 
   // Resumen estadístico de analogías

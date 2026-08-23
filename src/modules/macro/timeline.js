@@ -85,27 +85,44 @@ export async function render(container, { actionsSlot }) {
 
       const probeBlocks = (an.probes || []).map(probe => {
         if (probe.error) return '<div style="font-size:10px;color:var(--text3);margin-bottom:8px;">' + probe.month + ': ' + probe.error + '</div>';
-        const rows = (probe.analogies || []).map(a =>
-          '<tr style="border-top:1px solid var(--border);">' +
-            '<td style="padding:2px 6px;color:var(--text1);">' + a.month + '</td>' +
-            '<td style="padding:2px 6px;text-align:right;color:' + sc(a.similarity) + ';">' + (a.similarity*100).toFixed(1) + '%</td>' +
-            '<td style="padding:2px 6px;text-align:right;color:var(--text3);">' + a.dimsUsed + '</td>' +
-            '<td style="padding:2px 6px;text-align:right;color:' + col(a.scoreNorm) + ';">' + f3(a.scoreNorm) + '</td>' +
-            '<td style="padding:2px 6px;text-align:right;color:' + col(a.sp3m) + ';">' + f1(a.sp3m) + '</td>' +
-            '<td style="padding:2px 6px;text-align:right;color:' + col(a.sp6m) + ';">' + f1(a.sp6m) + '</td>' +
-            '<td style="padding:2px 6px;text-align:right;color:' + col(a.sp12m) + ';">' + f1(a.sp12m) + '</td>' +
-            '<td style="padding:2px 6px;text-align:right;color:var(--red);">' + f1(a.maxDD12m) + '</td>' +
+        const diag = probe.diag || {};
+        // Pipeline summary
+        const pipelineHtml = diag.universeTotal != null
+          ? '<div style="font-size:9px;font-family:var(--mono);color:var(--text3);margin-bottom:6px;line-height:1.7;background:var(--surface2);padding:6px 8px;border-radius:4px;">' +
+            'Universe: ' + diag.universeTotal + ' → válidos: ' + diag.afterValid +
+            ' → embargo-12M: ' + diag.afterEmbargo +
+            ' → coverage≥60%: ' + diag.afterCoverage +
+            ' → sim calculada: ' + (diag.afterSimCalc||0) +
+            ' → elegibles: ' + (diag.eligibleCount||0) +
+            ' → final: ' + (probe.analogies?.length||0) +
+          '</div>' : '';
+        // Top 15 raw con rejection reasons
+        const rawRows = (diag.top15Raw || []).map(c =>
+          '<tr style="border-top:1px solid var(--border);opacity:' + (c.eligible?'1':'0.55') + ';">' +
+            '<td style="padding:2px 4px;color:' + (c.eligible?'var(--text1)':'var(--text3)') + ';">' + c.month + '</td>' +
+            '<td style="padding:2px 4px;text-align:right;color:' + sc(c.sim) + ';">' + (c.sim*100).toFixed(1) + '%</td>' +
+            '<td style="padding:2px 4px;text-align:right;color:var(--text3);">' + c.dims + '</td>' +
+            '<td style="padding:2px 4px;text-align:right;color:' + col(c.scoreNorm) + ';">' + f3(c.scoreNorm) + '</td>' +
+            '<td style="padding:2px 4px;text-align:right;color:' + col(c.sp3m) + ';">' + f1(c.sp3m) + '</td>' +
+            '<td style="padding:2px 4px;text-align:right;color:' + col(c.sp6m) + ';">' + f1(c.sp6m) + '</td>' +
+            '<td style="padding:2px 4px;text-align:right;color:' + col(c.sp12m) + ';">' + f1(c.sp12m) + '</td>' +
+            '<td style="padding:2px 4px;text-align:right;color:var(--red);">' + f1(c.maxDD12m) + '</td>' +
+            '<td style="padding:2px 4px;font-size:8px;color:' + (c.eligible?'var(--green)':'var(--red)') + ';">' +
+              (c.eligible ? '✓' : '✗ ' + (c.rejectionReasons||[]).join(', ')) + '</td>' +
           '</tr>'
         ).join('');
-        return '<div style="margin-bottom:12px;">' +
-          '<div style="font-size:10px;font-weight:700;color:var(--teal);margin-bottom:4px;font-family:var(--mono);">' + probe.month + '</div>' +
-          '<table style="width:100%;border-collapse:collapse;font-size:9px;font-family:var(--mono);">' +
-            '<tr style="color:var(--text3);"><td style="padding:2px 6px;">Mes</td><td style="padding:2px 6px;text-align:right;">Sim.</td>' +
-            '<td style="padding:2px 6px;text-align:right;">D</td><td style="padding:2px 6px;text-align:right;">Score</td>' +
-            '<td style="padding:2px 6px;text-align:right;">+3m</td><td style="padding:2px 6px;text-align:right;">+6m</td>' +
-            '<td style="padding:2px 6px;text-align:right;">+12m</td><td style="padding:2px 6px;text-align:right;">DD</td></tr>' +
-            rows +
-          '</table></div>';
+        return '<div style="margin-bottom:16px;">' +
+          '<div style="font-size:10px;font-weight:700;color:var(--teal);margin-bottom:4px;font-family:var(--mono);">' +
+            probe.month + ' · ' + (probe.analogies?.length||0) + ' analogías finales</div>' +
+          pipelineHtml +
+          (rawRows ? '<table style="width:100%;border-collapse:collapse;font-size:9px;font-family:var(--mono);">' +
+            '<tr style="color:var(--text3);"><td style="padding:2px 4px;">Mes</td><td style="padding:2px 4px;text-align:right;">Sim.</td>' +
+            '<td style="padding:2px 4px;text-align:right;">D</td><td style="padding:2px 4px;text-align:right;">Score</td>' +
+            '<td style="padding:2px 4px;text-align:right;">+3m</td><td style="padding:2px 4px;text-align:right;">+6m</td>' +
+            '<td style="padding:2px 4px;text-align:right;">+12m</td><td style="padding:2px 4px;text-align:right;">DD</td>' +
+            '<td style="padding:2px 4px;">Estado</td></tr>' +
+            rawRows + '</table>' : '') +
+        '</div>';
       }).join('');
 
       return (
