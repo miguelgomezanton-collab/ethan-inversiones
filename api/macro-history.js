@@ -714,7 +714,8 @@ export default async function handler(req, res) {
   const REGIME_HORIZONS = [3, 6, 12];
 
   let corrAudit = [], regimeAnalysis = [], corrMatrix = {}, quintiles = [], stabilityByIndicator = {},
-      spearmanReturn = null, spearmanBinary = null, spearmanN = 0;
+      spearmanReturn = null, spearmanBinary = null, spearmanN = 0,
+      spearmanBinaryNonOverlap = null, nonOverlapN = 0;
   try {
     const AUDIT_MONTHS = ['2022-10', '2020-04', '2018-12', '2026-06'];
     corrAudit = AUDIT_MONTHS.map(ym => {
@@ -951,8 +952,10 @@ export default async function handler(req, res) {
       }
     }
     const xno = nonOverlap.map(p=>p.x), yno = nonOverlap.map(p=>p.y), ybno = yno.map(v=>v>0?1:0);
-    const spearmanBinaryNonOverlap = nonOverlap.length >= 10
-      ? pearsonRanks(rankArray(xno), rankArray(ybno)) : null;
+    nonOverlapN = nonOverlap.length;
+    if (nonOverlapN >= 10) {
+      spearmanBinaryNonOverlap = pearsonRanks(rankArray(xno), rankArray(ybno));
+    }
   } catch(e) { errs.push('spearman error: ' + e.message); }
 
   // Correlaciones legacy (retornos coincidentes) — mantenidas para compatibilidad
@@ -1037,7 +1040,7 @@ export default async function handler(req, res) {
       return12m:          spearmanReturn,
       binary12m:          spearmanBinary,
       binary12mNonOverlap: spearmanBinaryNonOverlap,
-      nNonOverlap:        nonOverlap?.length ?? 0,
+      nNonOverlap: nonOverlapN,
       n:                  spearmanN,
     },
 
