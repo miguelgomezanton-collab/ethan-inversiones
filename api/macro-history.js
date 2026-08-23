@@ -704,50 +704,6 @@ export default async function handler(req, res) {
     return denom===0 ? null : { rho: +(num/denom).toFixed(3), n: xs.length };
   }
 
-  let corrAudit = [], regimeAnalysis = [];
-  try {
-    // Audit trail: 4 fechas de referencia para verificar no look-ahead
-    const AUDIT_MONTHS = ['2022-10', '2020-04', '2018-12', '2026-06'];
-    corrAudit = AUDIT_MONTHS.map(ym => {
-    const m = histMacroV1.find(h => h.month === ym);
-    if (!m?.valid) return { month: ym, error: 'no válido' };
-    const c = m.components;
-    const auditRows = [
-      { key: 'tipoReal', label: 'Tipo Real' },
-      { key: 'lei',      label: 'LEI (OECD CLI)' },
-      { key: 'bbb',      label: 'BBB Spread' },
-    ].map(({ key, label }) => {
-      const comp = c[key];
-      if (!comp?.valid) return { key, label, value: null, error: 'no disponible' };
-      // Forward returns desde este mes
-      const sp0  = spMap.get(ym);
-      const sp3  = spReturn(ym, 3);
-      const sp6  = spReturn(ym, 6);
-      const sp12 = spReturn(ym, 12);
-      // Fecha del precio +6M
-      const t6 = new Date(ym + '-01');
-      t6.setMonth(t6.getMonth() + 6);
-      const ym6 = t6.toISOString().slice(0, 7);
-      return {
-        key, label,
-        value:    comp.value,
-        score:    comp.score,
-        sp0:      sp0   != null ? +sp0.toFixed(2)  : null,
-        sp3m:     sp3   != null ? +sp3.toFixed(2)  : null,
-        sp6m:     sp6   != null ? +sp6.toFixed(2)  : null,
-        sp12m:    sp12  != null ? +sp12.toFixed(2) : null,
-        sp6mDate: ym6,
-        sp6mRaw:  spMap.get(ym6) != null ? +spMap.get(ym6).toFixed(2) : null,
-      };
-    });
-    return {
-      month: ym, scoreNorm: m.scoreNorm, coverage: m.coverage,
-      sp0: spMap.get(ym) != null ? +spMap.get(ym).toFixed(2) : null,
-      rows: auditRows,
-    };
-  });
-
-  // Análisis por régimen: distribución de forward returns condicionada al ScoreNorm
   const REGIME_BUCKETS = [
     { label: 'Muy negativo', min: -1.01, max: -0.60 },
     { label: 'Negativo',     min: -0.60, max: -0.20 },
@@ -757,37 +713,75 @@ export default async function handler(req, res) {
   ];
   const REGIME_HORIZONS = [3, 6, 12];
 
-  const regimeAnalysis = REGIME_BUCKETS.map(bucket => {
-    const months = histMacroV1.filter(m =>
-      m.valid && m.scoreNorm != null &&
-      m.scoreNorm > bucket.min && m.scoreNorm <= bucket.max
-    );
-    const byHorizon = {};
-    for (const h of REGIME_HORIZONS) {
-      const returns = months.map(m => spReturn(m.month, h)).filter(v => v != null);
-      const dds     = months.map(m => maxDrawdown(m.month, 12)).filter(v => v != null);
-      const sorted  = [...returns].sort((a,b) => a-b);
-      const median  = arr => arr.length ? arr[Math.floor(arr.length/2)] : null;
-      byHorizon[h] = {
-        n:          returns.length,
-        median:     median(sorted),
-        pctPos:     returns.length ? +(returns.filter(v=>v>0).length/returns.length*100).toFixed(1) : null,
-        medianDD:   median([...dds].sort((a,b)=>a-b)),
-        p25:        sorted[Math.floor(sorted.length*0.25)] ?? null,
-        p75:        sorted[Math.floor(sorted.length*0.75)] ?? null,
+  let corrAudit = [], regimeAnalysis = [], corrMatrix = {};
+  try {
+    const AUDIT_MONTHS = ['2022-10', '2020-04', '2018-12', '2026-06'];
+    corrAudit = AUDIT_MONTHS.map(ym => {
+      const m = histMacroV1.find(h => h.month === ym);
+      if (!m?.valid) return { month: ym, error: 'no válido' };
+      const c = m.components;
+      const auditRows = [
+        { key: 'tipoReal', label: 'Tipo Real' },
+        { key: 'lei',      label: 'LEI (OECD CLI)' },
+        { key: 'bbb',      label: 'BBB Spread' },
+      ].map(({ key, label }) => {
+        const comp = c[key];
+        if (!comp?.valid) return { key, label, value: null, error: 'no disponible' };
+        const sp0  = spMap.get(ym);
+        const sp3  = spReturn(ym, 3);
+        const sp6  = spReturn(ym, 6);
+        const sp12 = spReturn(ym, 12);
+        const t6   = new Date(ym + '-01');
+        t6.setMonth(t6.getMonth() + 6);
+        const ym6  = t6.toISOString().slice(0, 7);
+        return {
+          key, label, value: comp.value, score: comp.score,
+          sp0:     sp0  != null ? +sp0.toFixed(2)  : null,
+          sp3m:    sp3  != null ? +sp3.toFixed(2)  : null,
+          sp6m:    sp6  != null ? +sp6.toFixed(2)  : null,
+          sp12m:   sp12 != null ? +sp12.toFixed(2) : null,
+          sp6mDate: ym6,
+          sp6mRaw: spMap.get(ym6) != null ? +spMap.get(ym6).toFixed(2) : null,
+        };
+      });
+      return {
+        month: ym, scoreNorm: m.scoreNorm, coverage: m.coverage,
+        sp0: spMap.get(ym) != null ? +spMap.get(ym).toFixed(2) : null,
+        rows: auditRows,
       };
-    }
-    return { ...bucket, nMonths: months.length, byHorizon };
-  });
-  } catch(e) { errs.push('corrAudit/regimeAnalysis error: ' + e.message); }
+    });
 
-  for (const h of HORIZONS) {
-    const fwdMap = buildForwardMap(spMap, h);
-    corrMatrix[h] = {};
-    for (const k of IND_KEYS) {
-      corrMatrix[h][k] = calcLeadLag(k, fwdMap);
+    regimeAnalysis = REGIME_BUCKETS.map(bucket => {
+      const months = histMacroV1.filter(m =>
+        m.valid && m.scoreNorm != null &&
+        m.scoreNorm > bucket.min && m.scoreNorm <= bucket.max
+      );
+      const byHorizon = {};
+      for (const h of REGIME_HORIZONS) {
+        const returns = months.map(m => spReturn(m.month, h)).filter(v => v != null);
+        const dds     = months.map(m => maxDrawdown(m.month, 12)).filter(v => v != null);
+        const sorted  = [...returns].sort((a,b) => a-b);
+        const med     = arr => arr.length ? arr[Math.floor(arr.length/2)] : null;
+        byHorizon[h]  = {
+          n:        returns.length,
+          median:   med(sorted),
+          pctPos:   returns.length ? +(returns.filter(v=>v>0).length/returns.length*100).toFixed(1) : null,
+          medianDD: med([...dds].sort((a,b)=>a-b)),
+          p25:      sorted[Math.floor(sorted.length*0.25)] ?? null,
+          p75:      sorted[Math.floor(sorted.length*0.75)] ?? null,
+        };
+      }
+      return { ...bucket, nMonths: months.length, byHorizon };
+    });
+
+    for (const h of HORIZONS) {
+      const fwdMap = buildForwardMap(spMap, h);
+      corrMatrix[h] = {};
+      for (const k of IND_KEYS) {
+        corrMatrix[h][k] = calcLeadLag(k, fwdMap);
+      }
     }
-  }
+  } catch(e) { errs.push('corrAudit/regime/corrMatrix error: ' + e.message); }
 
   // Correlaciones legacy (retornos coincidentes) — mantenidas para compatibilidad
   const calcCorr = (indSeries, assetSeries) => {
