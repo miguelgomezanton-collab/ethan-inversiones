@@ -419,25 +419,58 @@ export async function render(container, { actionsSlot }) {
   function buildScoreTotalHTML(st) {
     if (!st) return '';
     const f1=v=>v!=null?(v>=0?'+':'')+v.toFixed(1)+'%':'—';
+    const f1b=v=>v!=null?v.toFixed(1)+'%':'—';
     const f3=v=>v!=null?(v>=0?'+':'')+v.toFixed(3):'—';
     const col=v=>v==null?'var(--text3)':v>0?'var(--green)':'var(--red)';
+    const colDD=v=>v==null?'var(--text3)':v<-10?'var(--red)':v<-5?'var(--amber)':'var(--green)';
     const v=st.validation||{};
+    // Diagnóstico calculado de monotonicidad
+    const qs=st.quintiles||[];
+    const dd10vals=qs.map(q=>q.ds12?.probDD10??null).filter(v=>v!=null);
+    const dd10mono = dd10vals.length>=3 && dd10vals[0]>dd10vals[dd10vals.length-1]; // Q1 peor que Q5
+    const retMono  = qs.length>=4 && (qs[0].pctPos12m??100) > (qs[qs.length-1].pctPos12m??0);
+    const verdict  = (!dd10mono && !retMono) ? '⚠ Sin monotonicidad clara en downside risk ni probabilidad de retorno positivo con los datos disponibles.' :
+                     (dd10mono && retMono)   ? '✓ El Score discrimina downside risk: Q1 tiene mayor prob. DD>10% y mayor %Pos+12M que Q5 (mean reversion).' :
+                     dd10mono ? '〜 Discriminación parcial de downside risk (DD>10%). Retorno positivo no monotónico.' :
+                     '〜 %Pos+12M decrece de Q1→Q5 (mean reversion). Downside risk no monotónico.';
+
+    // Tarjetas de validación estadística
+    const statCards = [
+      ['Pearson +6M',      v.pearsonR6,  'retorno +6M'],
+      ['Spearman +6M',     v.spearmanR6, 'retorno +6M'],
+      ['Spearman bin+12M', v.spearmanBin,'P(ret+>0)+12M'],
+      ['Spearman MaxDD',   v.spearmanDD, 'MaxDD 12M'],
+      ['Spearman P(DD>10%)',v.spearmanDD10,'P(DD>10%)+12M'],
+    ];
+
     return '<div style="margin-top:14px;">' +
       '<div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:10px;">' +
-        'RISK_RADAR_V1 Score Total — Quintiles y Validación Estadística' +
+        'RISK_RADAR_V1 Score Total · Diagnóstico de Riesgo (no predictor de retorno)' +
       '</div>' +
+
+      // Validación estadística
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">' +
         '<div class="mac-card">' +
-          '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:6px;">Spearman Score Total → S&P 500</div>' +
-          '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">' +
-            [['Pearson +6M', v.pearsonR6], ['Spearman +6M', v.spearmanR6], ['Spearman bin+12M', v.spearmanBin]].map(([l,s]) =>
-              '<div style="background:var(--surface2);border-radius:6px;padding:8px;text-align:center;">' +
-                '<div style="font-size:8px;color:var(--text3);margin-bottom:4px;">' + l + '</div>' +
-                '<div style="font-family:var(--mono);font-size:13px;font-weight:700;color:' + col(s?.rho) + ';">' + f3(s?.rho) + (s?.p!=null&&s.p<0.05?'*':'') + '</div>' +
-                '<div style="font-size:8px;color:var(--text3);">' + (s?.p!=null?'p='+s.p.toFixed(4):'—') + ' N=' + (s?.n||'—') + '</div>' +
+          '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:8px;">Correlaciones Score Total → S&P 500</div>' +
+          '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:6px;">' +
+            statCards.slice(0,3).map(([l,s,sub]) =>
+              '<div style="background:var(--surface2);border-radius:6px;padding:7px;text-align:center;">' +
+                '<div style="font-size:8px;color:var(--text3);margin-bottom:3px;">' + l + '</div>' +
+                '<div style="font-family:var(--mono);font-size:12px;font-weight:700;color:' + col(s?.rho) + ';">' + f3(s?.rho) + (s?.p!=null&&s.p<0.05?'*':'') + '</div>' +
+                '<div style="font-size:8px;color:var(--text3);">p=' + (s?.p!=null?s.p.toFixed(4):'—') + '</div>' +
               '</div>'
             ).join('') +
           '</div>' +
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">' +
+            statCards.slice(3).map(([l,s,sub]) =>
+              '<div style="background:rgba(244,113,116,0.06);border-radius:6px;padding:7px;text-align:center;">' +
+                '<div style="font-size:8px;color:var(--text3);margin-bottom:3px;">' + l + '</div>' +
+                '<div style="font-family:var(--mono);font-size:12px;font-weight:700;color:' + col(-(s?.rho||0)) + ';">' + f3(s?.rho) + (s?.p!=null&&s.p<0.05?'*':'') + '</div>' +
+                '<div style="font-size:8px;color:var(--text3);">p=' + (s?.p!=null?s.p.toFixed(4):'—') + '</div>' +
+              '</div>'
+            ).join('') +
+          '</div>' +
+          '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:6px;">* p<0.05 · ρ<0 en DD = Score más bajo predice peor drawdown ✓</div>' +
         '</div>' +
         '<div class="mac-card">' +
           '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:6px;">Estabilidad Temporal Pearson +6M</div>' +
@@ -446,35 +479,49 @@ export async function render(container, { actionsSlot }) {
               '<div style="background:var(--surface2);border-radius:6px;padding:8px;text-align:center;flex:1;">' +
                 '<div style="font-size:8px;color:var(--text3);">' + b.label + '</div>' +
                 '<div style="font-family:var(--mono);font-size:13px;font-weight:700;color:' + col(b.rho) + ';">' + f3(b.rho) + (b.p!=null&&b.p<0.05?'*':'') + '</div>' +
-                '<div style="font-size:8px;color:var(--text3);">N=' + b.n + '</div>' +
+                '<div style="font-size:8px;color:var(--text3);">N=' + b.n + ' · ' + (b.first||'—').slice(0,7) + '</div>' +
               '</div>'
             ).join('') +
           '</div>' +
         '</div>' +
       '</div>' +
+
+      // Quintiles con downside risk
       '<div class="mac-card">' +
-        '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:8px;">Quintiles Score Total (N equilibrado) — ¿Monotonicidad retorno/riesgo?</div>' +
+        '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:8px;">Quintiles Score Total — Downside Risk (test decisivo del Radar)</div>' +
         '<table style="width:100%;border-collapse:collapse;font-size:9px;font-family:var(--mono);">' +
           '<thead><tr style="background:var(--surface2);">' +
-            '<th style="padding:4px 6px;text-align:left;color:var(--text3);">Q</th><th style="padding:4px 6px;text-align:center;color:var(--text3);">Rango</th>' +
-            '<th style="padding:4px 6px;text-align:right;color:var(--text3);">N</th><th style="padding:4px 6px;text-align:right;color:var(--text3);">Med+3M</th>' +
-            '<th style="padding:4px 6px;text-align:right;color:var(--text3);">Med+6M</th><th style="padding:4px 6px;text-align:right;color:var(--text3);">Med+12M</th>' +
-            '<th style="padding:4px 6px;text-align:right;color:var(--text3);">%Pos+12M</th><th style="padding:4px 6px;text-align:right;color:var(--text3);">MaxDD</th>' +
+            '<th style="padding:4px 5px;text-align:left;color:var(--text3);">Q</th>' +
+            '<th style="padding:4px 5px;text-align:center;color:var(--text3);">Score</th>' +
+            '<th style="padding:4px 5px;text-align:right;color:var(--text3);">N</th>' +
+            '<th style="padding:4px 5px;text-align:right;color:var(--text3);">Med+6M</th>' +
+            '<th style="padding:4px 5px;text-align:right;color:var(--text3);">%Pos+12M</th>' +
+            '<th style="padding:4px 5px;text-align:right;color:var(--text3);">MaxDD</th>' +
+            '<th style="padding:4px 5px;text-align:right;color:var(--text3);">VaR95%(+12M)</th>' +
+            '<th style="padding:4px 5px;text-align:right;color:var(--text3);">CVaR95%</th>' +
+            '<th style="padding:4px 5px;text-align:right;color:var(--text3);">P(DD>10%)</th>' +
+            '<th style="padding:4px 5px;text-align:right;color:var(--text3);">P(DD>15%)</th>' +
+            '<th style="padding:4px 5px;text-align:right;color:var(--text3);">Peor ret</th>' +
           '</tr></thead><tbody>' +
-          (st.quintiles||[]).map(q =>
-            '<tr style="border-bottom:1px solid var(--border);">' +
-              '<td style="padding:4px 6px;color:var(--teal);font-weight:700;">Q'+q.quintile+'</td>' +
-              '<td style="padding:4px 6px;text-align:center;font-size:9px;color:var(--text3);">['+q.minScore+','+q.maxScore+']</td>' +
-              '<td style="padding:4px 6px;text-align:right;color:var(--text3);">'+(q.n6m||q.n)+'</td>' +
-              '<td style="padding:4px 6px;text-align:right;color:'+col(q.med3m)+';">'+f1(q.med3m)+'</td>' +
-              '<td style="padding:4px 6px;text-align:right;color:'+col(q.med6m)+';">'+f1(q.med6m)+'</td>' +
-              '<td style="padding:4px 6px;text-align:right;color:'+col(q.med12m)+';">'+f1(q.med12m)+'</td>' +
-              '<td style="padding:4px 6px;text-align:right;color:'+((q.pctPos12m??0)>50?'var(--green)':'var(--red)')+';">'+(q.pctPos12m!=null?q.pctPos12m+'%':'—')+'</td>' +
-              '<td style="padding:4px 6px;text-align:right;color:var(--red);">'+f1(q.medDD)+'</td>' +
-            '</tr>'
-          ).join('') +
+          qs.map(q => {
+            const ds=q.ds12||{};
+            return '<tr style="border-bottom:1px solid var(--border);">' +
+              '<td style="padding:4px 5px;color:var(--teal);font-weight:700;">Q'+q.quintile+'</td>' +
+              '<td style="padding:4px 5px;text-align:center;font-size:8px;color:var(--text3);">['+q.minScore+','+q.maxScore+']</td>' +
+              '<td style="padding:4px 5px;text-align:right;color:var(--text3);">'+(ds.n||'—')+'</td>' +
+              '<td style="padding:4px 5px;text-align:right;color:'+col(q.med6m)+';">'+f1(q.med6m)+'</td>' +
+              '<td style="padding:4px 5px;text-align:right;color:'+((q.pctPos12m??0)>50?'var(--green)':'var(--red)')+';">'+(q.pctPos12m!=null?q.pctPos12m+'%':'—')+'</td>' +
+              '<td style="padding:4px 5px;text-align:right;color:'+colDD(ds.medDD)+';">'+f1b(ds.medDD)+'</td>' +
+              '<td style="padding:4px 5px;text-align:right;color:'+colDD(ds.var95)+';">'+f1(ds.var95)+'</td>' +
+              '<td style="padding:4px 5px;text-align:right;color:'+colDD(ds.cvar95)+';">'+f1(ds.cvar95)+'</td>' +
+              '<td style="padding:4px 5px;text-align:right;color:'+(ds.probDD10>20?'var(--red)':ds.probDD10>10?'var(--amber)':'var(--green)')+';">'+(ds.probDD10!=null?ds.probDD10+'%':'—')+'</td>' +
+              '<td style="padding:4px 5px;text-align:right;color:'+(ds.probDD15>10?'var(--red)':ds.probDD15>5?'var(--amber)':'var(--green)')+';">'+(ds.probDD15!=null?ds.probDD15+'%':'—')+'</td>' +
+              '<td style="padding:4px 5px;text-align:right;color:var(--red);">'+f1(ds.worstReturn)+'</td>' +
+            '</tr>';
+          }).join('') +
           '</tbody></table>' +
-          '<div style="font-size:9px;color:var(--text3);margin-top:6px;">Monotonicidad: si MaxDD se deteriora de Q5→Q1 y %Pos+12M sube, el Radar discrimina riesgo aunque no prediga retorno absoluto.</div>' +
+          '<div style="font-size:9px;color:var(--'+(verdict.startsWith('✓')?'green':verdict.startsWith('⚠')?'amber':'text2')+'};font-family:var(--mono);margin-top:8px;padding:8px;background:var(--surface2);border-radius:6px;">' + verdict + '</div>' +
+          '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:6px;">RISK_RADAR_V1 = diagnóstico contemporáneo del régimen/riesgo macro · No es predictor direccional del S&P 500. Stress Test → consecuencias históricas del régimen.</div>' +
       '</div></div>';
   }
 

@@ -502,11 +502,48 @@ export default async function handler(req, res) {
     totalPairs.sort((a,b)=>a.sc-b.sc||a.ym.localeCompare(b.ym));
     const Ntp=totalPairs.length;
     totalPairs.forEach((p,i)=>{p.q=Math.min(5,Math.floor(i*5/Ntp)+1);});
+    // Función de downside risk metrics por lista de meses
+    function downsideStats(months, horizon) {
+      const fwdMap = horizon===3?fwdM3:horizon===6?fwdM6:fwdM12;
+      const returns = months.map(m=>fwdMap.get(m)).filter(v=>v!=null);
+      const dds = months.map(m=>maxDD12(m)).filter(v=>v!=null);
+      if (!returns.length) return null;
+      const sorted = [...returns].sort((a,b)=>a-b);
+      const ddSorted = [...dds].sort((a,b)=>a-b);
+      const pctile = (arr,p) => arr.length ? +arr[Math.max(0,Math.floor(arr.length*p)-1)].toFixed(2) : null;
+      const n = returns.length;
+      // VaR 95% = percentile 5 del retorno
+      const var95 = pctile(sorted, 0.05);
+      // CVaR 95% = media de los peores 5%
+      const nCVar = Math.max(1, Math.floor(n*0.05));
+      const cvar95 = +(sorted.slice(0,nCVar).reduce((a,b)=>a+b,0)/nCVar).toFixed(2);
+      const worstReturn = sorted[0];
+      const p10 = pctile(sorted, 0.10);
+      const probDD10 = dds.length ? +(dds.filter(d=>d<-10).length/dds.length*100).toFixed(1) : null;
+      const probDD15 = dds.length ? +(dds.filter(d=>d<-15).length/dds.length*100).toFixed(1) : null;
+      const medDD = ddSorted.length ? +ddSorted[Math.floor(ddSorted.length/2)].toFixed(2) : null;
+      return {n, var95, cvar95, worstReturn, p10, probDD10, probDD15, medDD,
+              pctPos: +(returns.filter(v=>v>0).length/n*100).toFixed(1)};
+    }
+
     const quintileResults=[1,2,3,4,5].map(q=>{
       const sl=totalPairs.filter(p=>p.q===q);
       const scores=sl.map(p=>p.sc);
-      return{quintile:q,minScore:scores.length?Math.min(...scores):null,maxScore:scores.length?Math.max(...scores):null,...fwdStats(sl.map(p=>p.ym))};
+      const months=sl.map(p=>p.ym);
+      return{
+        quintile:q,
+        minScore:scores.length?Math.min(...scores):null,
+        maxScore:scores.length?Math.max(...scores):null,
+        ...fwdStats(months),
+        ds6:  downsideStats(months,6),
+        ds12: downsideStats(months,12),
+      };
     });
+    // Spearman ScoreTotal → MaxDD y → Prob(DD>10%)
+    const ddPairs = totalPairs.map(p=>({sc:p.sc, dd:maxDD12(p.ym)})).filter(p=>p.dd!=null);
+    const spDD    = spearmanSimple(ddPairs.map(p=>p.sc), ddPairs.map(p=>p.dd));
+    const dd10Pairs = ddPairs.map(p=>({sc:p.sc, bin:p.dd<-10?1:0}));
+    const spDD10  = spearmanSimple(dd10Pairs.map(p=>p.sc), dd10Pairs.map(p=>p.bin));
     const tsXs=totalPairs.map(p=>p.sc),tsY6=totalPairs.map(p=>fwdM6.get(p.ym));
     const t12=totalPairs.filter(p=>fwdM12.get(p.ym)!=null);
     const tsXs12=t12.map(p=>p.sc),tsYbin=t12.map(p=>fwdM12.get(p.ym)>0?1:0);
@@ -523,7 +560,7 @@ export default async function handler(req, res) {
       updatedAt: new Date().toISOString(),
       radarStressTest: rst,
       radarBlockStress: blockResults,
-      radarScoreTotal: {quintiles:quintileResults,validation:{nTotal:Ntp,pearsonR6:pearsonSimple(tsXs,tsY6),spearmanR6:spearmanSimple(tsXs,tsY6),spearmanBin:spearmanSimple(tsXs12,tsYbin),stability}},
+      radarScoreTotal: {quintiles:quintileResults,validation:{nTotal:Ntp,pearsonR6:pearsonSimple(tsXs,tsY6),spearmanR6:spearmanSimple(tsXs,tsY6),spearmanBin:spearmanSimple(tsXs12,tsYbin),spearmanDD:spDD,spearmanDD10:spDD10,stability}},
       errors: errs.length?errs:undefined,
     });
   }
