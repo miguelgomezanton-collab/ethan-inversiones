@@ -1,119 +1,157 @@
-// correlaciones.js — usa /api/macro-history (sin key en frontend)
+// correlaciones.js — Lead-lag correlations: Indicador(t) → SP500 Forward Return(t+H)
+// Dataset: HIST_MACRO_V1_FRED (mismo que Timeline y Analogías)
 import { getMacroData } from './macro-data.js';
 
-const f2 = v => v != null ? Number(v).toFixed(2) : '—';
+const IND_LABELS = {
+  curvaUSD:      'Curva USD 10Y-2Y',
+  tipoReal:      'Tipo Real (FFR-CPI)',
+  lei:           'LEI (OECD CLI USA)',
+  m2usa:         'M2 USA YoY',
+  creditoVsPib:  'Crédito vs PIB',
+  impulso:       'Impulso Crediticio',
+  velM2:         'Velocidad M2',
+  reservas:      'Reservas Bancarias',
+  bbb:           'BBB Spread',
+  scoreNorm:     'HIST_MACRO_V1 ScoreNorm',
+};
 
-function corrCol(v) {
-  if (v == null) return 'var(--text3)';
-  return v > 0.6 ? 'var(--green)' : v > 0.3 ? 'var(--teal)' : v > -0.3 ? 'var(--text3)' : v > -0.6 ? 'var(--amber)' : 'var(--red)';
-}
-function corrDisplay(v) {
-  if (v == null) return '—';
-  return (v >= 0 ? '+' : '') + f2(v);
+const HORIZONS = [0, 3, 6, 12];
+const H_LABELS = { 0: 'Coincidente', 3: '+3M', 6: '+6M', 12: '+12M' };
+
+function rhoColor(r) {
+  if (r == null) return 'var(--text3)';
+  const a = Math.abs(r);
+  if (a >= 0.4) return r > 0 ? 'var(--green)' : 'var(--red)';
+  if (a >= 0.2) return r > 0 ? '#7abb7a' : '#d4888a';
+  return 'var(--text3)';
 }
 
 export async function render(container, { actionsSlot }) {
-  actionsSlot.innerHTML = `<button class="btn btn-primary" id="corr-refresh">↻ Recalcular</button>`;
-  container.innerHTML = `<div id="corr-wrap"><div class="empty"><div class="loader-ring"></div><div class="empty-title">Calculando correlaciones...</div></div></div>`;
+  let currentH = 6;
 
-  async function load() {
-    const el = document.getElementById('corr-wrap');
-    el.innerHTML = `<div class="empty"><div class="loader-ring"></div><div class="empty-title">Descargando datos históricos...</div><div class="empty-desc">SP500 · Nasdaq · Russell · Oro · Bonos · Dólar · Indicadores FRED</div></div>`;
+  actionsSlot.innerHTML = `
+    <div style="display:flex;gap:4px;align-items:center;">
+      <span style="font-size:9px;color:var(--text3);font-family:var(--mono);">Horizonte:</span>
+      ${HORIZONS.map(h => `<button class="btn corr-h ${h===6?'btn-primary':''}" data-h="${h}" style="padding:4px 9px;font-size:10px;">${H_LABELS[h]}</button>`).join('')}
+      <button class="btn btn-primary" id="corr-refresh" style="padding:4px 9px;font-size:10px;margin-left:6px;">↻</button>
+    </div>`;
+
+  container.innerHTML = `<div id="corr-wrap"><div class="empty"><div class="loader-ring"></div></div></div>`;
+
+  async function load(force = false) {
     try {
-      const [macro, histData] = await Promise.all([
-        getMacroData(false),
-        fetch('/api/macro-history?type=correlaciones').then(r => { if (!r.ok) throw new Error('macro-history: ' + r.status); return r.json(); })
-      ]);
-      paint(macro, histData);
+      const hist = await fetch('/api/macro-history?type=correlaciones')
+        .then(r => { if (!r.ok) throw new Error('macro-history: ' + r.status); return r.json(); });
+      paint(hist);
     } catch(e) {
-      document.getElementById('corr-wrap').innerHTML = `<div class="empty"><div class="empty-icon">⚠</div><div class="empty-title">Error</div><div class="empty-desc">${e.message}</div></div>`;
+      document.getElementById('corr-wrap').innerHTML =
+        `<div class="empty"><div class="empty-icon">⚠</div><div class="empty-title">Error</div><div class="empty-desc">${e.message}</div></div>`;
     }
   }
 
-  function paint(macro, hist) {
+  function paint(hist) {
     const el = document.getElementById('corr-wrap');
-    const corr = hist.correlaciones || {};
-    const n = hist.n_months || 0;
-    const co = macro.coyuntura || {};
-    const liq = macro.liquidez || {};
-    const ind = macro.indicators || {};
+    const cm = hist.corrMatrix;
 
-    const HEADERS = ['SP500', 'Nasdaq', 'Russell', 'Oro', 'Bonos (IEF)', 'Dólar (DXY)'];
-    const KEY_MAP = ['sp', 'nq', 'ru', 'au', 'bond', 'dxy'];
-
-    // Indicadores calculados automáticamente en el servidor
-    const AUTO_ROWS = [
-      { name: 'Curva USD (10Y−2Y)', key: 'curvaUSD',         val: co.curvaUSD?.value, unit: '%', col: co.curvaUSD?.score },
-      { name: 'Tipo Real (FFR−CPI)', key: 'tipoReal',        val: co.tipoReal?.value, unit: '%', col: co.tipoReal?.score },
-      { name: 'BBB Spread',          key: 'bbb',              val: liq.bbbSpread?.value, unit: '%', col: liq.bbbSpread?.score },
-      { name: 'Crédito vs Nominal',  key: 'creditoVsNominal', val: liq.credito?.value, unit: '%', col: liq.credito?.score },
-    ];
-
-    // Indicadores con correlaciones estimadas (manuales sin serie histórica auto)
-    const MANUAL_ROWS = [
-      { name: 'M2 Global YoY ✎',       sp:+0.81,nq:+0.88,ru:+0.76,au:+0.42,bond:-0.35,dxy:-0.58, val: macro.liquidez?.m2?.value, unit:'%' },
-      { name: 'LEI USA ✎',              sp:+0.68,nq:+0.65,ru:+0.73,au:-0.22,bond:+0.08,dxy:-0.31, val: ind.lei?.value, unit:'%' },
-      { name: 'Impulso Crediticio ✎',   sp:+0.71,nq:+0.79,ru:+0.69,au:+0.18,bond:-0.28,dxy:-0.42, val: liq.impulso?.value },
-      { name: 'Fear & Greed',           sp:-0.34,nq:-0.38,ru:-0.31,au:-0.14,bond:+0.09,dxy:-0.05, val: ind.fearGreed?.value },
-    ];
-
-    const thS = 'padding:9px 10px;text-align:center;font-size:9px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text3);border-bottom:1px solid var(--border);font-weight:600;';
-    const tdS = v => `padding:9px 10px;text-align:center;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:11px;font-weight:700;color:${corrCol(v)};`;
-
-    function autoRow(r) {
-      const rowCorr = corr[r.key] || {};
-      const valColor = r.col != null ? (r.col > 0 ? 'var(--green)' : r.col === 0 ? 'var(--amber)' : 'var(--red)') : 'var(--text3)';
-      return `<tr>
-        <td style="padding:9px 12px;border-bottom:1px solid var(--border);font-weight:600;">${r.name} <span style="font-size:8px;color:var(--teal);font-family:var(--mono);">CALC</span></td>
-        ${KEY_MAP.map(k => `<td style="${tdS(rowCorr[k])}">${corrDisplay(rowCorr[k])}</td>`).join('')}
-        <td style="padding:9px 10px;border-bottom:1px solid var(--border);font-size:10px;color:${valColor};">${r.val != null ? (r.val >= 0 ? '+' : '') + f2(r.val) + (r.unit || '') : '—'}</td>
-      </tr>`;
+    if (!cm) {
+      el.innerHTML = `<div class="empty"><div class="empty-icon">⚠</div><div class="empty-title">Sin datos de correlación</div></div>`;
+      return;
     }
 
-    function manualRow(r) {
-      const vals = [r.sp, r.nq, r.ru, r.au, r.bond, r.dxy];
-      return `<tr>
-        <td style="padding:9px 12px;border-bottom:1px solid var(--border);font-weight:600;">${r.name}</td>
-        ${vals.map(v => `<td style="${tdS(v)}">${corrDisplay(v)}</td>`).join('')}
-        <td style="padding:9px 10px;border-bottom:1px solid var(--border);font-size:10px;color:var(--text3);">${r.val != null ? (r.val >= 0 ? '+' : '') + f2(r.val) + (r.unit || '') : '—'}</td>
+    const matrix = cm[currentH] || {};
+
+    // Tabla lead-lag
+    const rows = Object.entries(IND_LABELS).map(([k, label]) => {
+      const cell = matrix[k];
+      const rho  = cell?.rho;
+      const n    = cell?.n;
+      const isScore = k === 'scoreNorm';
+      return `<tr style="border-bottom:1px solid var(--border);${isScore?'background:rgba(64,217,192,0.04);':''}">
+        <td style="padding:8px 10px;font-size:10px;color:${isScore?'var(--teal)':'var(--text2)'};font-weight:${isScore?'700':'400'};">${label}</td>
+        <td style="padding:8px 10px;text-align:center;font-family:var(--mono);font-size:12px;font-weight:700;color:${rhoColor(rho)};">
+          ${rho != null ? (rho>=0?'+':'')+rho.toFixed(2) : '—'}
+        </td>
+        <td style="padding:8px 10px;text-align:center;font-family:var(--mono);font-size:10px;color:var(--text3);">
+          ${n != null ? n : '—'}
+        </td>
+        <td style="padding:8px 10px;">
+          ${rho != null ? `<div style="height:6px;background:var(--surface2);border-radius:3px;overflow:hidden;">
+            <div style="height:100%;width:${Math.min(Math.abs(rho)*100,100)}%;background:${rhoColor(rho)};border-radius:3px;margin-left:${rho<0?'auto':'0'};"></div>
+          </div>` : ''}
+        </td>
       </tr>`;
-    }
+    }).join('');
 
     el.innerHTML = `
-      <div style="font-size:11px;color:var(--text3);margin-bottom:12px;line-height:1.5;">
-        Correlación de Pearson calculada en el servidor con <strong style="color:var(--text1)">${n} meses</strong> de datos históricos.
-        <span style="color:var(--teal);font-family:var(--mono);font-size:9px;">CALC</span> = calculado automáticamente.
-        <strong style="color:var(--amber)">✎</strong> = estimación histórica (indicador manual sin serie auto).
-      </div>
-      <div style="font-size:9px;font-family:var(--mono);color:var(--text3);margin-bottom:12px;">
-        <span style="color:var(--green)">■</span> >+0.60 &nbsp;
-        <span style="color:var(--teal)">■</span> +0.30-0.60 &nbsp;
-        <span style="color:var(--text3)">■</span> ±0.30 &nbsp;
-        <span style="color:var(--amber)">■</span> −0.30 a −0.60 &nbsp;
-        <span style="color:var(--red)">■</span> <−0.60
-      </div>
-      <div class="mac-card">
-        <table style="width:100%;border-collapse:collapse;font-size:11px;">
+      <div class="mac-card" style="margin-bottom:14px;">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px;">
+          <div>
+            <span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);">
+              Correlaciones Lead-Lag · S&P 500
+            </span>
+            <span style="font-size:9px;font-family:var(--mono);color:var(--text2);margin-left:8px;">
+              Indicador(t) → SP500 Forward Return ${H_LABELS[currentH]}
+            </span>
+          </div>
+          <div style="font-size:9px;font-family:var(--mono);color:var(--text3);">
+            HIST_MACRO_V1_FRED · Pearson · N≥20 obs
+          </div>
+        </div>
+
+        <table style="width:100%;border-collapse:collapse;">
           <thead><tr style="background:var(--surface2);">
-            <th style="padding:9px 12px;text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text3);border-bottom:1px solid var(--border);">Indicador</th>
-            ${HEADERS.map(h => `<th style="${thS}">${h}</th>`).join('')}
-            <th style="padding:9px 10px;text-align:left;font-size:9px;text-transform:uppercase;color:var(--text3);border-bottom:1px solid var(--border);">Valor actual</th>
+            <th style="padding:8px 10px;text-align:left;font-size:9px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:0.08em;">Indicador macro</th>
+            <th style="padding:8px 10px;text-align:center;font-size:9px;color:var(--text3);font-weight:600;text-transform:uppercase;">ρ Pearson</th>
+            <th style="padding:8px 10px;text-align:center;font-size:9px;color:var(--text3);font-weight:600;text-transform:uppercase;">N obs</th>
+            <th style="padding:8px 10px;font-size:9px;color:var(--text3);font-weight:600;text-transform:uppercase;">Intensidad</th>
           </tr></thead>
-          <tbody>
-            ${AUTO_ROWS.map(autoRow).join('')}
-            <tr><td colspan="8" style="padding:5px 12px;background:var(--surface2);font-size:9px;color:var(--text3);font-family:var(--mono);font-style:italic;">Indicadores manuales — correlaciones históricas estimadas</td></tr>
-            ${MANUAL_ROWS.map(manualRow).join('')}
-          </tbody>
+          <tbody>${rows}</tbody>
         </table>
-        <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:10px;">
-          ${hist.errors?.length ? '⚠ ' + hist.errors.join(' · ') + ' · ' : ''}Correlación de Pearson con retornos mensuales. Período: últimos ${n} meses. No constituyen recomendaciones de inversión.
+
+        <div style="margin-top:12px;font-size:9px;font-family:var(--mono);color:var(--text3);line-height:1.7;background:var(--surface2);padding:10px 12px;border-radius:6px;">
+          ⚠ Correlaciones calculadas únicamente sobre SP500 (dataset FRED disponible).
+          Nasdaq, Russell, Oro, Bonos e IEF pendientes de histórico suficiente.<br>
+          Pearson mide relación lineal. No implica causalidad. Horizonte ${H_LABELS[currentH]}: el indicador precede al retorno en ${currentH} meses.<br>
+          ScoreNorm = scoreRaw / maxAvailable · misma metodología que Motor de Analogías.
         </div>
       </div>
-      <div class="co-footer" style="margin-top:14px;">Calculado en servidor · Yahoo Finance (SP500, Nasdaq, Russell, Oro, IEF, DXY) · FRED (DGS10, DGS2, DFF, CPIAUCSL, BAMLC0A4CBBB, TOTLL, GDP)</div>
+
+      <div class="mac-card" style="background:rgba(251,191,36,0.04);border-color:rgba(251,191,36,0.2);">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:8px;">
+          Pendiente · Fase 2C
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;font-size:10px;color:var(--text3);font-family:var(--mono);">
+          <div style="background:var(--surface2);border-radius:8px;padding:10px 12px;">
+            <div style="color:var(--text2);font-weight:700;margin-bottom:4px;">Activos adicionales</div>
+            Nasdaq, Russell, Oro, Bonos (IEF) cuando tengamos histórico FRED suficiente
+          </div>
+          <div style="background:var(--surface2);border-radius:8px;padding:10px 12px;">
+            <div style="color:var(--text2);font-weight:700;margin-bottom:4px;">Significancia estadística</div>
+            p-value y bandas de confianza 95% por celda
+          </div>
+          <div style="background:var(--surface2);border-radius:8px;padding:10px 12px;">
+            <div style="color:var(--text2);font-weight:700;margin-bottom:4px;">Validación temporal</div>
+            Correlaciones por décadas — ¿son estables o cambian de régimen?
+          </div>
+        </div>
+      </div>
+
+      <div class="co-footer">
+        Fuente: HIST_MACRO_V1_FRED · SP500 FRED mensual ·
+        Correlaciones calculadas sobre meses con coverage≥60% · PROVISIONAL
+      </div>
     `;
   }
 
-  document.getElementById('corr-refresh')?.addEventListener('click', load);
+  document.addEventListener('click', e => {
+    const btn = e.target.closest('.corr-h');
+    if (!btn) return;
+    currentH = parseInt(btn.dataset.h);
+    document.querySelectorAll('.corr-h').forEach(b => b.classList.remove('btn-primary'));
+    btn.classList.add('btn-primary');
+    load();
+  });
+  document.getElementById('corr-refresh')?.addEventListener('click', () => load(true));
   await load();
   return { destroy() {} };
 }

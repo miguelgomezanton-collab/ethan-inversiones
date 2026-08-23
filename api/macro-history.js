@@ -658,7 +658,63 @@ export default async function handler(req, res) {
     .filter(m => m.valid)
     .map(m => ({ date: m.month + '-01', value: m.scoreNorm, scoreRaw: m.scoreRaw, coverage: m.coverage }));
 
-  // ── Correlaciones (retornos mensuales) ────────
+  // ── Correlaciones lead-lag (Fase 2C) ──────────────────────────
+  // Indicador(t) vs Forward Return activo(t+H) para H = 0, 3, 6, 12 meses
+  // Dataset: HIST_MACRO_V1_FRED (misma fuente que analogías)
+  // Activos: SP500 (spMap ya construido), + placeholders para otros activos futuros
+  // Significancia: N observaciones por celda
+
+  const HORIZONS = [0, 3, 6, 12]; // meses
+  const IND_KEYS = ['curvaUSD','tipoReal','lei','m2usa','creditoVsPib','impulso','velM2','reservas','bbb','scoreNorm'];
+
+  // Para cada activo construir un mapa de forward returns por horizonte
+  // Por ahora solo SP500 tiene histórico completo; otros activos se añadirán cuando tengamos datos
+  function buildForwardMap(priceMap, horizon) {
+    const fwd = new Map();
+    for (const [ym, price] of priceMap) {
+      const r = spReturn(ym, horizon); // reutilizamos spReturn que ya usa spMap
+      if (r != null) fwd.set(ym, r);
+    }
+    return fwd;
+  }
+
+  // Correlación Pearson entre indicador y forward return, alineados por mes
+  function calcLeadLag(indKey, fwdMap) {
+    const xs = [], ys = [];
+    for (const m of histMacroV1) {
+      if (!m.valid) continue;
+      const indVal = indKey === 'scoreNorm'
+        ? m.scoreNorm
+        : m.components?.[indKey]?.valid ? m.components[indKey].value : null;
+      const fwdVal = fwdMap.get(m.month);
+      if (indVal != null && fwdVal != null) {
+        xs.push(indVal);
+        ys.push(fwdVal);
+      }
+    }
+    if (xs.length < 20) return null;
+    const mx = xs.reduce((a,b)=>a+b,0)/xs.length;
+    const my = ys.reduce((a,b)=>a+b,0)/ys.length;
+    let num=0, dx2=0, dy2=0;
+    for (let i=0; i<xs.length; i++) {
+      const a=xs[i]-mx, b=ys[i]-my;
+      num+=a*b; dx2+=a*a; dy2+=b*b;
+    }
+    const denom = Math.sqrt(dx2*dy2);
+    return denom===0 ? null : { rho: +(num/denom).toFixed(3), n: xs.length };
+  }
+
+  // Construir matriz: indicador × horizonte para SP500
+  const corrMatrix = {};
+  for (const h of HORIZONS) {
+    const fwdMap = buildForwardMap(spMap, h);
+    corrMatrix[h] = {};
+    for (const k of IND_KEYS) {
+      corrMatrix[h][k] = calcLeadLag(k, fwdMap);
+    }
+  }
+
+  // Correlaciones legacy (retornos coincidentes) — mantenidas para compatibilidad
   const calcCorr = (indSeries, assetSeries) => {
     if (!indSeries || !assetSeries) return null;
     const indRet = monthlyReturns(indSeries);
@@ -668,12 +724,7 @@ export default async function handler(req, res) {
   };
 
   const assets = { sp, nq, ru, au, bond, dxy };
-  const indicators = {
-    curvaUSD,
-    tipoReal,
-    bbb,
-    creditoVsNominal,
-  };
+  const indicators = { curvaUSD, tipoReal, bbb, creditoVsNominal };
 
   const correlaciones = {};
   for (const [indName, indSeries] of Object.entries(indicators)) {
@@ -736,6 +787,7 @@ export default async function handler(req, res) {
 
     // Para Correlaciones
     correlaciones,
+    corrMatrix,  // lead-lag: indicador(t) vs SP500 forward return(t+H)
 
     // Metadatos
     n_months: sp?.length || 0,
