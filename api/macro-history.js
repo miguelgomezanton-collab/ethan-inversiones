@@ -380,7 +380,9 @@ export default async function handler(req, res) {
   const MIN_DIMS      = 6;  // mínimo 6 de 9 dimensiones comunes
   const EXCLUDE_LAST  = 12; // excluir últimos 12 meses del histórico
 
-  // Construir mapa SP500 mensual para retornos forward
+    // Debug SP500 cobertura
+    const spMapFirst = spNorm.length ? spNorm[0].date.slice(0,7) : '—';
+    const spMapLast  = spNorm.length ? spNorm[spNorm.length-1].date.slice(0,7) : '—';
   const spMap = new Map(spNorm.map(p => [p.date.slice(0,7), p.value]));
 
   function spReturn(fromYM, monthsForward) {
@@ -555,6 +557,7 @@ export default async function handler(req, res) {
 
     const v = getVector(m, ym);
     const top = findAnalogies(v, ym, 10, { walkForward: true });
+    const selectedMonths = new Set((top || []).map(a => a.month));
 
     // ── Diagnóstico de pipeline ──────────────────────────────────
     const maxMonth = addMonths(ym, -12);
@@ -594,6 +597,7 @@ export default async function handler(req, res) {
         scoreNorm: c.scoreNorm, coverage: c.coverage,
         sp3m: r3, sp6m: r6, sp12m: r12, maxDD12m: dd,
         eligible: reasons.length === 0,
+        status: reasons.length > 0 ? 'REJECTED' : selectedMonths.has(c.month) ? 'SELECTED' : 'ELIGIBLE',
         rejectionReasons: reasons,
       };
     }).filter(Boolean).sort((a,b) => b.sim - a.sim);
@@ -709,6 +713,7 @@ export default async function handler(req, res) {
       version:   'SIMILARITY_V2_PIT_COSINE_ZSCORE_WIN_DEDUP6M',
       minDims:   MIN_DIMS,
       excludeLast: EXCLUDE_LAST,
+      spCoverage: { first: spMapFirst, last: spMapLast, n: spNorm.length },
     },
 
     // Para Correlaciones
