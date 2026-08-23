@@ -305,6 +305,8 @@ export async function render(container, { actionsSlot }) {
 
       <!-- STRESS TEST HISTÓRICO -->
       ${buildStressTestHTML(hist?.radarStressTest)}
+      ${buildBlockStressHTML(hist?.radarBlockStress)}
+      ${buildScoreTotalHTML(hist?.radarScoreTotal)}
     `;
   }
 
@@ -371,6 +373,109 @@ export async function render(container, { actionsSlot }) {
           </div>`;
         }).join('')}
       </div>`;
+  }
+
+  function buildBlockStressHTML(bs) {
+    if (!bs) return '';
+    const f1=v=>v!=null?(v>=0?'+':'')+v.toFixed(1)+'%':'—';
+    const f3=v=>v!=null?(v>=0?'+':'')+v.toFixed(3):'—';
+    const col=v=>v==null?'var(--text3)':v>0?'var(--green)':'var(--red)';
+    return '<div style="margin-top:14px;">' +
+      '<div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:10px;">Stress Test por Bloque</div>' +
+      Object.entries(bs).map(([bName, bData]) => {
+        const scores = Object.keys(bData.byScore||{}).sort();
+        const sp6=bData.spearmanR6, spB=bData.spearmanBin;
+        return '<div class="mac-card" style="margin-bottom:10px;">' +
+          '<div style="display:flex;justify-content:space-between;margin-bottom:8px;">' +
+            '<span style="font-size:10px;font-weight:700;color:var(--text2);">' + bName + '</span>' +
+            '<span style="font-size:9px;font-family:var(--mono);color:var(--text3);">ρ +6M=' + f3(sp6?.rho) + (sp6?.p!=null?' p='+sp6.p.toFixed(3):'') + ' · ρ bin=' + f3(spB?.rho) + (spB?.p!=null?' p='+spB.p.toFixed(3):'') + '</span>' +
+          '</div>' +
+          '<table style="width:100%;border-collapse:collapse;font-size:9px;font-family:var(--mono);">' +
+            '<thead><tr style="background:var(--surface2);">' +
+              '<th style="padding:3px 6px;text-align:left;color:var(--text3);">Score bloque</th>' +
+              '<th style="padding:3px 6px;text-align:right;color:var(--text3);">N</th>' +
+              '<th style="padding:3px 6px;text-align:right;color:var(--text3);">Med +3M</th>' +
+              '<th style="padding:3px 6px;text-align:right;color:var(--text3);">Med +6M</th>' +
+              '<th style="padding:3px 6px;text-align:right;color:var(--text3);">Med +12M</th>' +
+              '<th style="padding:3px 6px;text-align:right;color:var(--text3);">%Pos+12M</th>' +
+              '<th style="padding:3px 6px;text-align:right;color:var(--text3);">MaxDD</th>' +
+            '</tr></thead><tbody>' +
+            scores.map(k => {
+              const s=bData.byScore[k];
+              return '<tr style="border-bottom:1px solid var(--border);">' +
+                '<td style="padding:3px 6px;font-weight:700;color:' + (+k>0?'var(--green)':+k<0?'var(--red)':'var(--amber)') + ';">' + k + '</td>' +
+                '<td style="padding:3px 6px;text-align:right;color:var(--text3);">' + s.n + '</td>' +
+                '<td style="padding:3px 6px;text-align:right;color:' + col(s.med3m) + ';">' + f1(s.med3m) + '</td>' +
+                '<td style="padding:3px 6px;text-align:right;color:' + col(s.med6m) + ';">' + f1(s.med6m) + '</td>' +
+                '<td style="padding:3px 6px;text-align:right;color:' + col(s.med12m) + ';">' + f1(s.med12m) + '</td>' +
+                '<td style="padding:3px 6px;text-align:right;color:' + ((s.pctPos12m??0)>50?'var(--green)':'var(--red)') + ';">' + (s.pctPos12m!=null?s.pctPos12m+'%':'—') + '</td>' +
+                '<td style="padding:3px 6px;text-align:right;color:var(--red);">' + f1(s.medDD) + '</td>' +
+              '</tr>';
+            }).join('') +
+          '</tbody></table></div>';
+      }).join('') + '</div>';
+  }
+
+  function buildScoreTotalHTML(st) {
+    if (!st) return '';
+    const f1=v=>v!=null?(v>=0?'+':'')+v.toFixed(1)+'%':'—';
+    const f3=v=>v!=null?(v>=0?'+':'')+v.toFixed(3):'—';
+    const col=v=>v==null?'var(--text3)':v>0?'var(--green)':'var(--red)';
+    const v=st.validation||{};
+    return '<div style="margin-top:14px;">' +
+      '<div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:10px;">' +
+        'RISK_RADAR_V1 Score Total — Quintiles y Validación Estadística' +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">' +
+        '<div class="mac-card">' +
+          '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:6px;">Spearman Score Total → S&P 500</div>' +
+          '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">' +
+            [['Pearson +6M', v.pearsonR6], ['Spearman +6M', v.spearmanR6], ['Spearman bin+12M', v.spearmanBin]].map(([l,s]) =>
+              '<div style="background:var(--surface2);border-radius:6px;padding:8px;text-align:center;">' +
+                '<div style="font-size:8px;color:var(--text3);margin-bottom:4px;">' + l + '</div>' +
+                '<div style="font-family:var(--mono);font-size:13px;font-weight:700;color:' + col(s?.rho) + ';">' + f3(s?.rho) + (s?.p!=null&&s.p<0.05?'*':'') + '</div>' +
+                '<div style="font-size:8px;color:var(--text3);">' + (s?.p!=null?'p='+s.p.toFixed(4):'—') + ' N=' + (s?.n||'—') + '</div>' +
+              '</div>'
+            ).join('') +
+          '</div>' +
+        '</div>' +
+        '<div class="mac-card">' +
+          '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:6px;">Estabilidad Temporal Pearson +6M</div>' +
+          '<div style="display:flex;gap:8px;">' +
+            (v.stability||[]).map(b =>
+              '<div style="background:var(--surface2);border-radius:6px;padding:8px;text-align:center;flex:1;">' +
+                '<div style="font-size:8px;color:var(--text3);">' + b.label + '</div>' +
+                '<div style="font-family:var(--mono);font-size:13px;font-weight:700;color:' + col(b.rho) + ';">' + f3(b.rho) + (b.p!=null&&b.p<0.05?'*':'') + '</div>' +
+                '<div style="font-size:8px;color:var(--text3);">N=' + b.n + '</div>' +
+              '</div>'
+            ).join('') +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="mac-card">' +
+        '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:8px;">Quintiles Score Total (N equilibrado) — ¿Monotonicidad retorno/riesgo?</div>' +
+        '<table style="width:100%;border-collapse:collapse;font-size:9px;font-family:var(--mono);">' +
+          '<thead><tr style="background:var(--surface2);">' +
+            '<th style="padding:4px 6px;text-align:left;color:var(--text3);">Q</th><th style="padding:4px 6px;text-align:center;color:var(--text3);">Rango</th>' +
+            '<th style="padding:4px 6px;text-align:right;color:var(--text3);">N</th><th style="padding:4px 6px;text-align:right;color:var(--text3);">Med+3M</th>' +
+            '<th style="padding:4px 6px;text-align:right;color:var(--text3);">Med+6M</th><th style="padding:4px 6px;text-align:right;color:var(--text3);">Med+12M</th>' +
+            '<th style="padding:4px 6px;text-align:right;color:var(--text3);">%Pos+12M</th><th style="padding:4px 6px;text-align:right;color:var(--text3);">MaxDD</th>' +
+          '</tr></thead><tbody>' +
+          (st.quintiles||[]).map(q =>
+            '<tr style="border-bottom:1px solid var(--border);">' +
+              '<td style="padding:4px 6px;color:var(--teal);font-weight:700;">Q'+q.quintile+'</td>' +
+              '<td style="padding:4px 6px;text-align:center;font-size:9px;color:var(--text3);">['+q.minScore+','+q.maxScore+']</td>' +
+              '<td style="padding:4px 6px;text-align:right;color:var(--text3);">'+(q.n6m||q.n)+'</td>' +
+              '<td style="padding:4px 6px;text-align:right;color:'+col(q.med3m)+';">'+f1(q.med3m)+'</td>' +
+              '<td style="padding:4px 6px;text-align:right;color:'+col(q.med6m)+';">'+f1(q.med6m)+'</td>' +
+              '<td style="padding:4px 6px;text-align:right;color:'+col(q.med12m)+';">'+f1(q.med12m)+'</td>' +
+              '<td style="padding:4px 6px;text-align:right;color:'+((q.pctPos12m??0)>50?'var(--green)':'var(--red)')+';">'+(q.pctPos12m!=null?q.pctPos12m+'%':'—')+'</td>' +
+              '<td style="padding:4px 6px;text-align:right;color:var(--red);">'+f1(q.medDD)+'</td>' +
+            '</tr>'
+          ).join('') +
+          '</tbody></table>' +
+          '<div style="font-size:9px;color:var(--text3);margin-top:6px;">Monotonicidad: si MaxDD se deteriora de Q5→Q1 y %Pos+12M sube, el Radar discrimina riesgo aunque no prediga retorno absoluto.</div>' +
+      '</div></div>';
   }
 
   document.getElementById('radar-refresh')?.addEventListener('click', () => load(true));

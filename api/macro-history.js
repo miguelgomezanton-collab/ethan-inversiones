@@ -427,27 +427,105 @@ export default async function handler(req, res) {
       const med=arr=>{const s=[...arr].sort((a,b)=>a-b);return s.length?+s[Math.floor(s.length/2)].toFixed(2):null;};
       return {n:months.length,n3m:r3.length,med3m:med(r3),pctPos3m:r3.length?+(r3.filter(v=>v>0).length/r3.length*100).toFixed(1):null,n6m:r6.length,med6m:med(r6),pctPos6m:r6.length?+(r6.filter(v=>v>0).length/r6.length*100).toFixed(1):null,n12m:r12.length,med12m:med(r12),pctPos12m:r12.length?+(r12.filter(v=>v>0).length/r12.length*100).toFixed(1):null,medDD:med(dd)};
     }
-    const RADAR_IND_KEYS = ['curvaUSD','lei','m2usa','impulso','velM2','creditoVsPib','bbb','tipoReal','reservas'];
+    // Pearson/Spearman simples para validación
+    function pearsonSimple(xs,ys){if(xs.length<15)return null;const mx=xs.reduce((a,b)=>a+b,0)/xs.length,my=ys.reduce((a,b)=>a+b,0)/ys.length;let num=0,dx2=0,dy2=0;for(let i=0;i<xs.length;i++){const a=xs[i]-mx,b=ys[i]-my;num+=a*b;dx2+=a*a;dy2+=b*b;}const d=Math.sqrt(dx2*dy2);if(!d)return null;const r=num/d,n=xs.length,t=r*Math.sqrt(n-2)/Math.sqrt(1-r*r+1e-10);const z=Math.abs(t),p=n>30?2*(1-(0.5*(1+Math.sign(z)*Math.sqrt(1-Math.exp(-2*z*z/Math.PI))))):null;return{rho:+r.toFixed(3),n,p:p!=null?+p.toFixed(4):null};}
+    function rankArr(arr){const s=[...arr].map((v,i)=>({v,i})).sort((a,b)=>a.v-b.v);const r=new Array(arr.length);let i=0;while(i<s.length){let j=i;while(j<s.length&&s[j].v===s[i].v)j++;const avg=(i+j-1)/2;for(let k=i;k<j;k++)r[s[k].i]=avg;i=j;}return r;}
+    function spearmanSimple(xs,ys){return pearsonSimple(rankArr(xs),rankArr(ys));}
+
+    // ── Stress test por INDICADOR ─────────────────────────────
+    const RADAR_IND = [
+      {id:'curvaUSD', block:'Ciclo',    source:'HIST_MACRO_V1', getter:m=>m.components?.curvaUSD, scoreFrom:c=>c?.score??null},
+      {id:'lei',      block:'Ciclo',    source:'HIST_MACRO_V1', getter:m=>m.components?.lei,       scoreFrom:c=>c?.score??null},
+      {id:'m2usa',    block:'Liquidez', source:'HIST_MACRO_V1', getter:m=>m.components?.m2usa,     scoreFrom:c=>c?.score??null},
+      {id:'impulso',  block:'Liquidez', source:'HIST_MACRO_V1', getter:m=>m.components?.impulso,   scoreFrom:c=>c?.score??null},
+      {id:'velM2',    block:'Liquidez', source:'HIST_MACRO_V1', getter:m=>m.components?.velM2,     scoreFrom:c=>c?.score??null},
+      {id:'creditoVsPib',block:'Liquidez',source:'HIST_MACRO_V1',getter:m=>m.components?.creditoVsPib,scoreFrom:c=>c?.score??null},
+      {id:'bbb',      block:'Crédito',  source:'SHARED',        getter:m=>m.components?.bbb,       scoreFrom:c=>c?.value!=null?(c.value<=1?1:c.value<=1.5?0:-1):null},
+      {id:'tipoReal', block:'Política', source:'HIST_MACRO_V1', getter:m=>m.components?.tipoReal,  scoreFrom:c=>c?.score??null},
+      {id:'reservas', block:'Política', source:'HIST_MACRO_V1', getter:m=>m.components?.reservas,  scoreFrom:c=>c?.score??null, structuralNote:'STRUCTURAL_REVIEW — nivel nominal no estacionario entre regímenes QE/QT'},
+    ];
     const rst = {};
-    for (const k of RADAR_IND_KEYS) {
-      const byScore = {};
-      const xs=[], ys6=[];
+    for (const ind of RADAR_IND) {
+      const byScore={},xs=[],ys6=[],ybin=[];
       for (const m of histMacroV1) {
-        if (!m.valid) continue;
-        const c = m.components?.[k];
-        let sc = c?.score ?? null;
-        if (k==='bbb' && c?.value!=null) sc = c.value<=1?1:c.value<=1.5?0:-1;
-        if (sc==null) continue;
-        const key = sc>=0?'+'+sc:String(sc);
-        if (!byScore[key]) byScore[key]=[];
+        if(!m.valid) continue;
+        const sc=ind.scoreFrom(ind.getter(m));
+        if(sc==null) continue;
+        const key=sc>=0?'+'+sc:String(sc);
+        if(!byScore[key]) byScore[key]=[];
         byScore[key].push(m.month);
-        const r6=fwdM6.get(m.month); if(r6!=null){xs.push(sc);ys6.push(r6);}
+        const r6=fwdM6.get(m.month),r12=fwdM12.get(m.month);
+        if(r6!=null){xs.push(sc);ys6.push(r6);}
+        if(r12!=null){ybin.push(r12>0?1:0);}
       }
-      const byScoreStats={};
-      for (const [k2,months] of Object.entries(byScore)) if(months.length) byScoreStats[k2]=fwdStats(months);
-      rst[k] = { block: k==='curvaUSD'?'Ciclo':k==='lei'?'Ciclo':k==='m2usa'||k==='impulso'||k==='velM2'||k==='creditoVsPib'?'Liquidez':k==='bbb'?'Crédito':k==='tipoReal'||k==='reservas'?'Política':'?', source: k==='bbb'?'SHARED':'HIST_MACRO_V1', byScore: byScoreStats, n: xs.length };
+      const bss={};
+      for(const[k2,months] of Object.entries(byScore)) if(months.length) bss[k2]=fwdStats(months);
+      const insuffN=Object.values(bss).every(v=>v.n<10)||xs.length<15;
+      const spR6=spearmanSimple(xs,ys6),spBin=spearmanSimple(xs,ybin.slice(0,xs.length));
+      const status=insuffN?'INSUFFICIENT_N':(spBin?.p!=null&&spBin.p<0.05)?'VALIDATED':(spBin?.p!=null&&spBin.p<0.15)?'WEAK':'UNSTABLE';
+      rst[ind.id]={block:ind.block,source:ind.source,structuralNote:ind.structuralNote,byScore:bss,pearsonR6:pearsonSimple(xs,ys6),spearmanR6:spR6,spearmanBin:spBin,status};
     }
-    return res.status(200).json({ updatedAt: new Date().toISOString(), radarStressTest: rst, errors: errs.length?errs:undefined });
+
+    // ── Stress test por BLOQUE ─────────────────────────────────
+    const BLOCK_DEFS={Ciclo:{inds:['curvaUSD','lei']},Liquidez:{inds:['m2usa','impulso','velM2','creditoVsPib']},Crédito:{inds:['bbb']},Política:{inds:['tipoReal','reservas']}};
+    const blockResults={};
+    for(const[bName,bDef] of Object.entries(BLOCK_DEFS)){
+      const scoreByMonth={};
+      for(const m of histMacroV1){
+        if(!m.valid) continue;
+        let bSc=0,nV=0;
+        for(const indId of bDef.inds){const ind=RADAR_IND.find(i=>i.id===indId);const sc=ind?.scoreFrom(ind.getter(m));if(sc!=null){bSc+=sc;nV++;}}
+        if(nV>0) scoreByMonth[m.month]=bSc;
+      }
+      const byScore={},xs=[],ys6=[],ybin=[];
+      for(const[ym,sc] of Object.entries(scoreByMonth)){
+        const key=sc>=0?'+'+sc:String(sc);
+        if(!byScore[key]) byScore[key]=[];
+        byScore[key].push(ym);
+        const r6=fwdM6.get(ym),r12=fwdM12.get(ym);
+        if(r6!=null){xs.push(sc);ys6.push(r6);}
+        if(r12!=null){ybin.push(r12>0?1:0);}
+      }
+      const bss={};
+      for(const[k,months] of Object.entries(byScore)) if(months.length) bss[k]=fwdStats(months);
+      blockResults[bName]={byScore:bss,spearmanR6:spearmanSimple(xs,ys6),spearmanBin:spearmanSimple(xs,ybin.slice(0,xs.length))};
+    }
+
+    // ── Stress test SCORE TOTAL ────────────────────────────────
+    const totalPairs=[];
+    for(const m of histMacroV1){
+      if(!m.valid) continue;
+      let tot=0,nV=0;
+      for(const ind of RADAR_IND){const sc=ind.scoreFrom(ind.getter(m));if(sc!=null){tot+=sc;nV++;}}
+      if(nV>=4&&fwdM6.get(m.month)!=null) totalPairs.push({ym:m.month,sc:tot});
+    }
+    totalPairs.sort((a,b)=>a.sc-b.sc||a.ym.localeCompare(b.ym));
+    const Ntp=totalPairs.length;
+    totalPairs.forEach((p,i)=>{p.q=Math.min(5,Math.floor(i*5/Ntp)+1);});
+    const quintileResults=[1,2,3,4,5].map(q=>{
+      const sl=totalPairs.filter(p=>p.q===q);
+      const scores=sl.map(p=>p.sc);
+      return{quintile:q,minScore:scores.length?Math.min(...scores):null,maxScore:scores.length?Math.max(...scores):null,...fwdStats(sl.map(p=>p.ym))};
+    });
+    const tsXs=totalPairs.map(p=>p.sc),tsY6=totalPairs.map(p=>fwdM6.get(p.ym));
+    const t12=totalPairs.filter(p=>fwdM12.get(p.ym)!=null);
+    const tsXs12=t12.map(p=>p.sc),tsYbin=t12.map(p=>fwdM12.get(p.ym)>0?1:0);
+    const chronoPairs=[...totalPairs].sort((a,b)=>a.ym.localeCompare(b.ym));
+    const bSz=Math.floor(chronoPairs.length/3);
+    const stability=['Early','Mid','Recent'].map((label,i)=>{
+      const bl=chronoPairs.slice(i*bSz,i===2?chronoPairs.length:(i+1)*bSz);
+      const xs=bl.map(p=>p.sc),ys=bl.map(p=>fwdM6.get(p.ym));
+      const res=pearsonSimple(xs,ys);
+      return{label,n:bl.length,first:bl[0]?.ym,last:bl[bl.length-1]?.ym,rho:res?.rho??null,p:res?.p??null};
+    });
+
+    return res.status(200).json({
+      updatedAt: new Date().toISOString(),
+      radarStressTest: rst,
+      radarBlockStress: blockResults,
+      radarScoreTotal: {quintiles:quintileResults,validation:{nTotal:Ntp,pearsonR6:pearsonSimple(tsXs,tsY6),spearmanR6:spearmanSimple(tsXs,tsY6),spearmanBin:spearmanSimple(tsXs12,tsYbin),stability}},
+      errors: errs.length?errs:undefined,
+    });
   }
 
   function spReturn(fromYM, monthsForward) {
