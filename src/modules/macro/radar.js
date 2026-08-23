@@ -14,12 +14,18 @@ export async function render(container, { actionsSlot }) {
   container.innerHTML = `<div id="radar-wrap"><div class="empty"><div class="loader-ring"></div></div></div>`;
 
   async function load(force = false) {
-    try { const m = await getMacroData(force); paint(m); }
+    try {
+      const [m, hist] = await Promise.all([
+        getMacroData(force),
+        fetch('/api/macro-history?type=correlaciones').then(r => r.ok ? r.json() : null).catch(() => null),
+      ]);
+      paint(m, hist);
+    }
     catch(e) { document.getElementById('radar-wrap').innerHTML =
       `<div class="empty"><div class="empty-icon">⚠</div><div class="empty-title">Error</div><div class="empty-desc">${e.message}</div></div>`; }
   }
 
-  function paint(macro) {
+  function paint(macro, hist) {
     const el  = document.getElementById('radar-wrap');
     const co  = macro.coyuntura  || {};
     const ind = macro.indicators || {};
@@ -296,7 +302,75 @@ export async function render(container, { actionsSlot }) {
         </div>
       </div>
       <div class="co-footer" style="margin-top:14px;">RISK_RADAR_V1 · ${VERSION} · actualización automática</div>
+
+      <!-- STRESS TEST HISTÓRICO -->
+      ${buildStressTestHTML(hist?.radarStressTest)}
     `;
+  }
+
+  function buildStressTestHTML(st) {
+    if (!st) return '<div style="font-size:9px;color:var(--text3);margin-top:14px;">Stress test no disponible (macro-history no cargado)</div>';
+    const f1 = v => v != null ? (v>=0?'+':'')+v.toFixed(1)+'%' : '—';
+    const f3 = v => v != null ? (v>=0?'+':'')+v.toFixed(3) : '—';
+    const sc = (s,p) => s==='VALIDATED'?'var(--green)':s==='WEAK'?'var(--amber)':s==='UNSTABLE'?'var(--red)':'var(--text3)';
+    const IND_LABELS = {
+      curvaUSD:'Curva USD', lei:'LEI', m2usa:'M2 USA', impulso:'Impulso',
+      velM2:'Vel.M2', creditoVsPib:'Crédito/PIB', bbb:'BBB Spread',
+      tipoReal:'Tipo Real', reservas:'Reservas',
+    };
+    return `
+      <div style="margin-top:14px;">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:10px;">
+          Stress Test Histórico — RISK_RADAR_V1 vs S&P 500 Forward Returns
+          <span style="font-weight:400;margin-left:8px;">Pearson/Spearman score→retorno +6M · Bootstrap 1000 sims bloque 6M</span>
+        </div>
+        ${Object.entries(st).map(([id, data]) => {
+          const label = IND_LABELS[id] || id;
+          const v = data.validation || {};
+          const statusCol = sc(v.status);
+          const scores = Object.keys(data.byScore||{}).sort();
+          if (!scores.length) return '';
+          return `<div class="mac-card" style="margin-bottom:10px;">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;">
+              <div>
+                <span style="font-size:10px;font-weight:700;color:var(--text2);">${label}</span>
+                <span style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-left:8px;">[${data.source}] · ${data.block}</span>
+                ${data.note?`<span style="font-size:9px;color:var(--amber);margin-left:6px;">⚠ ${data.note}</span>`:''}
+              </div>
+              <div style="font-size:9px;font-family:var(--mono);color:${statusCol};font-weight:700;">
+                ${v.status||'—'}
+                ${v.rho!=null?' ρ='+f3(v.rho):''}
+                ${v.ci95?' IC95['+v.ci95[0]+','+v.ci95[1]+']':''}
+                ${v.n?' N='+v.n:''}
+              </div>
+            </div>
+            <table style="width:100%;border-collapse:collapse;font-size:9px;font-family:var(--mono);">
+              <thead><tr style="background:var(--surface2);">
+                <th style="padding:4px 6px;text-align:left;color:var(--text3);">Score</th>
+                <th style="padding:4px 6px;text-align:right;color:var(--text3);">N</th>
+                <th style="padding:4px 6px;text-align:right;color:var(--text3);">Med +3M</th>
+                <th style="padding:4px 6px;text-align:right;color:var(--text3);">Med +6M</th>
+                <th style="padding:4px 6px;text-align:right;color:var(--text3);">Med +12M</th>
+                <th style="padding:4px 6px;text-align:right;color:var(--text3);">%Pos +12M</th>
+                <th style="padding:4px 6px;text-align:right;color:var(--text3);">MaxDD</th>
+              </tr></thead>
+              <tbody>${scores.map(k => {
+                const s = data.byScore[k];
+                const col = v => v==null?'var(--text3)':v>0?'var(--green)':'var(--red)';
+                return `<tr style="border-bottom:1px solid var(--border);">
+                  <td style="padding:4px 6px;font-weight:700;color:${+k>0?'var(--green)':+k<0?'var(--red)':'var(--amber)'};">${k}</td>
+                  <td style="padding:4px 6px;text-align:right;color:var(--text3);">${s.n}</td>
+                  <td style="padding:4px 6px;text-align:right;color:${col(s.med3m)};">${f1(s.med3m)}</td>
+                  <td style="padding:4px 6px;text-align:right;color:${col(s.med6m)};">${f1(s.med6m)}</td>
+                  <td style="padding:4px 6px;text-align:right;color:${col(s.med12m)};">${f1(s.med12m)}</td>
+                  <td style="padding:4px 6px;text-align:right;color:${(s.pctPos12m??0)>50?'var(--green)':'var(--red)'};">${s.pctPos12m!=null?s.pctPos12m+'%':'—'}</td>
+                  <td style="padding:4px 6px;text-align:right;color:var(--red);">${f1(s.medDD)}</td>
+                </tr>`;
+              }).join('')}</tbody>
+            </table>
+          </div>`;
+        }).join('')}
+      </div>`;
   }
 
   document.getElementById('radar-refresh')?.addEventListener('click', () => load(true));

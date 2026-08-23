@@ -1081,6 +1081,124 @@ export default async function handler(req, res) {
     }
   }
 
+  // ── RISK_RADAR_V1 Stress Test ─────────────────────────────────
+  // Para cada indicador del Radar: reconstruir valor histórico desde histMacroV1,
+  // aplicar thresholds actuales, calcular forward returns y validación estadística.
+  // Reutiliza: spReturn, maxDrawdown, pearsonWithP, pearsonRanks, rankArray, buildForwardMap
+
+  let radarStressTest = {};
+  try {
+    const fwdMap3  = buildForwardMap(spMap, 3);
+    const fwdMap6  = buildForwardMap(spMap, 6);
+    const fwdMap12 = buildForwardMap(spMap, 12);
+
+    // Definición de indicadores del Radar con getter desde histMacroV1
+    const RADAR_INDICATORS = [
+      { id: 'curvaUSD',     block: 'Ciclo Económico',    source: 'HIST_MACRO_V1',
+        getter: m => m.components?.curvaUSD,
+        scoreFrom: c => c?.score ?? null },
+      { id: 'curvaEUR',     block: 'Ciclo Económico',    source: 'HIST_MACRO_V1',
+        getter: m => m.components?.curvaUSD, // proxy — EUR no en histMacroV1
+        scoreFrom: c => null, note: 'EUR no en HIST_MACRO_V1, proxy no disponible' },
+      { id: 'lei',          block: 'Ciclo Económico',    source: 'HIST_MACRO_V1',
+        getter: m => m.components?.lei,
+        scoreFrom: c => c?.score ?? null },
+      { id: 'm2usa',        block: 'Liquidez Global',    source: 'HIST_MACRO_V1',
+        getter: m => m.components?.m2usa,
+        scoreFrom: c => c?.score ?? null },
+      { id: 'impulso',      block: 'Liquidez Global',    source: 'HIST_MACRO_V1',
+        getter: m => m.components?.impulso,
+        scoreFrom: c => c?.score ?? null },
+      { id: 'velM2',        block: 'Liquidez Global',    source: 'HIST_MACRO_V1',
+        getter: m => m.components?.velM2,
+        scoreFrom: c => c?.score ?? null },
+      { id: 'creditoVsPib', block: 'Liquidez Global',    source: 'HIST_MACRO_V1',
+        getter: m => m.components?.creditoVsPib,
+        scoreFrom: c => c?.score ?? null },
+      { id: 'bbb',          block: 'Crédito',            source: 'SHARED',
+        getter: m => m.components?.bbb,
+        scoreFrom: c => c?.value != null ? (c.value <= 1 ? 1 : c.value <= 1.5 ? 0 : -1) : null },
+      { id: 'tipoReal',     block: 'Política Monetaria', source: 'HIST_MACRO_V1',
+        getter: m => m.components?.tipoReal,
+        scoreFrom: c => c?.score ?? null },
+      { id: 'reservas',     block: 'Política Monetaria', source: 'HIST_MACRO_V1',
+        getter: m => m.components?.reservas,
+        scoreFrom: c => c?.score ?? null },
+    ];
+
+    // Para cada indicador: agrupar meses por score, calcular forward stats
+    function forwardStats(months) {
+      const r3 = months.map(m => fwdMap3.get(m)).filter(v => v != null);
+      const r6 = months.map(m => fwdMap6.get(m)).filter(v => v != null);
+      const r12= months.map(m => fwdMap12.get(m)).filter(v => v != null);
+      const dd = months.map(m => maxDrawdown(m, 12)).filter(v => v != null);
+      const med = arr => { const s=[...arr].sort((a,b)=>a-b); return s.length?+s[Math.floor(s.length/2)].toFixed(2):null; };
+      return {
+        n: months.length,
+        n3m: r3.length, med3m: med(r3), pctPos3m: r3.length?+(r3.filter(v=>v>0).length/r3.length*100).toFixed(1):null,
+        n6m: r6.length, med6m: med(r6), pctPos6m: r6.length?+(r6.filter(v=>v>0).length/r6.length*100).toFixed(1):null,
+        n12m:r12.length,med12m:med(r12),pctPos12m:r12.length?+(r12.filter(v=>v>0).length/r12.length*100).toFixed(1):null,
+        medDD: med(dd),
+      };
+    }
+
+    // Validación estadística Spearman score→retorno +6M con bootstrap
+    function validateIndicator(xs, ys6) {
+      if (xs.length < 15) return { status: 'INSUFFICIENT_N', n: xs.length };
+      const rho = pearsonRanks(rankArray(xs), rankArray(ys6));
+      if (!rho) return { status: 'INSUFFICIENT_N', n: xs.length };
+      // Bootstrap ligero (1000 sims para no agotar tiempo Vercel)
+      let seed = 20260823;
+      function rand() { seed=(seed*1664525+1013904223)&0xFFFFFFFF; return (seed>>>0)/4294967296; }
+      const pairs = xs.map((x,i)=>[x,ys6[i]]);
+      const T = pairs.length, NSIM = 1000, BLOCK = 6;
+      function rhoFrom(arr) {
+        const rx=rankArray(arr.map(p=>p[0])), ry=rankArray(arr.map(p=>p[1]));
+        const mx=rx.reduce((a,b)=>a+b,0)/arr.length, my=ry.reduce((a,b)=>a+b,0)/arr.length;
+        let num=0,dx2=0,dy2=0;
+        for(let i=0;i<arr.length;i++){const a=rx[i]-mx,b=ry[i]-my;num+=a*b;dx2+=a*a;dy2+=b*b;}
+        const d=Math.sqrt(dx2*dy2); return d?num/d:0;
+      }
+      const boot = [];
+      for (let s=0;s<NSIM;s++) {
+        const samp=[];
+        while(samp.length<T){const st=Math.floor(rand()*(T-BLOCK+1));for(let k=0;k<BLOCK&&samp.length<T;k++)samp.push(pairs[(st+k)%T]);}
+        boot.push(rhoFrom(samp));
+      }
+      boot.sort((a,b)=>a-b);
+      const ci025=boot[Math.floor(NSIM*0.025)], ci975=boot[Math.floor(NSIM*0.975)];
+      const pBoot = boot.filter(r=>r>=0).length/NSIM;
+      const excludes0 = (rho.rho < 0 && ci975 < 0) || (rho.rho > 0 && ci025 > 0);
+      const status = excludes0 ? 'VALIDATED' : pBoot < 0.1 ? 'WEAK' : 'UNSTABLE';
+      return { status, rho: rho.rho, p: rho.p, ci95: [+ci025.toFixed(3), +ci975.toFixed(3)], pBoot: +pBoot.toFixed(4), n: xs.length, excludes0 };
+    }
+
+    for (const ind of RADAR_INDICATORS) {
+      const byScore = { '+1':[], '0':[], '-1':[], '-2':[], '-3':[], '+2':[], '+3':[] };
+      const xs=[], ys6=[];
+      for (const m of histMacroV1) {
+        if (!m.valid) continue;
+        const comp = ind.getter(m);
+        const sc   = ind.scoreFrom(comp);
+        if (sc == null) continue;
+        const key  = sc >= 0 ? '+'+sc : String(sc);
+        if (!byScore[key]) byScore[key] = [];
+        byScore[key].push(m.month);
+        const r6 = fwdMap6.get(m.month);
+        if (r6 != null) { xs.push(sc); ys6.push(r6); }
+      }
+      const byScoreStats = {};
+      for (const [k,months] of Object.entries(byScore)) {
+        if (months.length > 0) byScoreStats[k] = forwardStats(months);
+      }
+      radarStressTest[ind.id] = {
+        block: ind.block, source: ind.source, note: ind.note,
+        byScore: byScoreStats,
+        validation: validateIndicator(xs, ys6),
+      };
+    }
+  } catch(e) { errs.push('radarStressTest error: ' + e.message); }
+
   // ── Respuesta ─────────────────────────────────
   return res.status(200).json({
     updatedAt: new Date().toISOString(),
@@ -1139,6 +1257,7 @@ export default async function handler(req, res) {
     regimeAnalysis,
     quintiles,
     stabilityByIndicator,
+    radarStressTest,
     spearman: {
       return12m:          spearmanReturn,
       binary12m:          spearmanBinary,
