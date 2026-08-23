@@ -242,25 +242,64 @@ export async function render(container, { actionsSlot }) {
 
       <div class="mac-card" style="margin-bottom:14px;">
         <div style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:10px;">
-          Estabilidad Temporal · ρ +6M por ventana de 10 años · * = p&lt;0.05
+          Estabilidad Temporal · Pearson +6M en 3 bloques iguales por N · * = p&lt;0.05
         </div>
-        ${['tipoReal','lei','bbb','scoreNorm'].map(k => {
-          const IND = {tipoReal:'Tipo Real',lei:'LEI',bbb:'BBB Spread',scoreNorm:'ScoreNorm'};
-          const windows = hist.stabilityByIndicator?.[k]||[];
-          if (!windows.length) return '<div style="font-size:9px;color:var(--text3);margin-bottom:8px;">'+IND[k]+': N insuficiente</div>';
-          return '<div style="margin-bottom:10px;">' +
-            '<div style="font-size:9px;color:var(--text2);font-weight:700;font-family:var(--mono);margin-bottom:4px;">'+IND[k]+'</div>' +
-            '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
-            windows.map(w => {
-              const col = w.rho==null?'var(--text3)':w.rho>0?'var(--green)':'var(--red)';
-              const sig = w.p!=null&&w.p<0.05?'*':'';
-              return '<div style="background:var(--surface2);border-radius:6px;padding:6px 10px;text-align:center;min-width:86px;">' +
-                '<div style="font-size:8px;color:var(--text3);font-family:var(--mono);">'+w.window+'</div>' +
-                '<div style="font-family:var(--mono);font-size:13px;font-weight:700;color:'+col+';margin:2px 0;">'+(w.rho!=null?(w.rho>=0?'+':'')+w.rho.toFixed(2)+sig:'—')+'</div>' +
-                '<div style="font-size:8px;color:var(--text3);">N='+w.n+'</div>' +
-              '</div>';
-            }).join('') + '</div></div>';
-        }).join('')}
+        <table style="width:100%;border-collapse:collapse;font-size:10px;">
+          <thead><tr style="background:var(--surface2);">
+            <th style="padding:6px 8px;text-align:left;font-size:9px;color:var(--text3);">Indicador</th>
+            ${(hist.stabilityByIndicator?.tipoReal||[]).map(b =>
+              '<th style="padding:6px 8px;text-align:center;font-size:9px;color:var(--text3);">'+b.label+'<br><span style="font-weight:400;">'+b.window+'</span><br>N='+b.n+'</th>'
+            ).join('')}
+          </tr></thead>
+          <tbody>
+            ${['tipoReal','lei','bbb','scoreNorm'].map(k => {
+              const IND = {tipoReal:'Tipo Real',lei:'LEI',bbb:'BBB Spread',scoreNorm:'ScoreNorm'};
+              const blocks = hist.stabilityByIndicator?.[k]||[];
+              return '<tr style="border-bottom:1px solid var(--border);">' +
+                '<td style="padding:6px 8px;color:var(--text2);">'+IND[k]+'</td>' +
+                blocks.map(b => {
+                  if (b.lowN) return '<td style="padding:6px 8px;text-align:center;font-family:var(--mono);font-size:9px;color:var(--text3);">LOW N</td>';
+                  const col = b.rho==null?'var(--text3)':b.rho>0?'var(--green)':'var(--red)';
+                  const sig = b.p!=null&&b.p<0.05?'*':'';
+                  const ci  = b.ci95 ? ' ['+b.ci95[0]+','+b.ci95[1]+']' : '';
+                  return '<td style="padding:6px 8px;text-align:center;font-family:var(--mono);color:'+col+';">' +
+                    (b.rho!=null?(b.rho>=0?'+':'')+b.rho.toFixed(2)+sig:'—') +
+                    '<div style="font-size:8px;color:var(--text3);">'+(b.p!=null?'p='+b.p.toFixed(3):'—')+ci+'</div>' +
+                  '</td>';
+                }).join('') +
+              '</tr>';
+            }).join('')}
+          </tbody>
+        </table>
+        <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:6px;">* p&lt;0.05 · Si ρ cambia de signo entre bloques: relación de régimen, no estructural.</div>
+      </div>
+
+      <div class="mac-card" style="margin-bottom:14px;">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:10px;">
+          Spearman ScoreNorm → S&amp;P 500 · Retorno +12M
+        </div>
+        ${(() => {
+          const sp = hist.spearman;
+          if (!sp) return '<div style="font-size:9px;color:var(--text3);">Sin datos</div>';
+          const f3 = v => v!=null?(v>=0?'+':'')+v.toFixed(3):'—';
+          const col = v => v==null?'var(--text3)':v>0?'var(--green)':'var(--red)';
+          const sig = v => v!=null&&v<0.05?'*':'';
+          return '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+            '<div style="background:var(--surface2);border-radius:8px;padding:12px;">' +
+              '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:6px;">ρ Spearman vs retorno +12M continuo</div>' +
+              '<div style="font-family:var(--serif);font-size:28px;font-weight:600;font-style:italic;color:'+col(sp.return12m?.rho)+';">'+f3(sp.return12m?.rho)+sig(sp.return12m?.p)+'</div>' +
+              '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);">N='+sp.n+' · p='+(sp.return12m?.p!=null?sp.return12m.p.toFixed(4):'—')+'</div>' +
+              '<div style="font-size:9px;color:var(--text3);">IC95: '+(sp.return12m?.ci95?'['+sp.return12m.ci95[0]+', '+sp.return12m.ci95[1]+']':'—')+'</div>' +
+            '</div>' +
+            '<div style="background:var(--surface2);border-radius:8px;padding:12px;">' +
+              '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:6px;">ρ Spearman vs binario positivo +12M (1/0)</div>' +
+              '<div style="font-family:var(--serif);font-size:28px;font-weight:600;font-style:italic;color:'+col(sp.binary12m?.rho)+';">'+f3(sp.binary12m?.rho)+sig(sp.binary12m?.p)+'</div>' +
+              '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);">N='+sp.n+' · p='+(sp.binary12m?.p!=null?sp.binary12m.p.toFixed(4):'—')+'</div>' +
+              '<div style="font-size:9px;color:var(--text3);">IC95: '+(sp.binary12m?.ci95?'['+sp.binary12m.ci95[0]+', '+sp.binary12m.ci95[1]+']':'—')+'</div>' +
+            '</div>' +
+          '</div>' +
+          '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:8px;">El Spearman binario mide si Score alto → mayor probabilidad de retorno positivo. Caída Q5 al 63,6% sugiere que puede haber señal negativa en la dirección.</div>';
+        })()}
       </div>
 
       <div class="co-footer">

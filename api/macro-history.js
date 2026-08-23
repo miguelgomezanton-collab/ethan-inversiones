@@ -954,6 +954,7 @@ export default async function handler(req, res) {
     regimeAnalysis,
     quintiles,
     stabilityByIndicator,
+    spearman: { return12m: spearmanReturn, binary12m: spearmanBinary, n: spearmanXs.length },
 
     // Metadatos
     n_months: sp?.length || 0,
