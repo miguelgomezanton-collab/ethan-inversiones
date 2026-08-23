@@ -17,7 +17,7 @@ export async function render(container, { actionsSlot }) {
     try {
       const [m, hist] = await Promise.all([
         getMacroData(force),
-        fetch('/api/macro-history?type=correlaciones').then(r => r.ok ? r.json() : null).catch(() => null),
+        fetch('/api/macro-history?type=radar').then(r => r.ok ? r.json() : null).catch(() => null),
       ]);
       paint(m, hist);
     }

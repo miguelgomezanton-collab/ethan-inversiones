@@ -94,7 +94,7 @@ export default async function handler(req, res) {
   const key = process.env.FRED_API_KEY;
   if (!key) return res.status(500).json({ error: 'FRED_API_KEY no configurada' });
 
-  const type = req.query.type || 'all'; // 'timeline' | 'correlaciones' | 'all'
+  const type = req.query.type || 'all'; // 'timeline' | 'correlaciones' | 'radar' | 'all'
   const errs = [];
 
   // ── Fetch FRED histórico ──────────────────────
@@ -386,17 +386,69 @@ export default async function handler(req, res) {
   const histMacroV1 = buildHistMacroV1();
 
   // ── Fase 2B: Motor de Analogías ────────────────────────────────
-  // Vector: [curvaUSD, tipoReal, lei, m2usa, creditoVsPib, impulso, velM2, reservas, bbb]
-  // BBB entra en similitud (no en score) — ayuda a distinguir estrés financiero
   const VECTOR_KEYS   = ['curvaUSD','tipoReal','lei','m2usa','creditoVsPib','impulso','velM2','reservas','bbb'];
   const VECTOR_MAXSC  = { curvaUSD:1, tipoReal:1, lei:1, m2usa:3, creditoVsPib:3, impulso:2, velM2:2, reservas:1, bbb:1 };
-  const MIN_DIMS      = 6;  // mínimo 6 de 9 dimensiones comunes
-  const EXCLUDE_LAST  = 12; // excluir últimos 12 meses del histórico
+  const MIN_DIMS      = 6;
+  const EXCLUDE_LAST  = 12;
 
-    // Debug SP500 cobertura
-    const spMapFirst = spNorm.length ? spNorm[0].date.slice(0,7) : '—';
-    const spMapLast  = spNorm.length ? spNorm[spNorm.length-1].date.slice(0,7) : '—';
+  const spMapFirst = spNorm.length ? spNorm[0].date.slice(0,7) : '—';
+  const spMapLast  = spNorm.length ? spNorm[spNorm.length-1].date.slice(0,7) : '—';
   const spMap = new Map(spNorm.map(p => [p.date.slice(0,7), p.value]));
+
+  // Early return para type=radar — solo stress test, sin analogías ni correlaciones pesadas
+  if (type === 'radar') {
+    // Construir radarStressTest inline (reutiliza funciones declaradas abajo via hoisting)
+    // spReturn y maxDrawdown se definen después pero en mismo scope de función
+    // Usamos approach directo sin llamar funciones no declaradas aún
+    const fwdM3 = new Map(), fwdM6 = new Map(), fwdM12 = new Map();
+    for (const [ym] of spMap) {
+      const base = new Date(ym + '-01');
+      [3,6,12].forEach(h => {
+        const t = new Date(base); t.setMonth(t.getMonth() + h);
+        const tym = t.toISOString().slice(0,7);
+        const from = spMap.get(ym), to = spMap.get(tym);
+        if (from && to) {
+          const r = +((to/from-1)*100).toFixed(2);
+          if (h===3) fwdM3.set(ym,r); else if (h===6) fwdM6.set(ym,r); else fwdM12.set(ym,r);
+        }
+      });
+    }
+    function maxDD12(fromYM) {
+      const from = spMap.get(fromYM); if (!from) return null;
+      let peak=from, maxD=0;
+      for (let i=1;i<=12;i++){const t=new Date(fromYM+'-01');t.setMonth(t.getMonth()+i);const v=spMap.get(t.toISOString().slice(0,7));if(!v)continue;if(v>peak)peak=v;const d=(v-peak)/peak*100;if(d<maxD)maxD=d;}
+      return +maxD.toFixed(2);
+    }
+    function fwdStats(months) {
+      const r3=months.map(m=>fwdM3.get(m)).filter(v=>v!=null);
+      const r6=months.map(m=>fwdM6.get(m)).filter(v=>v!=null);
+      const r12=months.map(m=>fwdM12.get(m)).filter(v=>v!=null);
+      const dd=months.map(m=>maxDD12(m)).filter(v=>v!=null);
+      const med=arr=>{const s=[...arr].sort((a,b)=>a-b);return s.length?+s[Math.floor(s.length/2)].toFixed(2):null;};
+      return {n:months.length,n3m:r3.length,med3m:med(r3),pctPos3m:r3.length?+(r3.filter(v=>v>0).length/r3.length*100).toFixed(1):null,n6m:r6.length,med6m:med(r6),pctPos6m:r6.length?+(r6.filter(v=>v>0).length/r6.length*100).toFixed(1):null,n12m:r12.length,med12m:med(r12),pctPos12m:r12.length?+(r12.filter(v=>v>0).length/r12.length*100).toFixed(1):null,medDD:med(dd)};
+    }
+    const RADAR_IND_KEYS = ['curvaUSD','lei','m2usa','impulso','velM2','creditoVsPib','bbb','tipoReal','reservas'];
+    const rst = {};
+    for (const k of RADAR_IND_KEYS) {
+      const byScore = {};
+      const xs=[], ys6=[];
+      for (const m of histMacroV1) {
+        if (!m.valid) continue;
+        const c = m.components?.[k];
+        let sc = c?.score ?? null;
+        if (k==='bbb' && c?.value!=null) sc = c.value<=1?1:c.value<=1.5?0:-1;
+        if (sc==null) continue;
+        const key = sc>=0?'+'+sc:String(sc);
+        if (!byScore[key]) byScore[key]=[];
+        byScore[key].push(m.month);
+        const r6=fwdM6.get(m.month); if(r6!=null){xs.push(sc);ys6.push(r6);}
+      }
+      const byScoreStats={};
+      for (const [k2,months] of Object.entries(byScore)) if(months.length) byScoreStats[k2]=fwdStats(months);
+      rst[k] = { block: k==='curvaUSD'?'Ciclo':k==='lei'?'Ciclo':k==='m2usa'||k==='impulso'||k==='velM2'||k==='creditoVsPib'?'Liquidez':k==='bbb'?'Crédito':k==='tipoReal'||k==='reservas'?'Política':'?', source: k==='bbb'?'SHARED':'HIST_MACRO_V1', byScore: byScoreStats, n: xs.length };
+    }
+    return res.status(200).json({ updatedAt: new Date().toISOString(), radarStressTest: rst, errors: errs.length?errs:undefined });
+  }
 
   function spReturn(fromYM, monthsForward) {
     const from = spMap.get(fromYM);
