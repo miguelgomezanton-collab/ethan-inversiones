@@ -7,7 +7,8 @@ const FRED = 'https://api.stlouisfed.org/fred/series/observations';
 async function fred(id, key, limit = 96, order = 'asc', freq = '', observationStart = '') {
   const freqParam  = freq ? `&frequency=${freq}` : '';
   const startParam = observationStart ? `&observation_start=${observationStart}` : '';
-  const limitParam = observationStart ? '' : `&limit=${limit}`;
+  // limit=0 o observationStart definido → sin limit param (FRED devuelve todo)
+  const limitParam = (!observationStart && limit > 0) ? `&limit=${limit}` : '';
   const url = `${FRED}?series_id=${id}&api_key=${key}&file_type=json&sort_order=${order}${limitParam}${freqParam}${startParam}`;
   const r = await fetch(url);
   if (!r.ok) throw new Error(`FRED ${id}: ${r.status}`);
@@ -101,9 +102,11 @@ export default async function handler(req, res) {
          rDgs10, rDgs2, rDff, rCpi, rCpiCore, rBbb, rM2v, rWresbal, rTotll, rGdp,
          rLei, rM2sl] =
     await Promise.allSettled([
-      fred('SP500',     key, 0, 'asc', 'm', '1976-01-01'),  // histórico completo para forward returns
-      fred('SP500',     key, 0, 'asc', 'm', '1976-01-01'),  // placeholder
-      fred('SP500',     key, 0, 'asc', 'm', '1976-01-01'),  // placeholder
+      // SP500 histórico: usar serie mensual nativa FRED (1928-presente)
+      // SP500 diaria con frequency=m puede truncarse; usamos observation_start amplio
+      fred('SP500', key, 0, 'asc', 'm', '1928-01-01'),  // S&P 500 Price Index mensual desde 1928
+      fred('SP500', key, 0, 'asc', 'm', '1928-01-01'),  // placeholder rNq
+      fred('SP500', key, 0, 'asc', 'm', '1928-01-01'),  // placeholder rRu
       fred('GOLDAMGBD228NLBM', key, 120, 'asc', 'm'),
       fred('DGS10',     key, 120, 'asc', 'm'),
       fred('DTWEXBGS',  key, 120, 'asc', 'm'),
