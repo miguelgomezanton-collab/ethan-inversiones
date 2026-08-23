@@ -130,7 +130,7 @@ export async function render(container, { actionsSlot }) {
           '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px;">' +
             '<div><span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);">Analogías Históricas</span>' +
             '<span style="font-size:9px;font-family:var(--mono);color:var(--text2);margin-left:8px;">' + cur.month + ' · Top ' + top.length + ' · ' + an.version + '</span></div>' +
-            (an.spCoverage ? '<div style="font-size:9px;font-family:var(--mono);color:var(--amber);">SP500 cobertura: ' + an.spCoverage.first + ' → ' + an.spCoverage.last + ' (' + an.spCoverage.n + ' meses)</div>' : '') +
+            (an.spCoverage ? '<div style="font-size:9px;font-family:var(--mono);color:var(--amber);">SP500: ' + an.spCoverage.first + ' → ' + an.spCoverage.last + ' (' + an.spCoverage.n + 'm) · A:' + (an.spCoverage.chunkA||'—') + ' B:' + (an.spCoverage.chunkB||'—') + '</div>' : '') +
             '<div style="font-size:9px;font-family:var(--mono);color:var(--text3);">Mín. ' + an.minDims + '/9 dims · excl. últimos ' + an.excludeLast + 'm · coseno z-score winsorizado</div>' +
           '</div>' +
           '<div style="font-size:10px;color:var(--amber);font-family:var(--mono);margin-bottom:10px;">⚠ Comportamiento histórico posterior de configuraciones similares — no es forecast</div>' +

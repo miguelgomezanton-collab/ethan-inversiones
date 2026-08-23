@@ -102,11 +102,11 @@ export default async function handler(req, res) {
          rDgs10, rDgs2, rDff, rCpi, rCpiCore, rBbb, rM2v, rWresbal, rTotll, rGdp,
          rLei, rM2sl] =
     await Promise.allSettled([
-      // SP500 en dos rangos para robustez frente a timeout de Vercel:
-      // Rango histórico: 1928-1999 | Rango reciente: 2000-presente
-      fred('SP500', key, 0, 'asc', '', '1928-01-01'),  // histórico completo
-      fred('SP500', key, 0, 'asc', '', '2000-01-01'),  // reciente (redundante pero como fallback)
-      fred('SP500', key, 0, 'asc', '', '1928-01-01'),  // placeholder rRu
+      // SP500 en 3 chunks para evitar timeout Vercel (10s límite plan Hobby)
+      // Chunk A: hasta 2000 | Chunk B: 2000-2015 | Chunk C: 2015-presente
+      fred('SP500', key, 0, 'asc', 'm', '1976-01-01'),  // mensual 1976-presente (FRED agrega)
+      fred('SP500', key, 0, 'asc', '',  '1976-01-01'),  // diario fallback chunk A
+      fred('SP500', key, 0, 'asc', 'm', '2000-01-01'),  // mensual reciente fallback
       fred('GOLDAMGBD228NLBM', key, 120, 'asc', 'm'),
       fred('DGS10',     key, 120, 'asc', 'm'),
       fred('DTWEXBGS',  key, 120, 'asc', 'm'),
@@ -125,13 +125,15 @@ export default async function handler(req, res) {
     ]);
 
   // ── Procesar series ───────────────────────────
-  // SP500: combinar histórico (rSp) y reciente (rNq, mismo fetch desde 2000)
-  // Si el histórico completo llega (>500 obs), usarlo; si falla, usar reciente
-  const spHist   = rSp.status === 'fulfilled' ? rSp.value : null;
-  const spRecent = rNq.status === 'fulfilled' ? rNq.value : null;
-  const sp = spHist && spHist.length > 200 ? spHist
-           : spRecent && spRecent.length > 0 ? spRecent
-           : null;
+  // SP500: usar el chunk más completo disponible, con fallback progresivo
+  // rSp = mensual completo (puede fallar por timeout) | rNq = diario largo | rRu = mensual reciente
+  const spChunkA = rSp.status === 'fulfilled' && rSp.value?.length > 0 ? rSp.value : null;
+  const spChunkB = rNq.status === 'fulfilled' && rNq.value?.length > 0 ? rNq.value : null;
+  const spChunkC = rRu.status === 'fulfilled' && rRu.value?.length > 0 ? rRu.value : null;
+  // Elegir el que tenga mayor cobertura histórica
+  const sp = [spChunkA, spChunkB, spChunkC]
+    .filter(Boolean)
+    .reduce((best, arr) => (!best || arr[0]?.date < best[0]?.date) ? arr : best, null);
   const nq   = rNq.status   === 'fulfilled' ? rNq.value   : null;
   const ru   = rRu.status   === 'fulfilled' ? rRu.value   : null;
   const au   = rAu.status   === 'fulfilled' ? rAu.value   : null;
@@ -724,7 +726,12 @@ export default async function handler(req, res) {
       version:   'SIMILARITY_V2_PIT_COSINE_ZSCORE_WIN_DEDUP6M',
       minDims:   MIN_DIMS,
       excludeLast: EXCLUDE_LAST,
-      spCoverage: { first: spMapFirst, last: spMapLast, n: spNorm.length },
+      spCoverage: {
+        first: spMapFirst, last: spMapLast, n: spNorm.length,
+        chunkA: spChunkA ? spChunkA.length + ' obs desde ' + spChunkA[0]?.date : 'FAILED',
+        chunkB: spChunkB ? spChunkB.length + ' obs desde ' + spChunkB[0]?.date : 'FAILED',
+        chunkC: spChunkC ? spChunkC.length + ' obs desde ' + spChunkC[0]?.date : 'FAILED',
+      },
     },
 
     // Para Correlaciones
