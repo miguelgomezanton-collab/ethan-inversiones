@@ -704,9 +704,11 @@ export default async function handler(req, res) {
     return denom===0 ? null : { rho: +(num/denom).toFixed(3), n: xs.length };
   }
 
-  // Audit trail: 4 fechas de referencia para verificar no look-ahead
-  const AUDIT_MONTHS = ['2022-10', '2020-04', '2018-12', '2026-06'];
-  const corrAudit = AUDIT_MONTHS.map(ym => {
+  let corrAudit = [], regimeAnalysis = [];
+  try {
+    // Audit trail: 4 fechas de referencia para verificar no look-ahead
+    const AUDIT_MONTHS = ['2022-10', '2020-04', '2018-12', '2026-06'];
+    corrAudit = AUDIT_MONTHS.map(ym => {
     const m = histMacroV1.find(h => h.month === ym);
     if (!m?.valid) return { month: ym, error: 'no válido' };
     const c = m.components;
@@ -777,6 +779,8 @@ export default async function handler(req, res) {
     }
     return { ...bucket, nMonths: months.length, byHorizon };
   });
+  } catch(e) { errs.push('corrAudit/regimeAnalysis error: ' + e.message); }
+
   for (const h of HORIZONS) {
     const fwdMap = buildForwardMap(spMap, h);
     corrMatrix[h] = {};
