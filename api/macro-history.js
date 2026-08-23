@@ -715,7 +715,7 @@ export default async function handler(req, res) {
 
   let corrAudit = [], regimeAnalysis = [], corrMatrix = {}, quintiles = [], stabilityByIndicator = {},
       spearmanReturn = null, spearmanBinary = null, spearmanN = 0,
-      spearmanBinaryNonOverlap = null, nonOverlapN = 0;
+      spearmanBinaryNonOverlap = null, nonOverlapN = 0, spearmanBinaryHAC = null;
   try {
     const AUDIT_MONTHS = ['2022-10', '2020-04', '2018-12', '2026-06'];
     corrAudit = AUDIT_MONTHS.map(ym => {
@@ -956,6 +956,54 @@ export default async function handler(req, res) {
     if (nonOverlapN >= 10) {
       spearmanBinaryNonOverlap = pearsonRanks(rankArray(xno), rankArray(ybno));
     }
+
+    // Newey-West HAC: t-stat robusto a autocorrelación en retornos solapados
+    // Aplicado a Spearman binario: ScoreNorm rank vs retorno positivo +12M
+    // Bandwidth = floor(1.3 * T^(1/3)) — regla de Andrews para T~110
+    try {
+      const T = xs12.length;
+      const bw = Math.floor(1.3 * Math.pow(T, 1/3)); // ~6 para T=110
+      const rxHac = rankArray(xs12);
+      const ryHac = rankArray(ybin);
+      // Demeaning
+      const mx = rxHac.reduce((a,b)=>a+b,0)/T;
+      const my = ryHac.reduce((a,b)=>a+b,0)/T;
+      const xd = rxHac.map(v=>v-mx), yd = ryHac.map(v=>v-my);
+      // Residuos de la regresión OLS: yd = b*xd + e
+      const sxx = xd.reduce((a,v)=>a+v*v,0);
+      const sxy = xd.reduce((a,v,i)=>a+v*yd[i],0);
+      const b   = sxy/sxx;
+      const e   = yd.map((v,i)=>v-b*xd[i]);
+      // Score xi*ei
+      const sc = xd.map((v,i)=>v*e[i]);
+      // Varianza HAC (Newey-West)
+      let hacVar = sc.reduce((a,v)=>a+v*v,0); // lag 0
+      for (let lag=1; lag<=bw; lag++) {
+        const w   = 1 - lag/(bw+1); // Bartlett kernel
+        let cov = 0;
+        for (let t=lag; t<T; t++) cov += sc[t]*sc[t-lag];
+        hacVar += 2*w*cov;
+      }
+      const seHac   = Math.sqrt(hacVar/(sxx*sxx));
+      const tHac    = b/seHac;
+      const dfHac   = T-2;
+      // p-value aproximado (normal para T>30)
+      const zHac    = Math.abs(tHac);
+      const pHac    = 2*(1-(0.5*(1+Math.sign(zHac)*Math.sqrt(1-Math.exp(-2*zHac*zHac/Math.PI)))));
+      // Convertir coeficiente a ρ-equivalente (b normalizado por sd_x/sd_y)
+      const sdx = Math.sqrt(xd.reduce((a,v)=>a+v*v,0)/T);
+      const sdy = Math.sqrt(yd.reduce((a,v)=>a+v*v,0)/T);
+      const rhoHac = +(b*(sdx/sdy)).toFixed(3);
+      // IC95 via Fisher z-transform con SE ajustado
+      const zr = 0.5*Math.log((1+rhoHac)/(1-rhoHac+1e-10));
+      const seZ = seHac/(sdx/sdy)/Math.sqrt(T);
+      spearmanBinaryHAC = {
+        rho:  rhoHac, tStat: +tHac.toFixed(3), p: +pHac.toFixed(4),
+        bw, T, seHac: +seHac.toFixed(4),
+        ci95: [+(Math.tanh(zr-1.96*seZ)).toFixed(3), +(Math.tanh(zr+1.96*seZ)).toFixed(3)],
+        method: `Newey-West HAC (Bartlett, bw=${bw})`,
+      };
+    } catch(eHac) { errs.push('HAC error: ' + eHac.message); }
   } catch(e) { errs.push('spearman error: ' + e.message); }
 
   // Correlaciones legacy (retornos coincidentes) — mantenidas para compatibilidad
@@ -1040,6 +1088,7 @@ export default async function handler(req, res) {
       return12m:          spearmanReturn,
       binary12m:          spearmanBinary,
       binary12mNonOverlap: spearmanBinaryNonOverlap,
+      binary12mHAC:        spearmanBinaryHAC,
       nNonOverlap: nonOverlapN,
       n:                  spearmanN,
     },
