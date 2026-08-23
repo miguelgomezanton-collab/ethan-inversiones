@@ -75,6 +75,9 @@ export async function render(container,{actionsSlot}){
 
     const totalAudit = auditBlocks.reduce((s,b) => s + b.sc, 0);
 
+    function dotCol(sc){ return sc>0?'var(--green)':sc===0?'var(--amber)':'var(--red)'; }
+    function dotLabel(sc){ return sc>0?'🟢':sc===0?'🟡':'🔴'; }
+
     const blocks=[
       {icon:'🔄',l:'Ciclo Económico',sc:cicloScore,detail:`Curva USD ${co.curvaUSD?.value!=null?f2(co.curvaUSD.value)+'%':'—'} · Curva EUR ${co.curvaEUR?.value!=null?f2(co.curvaEUR.value)+'%':'—'} · LEI ${ind.lei?.value!=null?f2(ind.lei.value)+'%':'—'}`},
       {icon:'💧',l:'Liquidez Global',sc:liqScore,detail:`M2 ${liq.m2?.value!=null?f2(liq.m2.value)+'%':'—'} · Impulso ${liq.impulso?.value!=null?f2(liq.impulso.value):'—'} · Vel.M2 ${liq.velM2?.value!=null?f2(liq.velM2.value)+'%':'—'}`},
