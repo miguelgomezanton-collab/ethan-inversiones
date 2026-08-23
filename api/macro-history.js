@@ -713,7 +713,8 @@ export default async function handler(req, res) {
   ];
   const REGIME_HORIZONS = [3, 6, 12];
 
-  let corrAudit = [], regimeAnalysis = [], corrMatrix = {}, quintiles = [], stabilityByIndicator = {};
+  let corrAudit = [], regimeAnalysis = [], corrMatrix = {}, quintiles = [], stabilityByIndicator = {},
+      spearmanReturn = null, spearmanBinary = null, spearmanN = 0;
   try {
     const AUDIT_MONTHS = ['2022-10', '2020-04', '2018-12', '2026-06'];
     corrAudit = AUDIT_MONTHS.map(ym => {
@@ -876,6 +877,46 @@ export default async function handler(req, res) {
     }
   } catch(e) { errs.push('corrAudit/regime/corrMatrix error: ' + e.message); }
 
+  // Spearman ScoreNorm → retorno +12M (fuera del try para acceso a fwdMap12)
+  try {
+    function rankArray(arr) {
+      const sorted = [...arr].map((v,i)=>({v,i})).sort((a,b)=>a.v-b.v);
+      const ranks = new Array(arr.length);
+      let i=0;
+      while (i < sorted.length) {
+        let j=i;
+        while (j<sorted.length && sorted[j].v===sorted[i].v) j++;
+        const avg = (i+j-1)/2;
+        for (let k=i;k<j;k++) ranks[sorted[k].i]=avg;
+        i=j;
+      }
+      return ranks;
+    }
+    function pearsonRanks(xs,ys) {
+      if (!xs?.length||xs.length<10) return null;
+      const mx=xs.reduce((a,b)=>a+b,0)/xs.length, my=ys.reduce((a,b)=>a+b,0)/ys.length;
+      let num=0,dx2=0,dy2=0;
+      for(let i=0;i<xs.length;i++){const a=xs[i]-mx,b=ys[i]-my;num+=a*b;dx2+=a*a;dy2+=b*b;}
+      const d=Math.sqrt(dx2*dy2); if(d===0) return null;
+      const r=num/d, n=xs.length;
+      const t=r*Math.sqrt(n-2)/Math.sqrt(1-r*r+1e-10);
+      const z=Math.abs(t), p=n>30?2*(1-(0.5*(1+Math.sign(z)*Math.sqrt(1-Math.exp(-2*z*z/Math.PI))))):null;
+      const zr=0.5*Math.log((1+r)/(1-r+1e-10)), se=1/Math.sqrt(n-3);
+      return { rho:+r.toFixed(3), n, p:p!=null?+p.toFixed(4):null, ci95:[+(Math.tanh(zr-1.96*se)).toFixed(3),+(Math.tanh(zr+1.96*se)).toFixed(3)] };
+    }
+    const fwdMap12b = buildForwardMap(spMap, 12);
+    const xs12=[],ys12=[],ybin=[];
+    for (const m of histMacroV1) {
+      if (!m.valid||m.scoreNorm==null) continue;
+      const r12=fwdMap12b.get(m.month);
+      if (r12==null) continue;
+      xs12.push(m.scoreNorm); ys12.push(r12); ybin.push(r12>0?1:0);
+    }
+    spearmanReturn = pearsonRanks(rankArray(xs12), rankArray(ys12));
+    spearmanBinary = pearsonRanks(rankArray(xs12), rankArray(ybin));
+    spearmanN      = xs12.length;
+  } catch(e) { errs.push('spearman error: ' + e.message); }
+
   // Correlaciones legacy (retornos coincidentes) — mantenidas para compatibilidad
   const calcCorr = (indSeries, assetSeries) => {
     if (!indSeries || !assetSeries) return null;
@@ -954,7 +995,7 @@ export default async function handler(req, res) {
     regimeAnalysis,
     quintiles,
     stabilityByIndicator,
-    spearman: { return12m: spearmanReturn, binary12m: spearmanBinary, n: spearmanXs.length },
+    spearman: { return12m: spearmanReturn, binary12m: spearmanBinary, n: spearmanN },
 
     // Metadatos
     n_months: sp?.length || 0,
