@@ -774,10 +774,10 @@ export default async function handler(req, res) {
       return { ...bucket, nMonths: months.length, byHorizon };
     });
 
-    // Quintiles equilibrados: rank secuencial (ScoreNorm ASC, month ASC)
-    // Rompe empates por mes — N≈igual aunque ScoreNorm sea discreto
+    // Quintiles equilibrados: rank secuencial sobre meses CON forward returns disponibles
+    // Filtramos primero los que tienen al menos sp6m, luego asignamos quintil
     const validMonths = histMacroV1
-      .filter(m => m.valid && m.scoreNorm != null)
+      .filter(m => m.valid && m.scoreNorm != null && spReturn(m.month, 6) != null)
       .sort((a,b) => a.scoreNorm - b.scoreNorm || a.month.localeCompare(b.month));
     const totalN = validMonths.length;
     validMonths.forEach((m, i) => { m._quintile = Math.min(5, Math.floor(i * 5 / totalN) + 1); });
