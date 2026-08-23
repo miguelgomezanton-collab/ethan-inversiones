@@ -102,11 +102,11 @@ export default async function handler(req, res) {
          rDgs10, rDgs2, rDff, rCpi, rCpiCore, rBbb, rM2v, rWresbal, rTotll, rGdp,
          rLei, rM2sl] =
     await Promise.allSettled([
-      // SP500 histórico: usar serie mensual nativa FRED (1928-presente)
-      // SP500 diaria con frequency=m puede truncarse; usamos observation_start amplio
-      fred('SP500', key, 0, 'asc', 'm', '1928-01-01'),  // S&P 500 Price Index mensual desde 1928
-      fred('SP500', key, 0, 'asc', 'm', '1928-01-01'),  // placeholder rNq
-      fred('SP500', key, 0, 'asc', 'm', '1928-01-01'),  // placeholder rRu
+      // SP500 en dos rangos para robustez frente a timeout de Vercel:
+      // Rango histórico: 1928-1999 | Rango reciente: 2000-presente
+      fred('SP500', key, 0, 'asc', '', '1928-01-01'),  // histórico completo
+      fred('SP500', key, 0, 'asc', '', '2000-01-01'),  // reciente (redundante pero como fallback)
+      fred('SP500', key, 0, 'asc', '', '1928-01-01'),  // placeholder rRu
       fred('GOLDAMGBD228NLBM', key, 120, 'asc', 'm'),
       fred('DGS10',     key, 120, 'asc', 'm'),
       fred('DTWEXBGS',  key, 120, 'asc', 'm'),
@@ -125,7 +125,13 @@ export default async function handler(req, res) {
     ]);
 
   // ── Procesar series ───────────────────────────
-  const sp   = rSp.status   === 'fulfilled' ? rSp.value   : null;
+  // SP500: combinar histórico (rSp) y reciente (rNq, mismo fetch desde 2000)
+  // Si el histórico completo llega (>500 obs), usarlo; si falla, usar reciente
+  const spHist   = rSp.status === 'fulfilled' ? rSp.value : null;
+  const spRecent = rNq.status === 'fulfilled' ? rNq.value : null;
+  const sp = spHist && spHist.length > 200 ? spHist
+           : spRecent && spRecent.length > 0 ? spRecent
+           : null;
   const nq   = rNq.status   === 'fulfilled' ? rNq.value   : null;
   const ru   = rRu.status   === 'fulfilled' ? rRu.value   : null;
   const au   = rAu.status   === 'fulfilled' ? rAu.value   : null;
@@ -174,7 +180,9 @@ export default async function handler(req, res) {
   const totllYoY = yoySeries(totll);
   const gdpYoY   = yoySeries(gdp);
   const spRaw    = normalizeBase100(sp);  // mantenemos para correlaciones
-  const spNorm   = sp ? [...sp].sort((a,b) => a.date.localeCompare(b.date)) : []; // raw asc para timeline
+  // SP500 diario → mensual (media del mes) para forward returns históricos
+  const spMonthly = sp ? toMonthly(sp) : [];
+  const spNorm    = spMonthly; // raw mensual para timeline y spMap
 
   // Curva USD mensual
   const curvaUSD = (() => {
