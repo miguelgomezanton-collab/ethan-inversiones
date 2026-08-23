@@ -467,9 +467,24 @@ export default async function handler(req, res) {
     }
 
     // ── Stress test por BLOQUE ─────────────────────────────────
-    const BLOCK_DEFS={Ciclo:{inds:['curvaUSD','lei']},Liquidez:{inds:['m2usa','impulso','velM2','creditoVsPib']},Crédito:{inds:['bbb']},Política:{inds:['tipoReal','reservas']}};
+    // ── Stress test por BLOQUE ─────────────────────────────────
+    // Sentimiento e Inflación: no en RADAR_IND (datos de macro.js, no histMacroV1)
+    // → se marcan como NOT_AVAILABLE en el stress test histórico
+    const BLOCK_DEFS={
+      Ciclo:    {inds:['curvaUSD','lei']},
+      Liquidez: {inds:['m2usa','impulso','velM2','creditoVsPib']},
+      Crédito:  {inds:['bbb']},
+      Política: {inds:['tipoReal','reservas']},
+      // Sentimiento e Inflación: datos de macro.js live, no en histMacroV1
+      Sentimiento: {inds:[], note:'HY/VIX/F&G no disponibles en histMacroV1 — stress test no disponible'},
+      Inflación:   {inds:[], note:'CPI/Core vienen de macro.js vivo — stress test parcialmente disponible via tipoReal'},
+    };
     const blockResults={};
     for(const[bName,bDef] of Object.entries(BLOCK_DEFS)){
+      if(!bDef.inds.length){
+        blockResults[bName]={note:bDef.note,unavailable:true};
+        continue;
+      }
       const scoreByMonth={};
       for(const m of histMacroV1){
         if(!m.valid) continue;
@@ -477,18 +492,33 @@ export default async function handler(req, res) {
         for(const indId of bDef.inds){const ind=RADAR_IND.find(i=>i.id===indId);const sc=ind?.scoreFrom(ind.getter(m));if(sc!=null){bSc+=sc;nV++;}}
         if(nV>0) scoreByMonth[m.month]=bSc;
       }
-      const byScore={},xs=[],ys6=[],ybin=[];
+      const byScore={},xs=[],ys6=[],ys12=[],ybin=[],xsDD=[],ysDD=[],ysDD10=[];
       for(const[ym,sc] of Object.entries(scoreByMonth)){
         const key=sc>=0?'+'+sc:String(sc);
         if(!byScore[key]) byScore[key]=[];
         byScore[key].push(ym);
-        const r6=fwdM6.get(ym),r12=fwdM12.get(ym);
+        const r6=fwdM6.get(ym),r12=fwdM12.get(ym),dd=maxDD12(ym);
         if(r6!=null){xs.push(sc);ys6.push(r6);}
-        if(r12!=null){ybin.push(r12>0?1:0);}
+        if(r12!=null){ys12.push(r12);ybin.push(r12>0?1:0);}
+        if(dd!=null){xsDD.push(sc);ysDD.push(dd);ysDD10.push(dd<-10?1:0);}
       }
       const bss={};
-      for(const[k,months] of Object.entries(byScore)) if(months.length) bss[k]=fwdStats(months);
-      blockResults[bName]={byScore:bss,spearmanR6:spearmanSimple(xs,ys6),spearmanBin:spearmanSimple(xs,ybin.slice(0,xs.length))};
+      for(const[k,months] of Object.entries(byScore)){
+        if(months.length){
+          bss[k]={...fwdStats(months), ds6:downsideStats(months,6), ds12:downsideStats(months,12)};
+        }
+      }
+      // Spearman bloques
+      const spR6   = spearmanSimple(xs,ys6);
+      const spBin  = spearmanSimple(xs,ybin.slice(0,xs.length));
+      const spDD   = spearmanSimple(xsDD,ysDD);
+      const spDD10 = spearmanSimple(xsDD,ysDD10);
+      // Clasificación
+      const n=xs.length;
+      const status = n<15?'INSUFFICIENT_N'
+        : (spDD?.p!=null&&spDD.p<0.05)||(spBin?.p!=null&&spBin.p<0.05)?'VALIDATED'
+        : (spDD?.p!=null&&spDD.p<0.15)||(spBin?.p!=null&&spBin.p<0.15)?'WEAK':'UNSTABLE';
+      blockResults[bName]={byScore:bss,spearmanR6:spR6,spearmanBin:spBin,spearmanDD:spDD,spearmanDD10:spDD10,status,n};
     }
 
     // ── Stress test SCORE TOTAL ────────────────────────────────

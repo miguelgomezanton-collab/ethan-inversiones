@@ -378,38 +378,52 @@ export async function render(container, { actionsSlot }) {
   function buildBlockStressHTML(bs) {
     if (!bs) return '';
     const f1=v=>v!=null?(v>=0?'+':'')+v.toFixed(1)+'%':'—';
+    const f1b=v=>v!=null?v.toFixed(1)+'%':'—';
     const f3=v=>v!=null?(v>=0?'+':'')+v.toFixed(3):'—';
     const col=v=>v==null?'var(--text3)':v>0?'var(--green)':'var(--red)';
+    const statusCol=s=>s==='VALIDATED'?'var(--green)':s==='WEAK'?'var(--amber)':s==='UNSTABLE'?'var(--red)':'var(--text3)';
     return '<div style="margin-top:14px;">' +
-      '<div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:10px;">Stress Test por Bloque</div>' +
+      '<div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:10px;">' +
+        'Stress Test por Bloque (6 bloques RISK_RADAR_V1) — Retorno y Downside Risk' +
+      '</div>' +
       Object.entries(bs).map(([bName, bData]) => {
-        const scores = Object.keys(bData.byScore||{}).sort();
-        const sp6=bData.spearmanR6, spB=bData.spearmanBin;
+        if (bData.unavailable) return '<div class="mac-card" style="margin-bottom:8px;opacity:0.6;">' +
+          '<div style="font-size:10px;font-weight:700;color:var(--text2);margin-bottom:4px;">' + bName + ' <span style="color:var(--amber);font-size:9px;">⚠ Sin datos históricos en HIST_MACRO_V1</span></div>' +
+          '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);">' + (bData.note||'') + '</div>' +
+        '</div>';
+        const scores = Object.keys(bData.byScore||{}).sort((a,b)=>+a-+b);
+        const sp6=bData.spearmanR6, spB=bData.spearmanBin, spDD=bData.spearmanDD, spDD10=bData.spearmanDD10;
+        const st=bData.status||'—';
         return '<div class="mac-card" style="margin-bottom:10px;">' +
-          '<div style="display:flex;justify-content:space-between;margin-bottom:8px;">' +
-            '<span style="font-size:10px;font-weight:700;color:var(--text2);">' + bName + '</span>' +
-            '<span style="font-size:9px;font-family:var(--mono);color:var(--text3);">ρ +6M=' + f3(sp6?.rho) + (sp6?.p!=null?' p='+sp6.p.toFixed(3):'') + ' · ρ bin=' + f3(spB?.rho) + (spB?.p!=null?' p='+spB.p.toFixed(3):'') + '</span>' +
+          '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;">' +
+            '<span style="font-size:10px;font-weight:700;color:var(--text2);">' + bName + ' <span style="font-size:9px;color:'+statusCol(st)+';font-family:var(--mono);">'+st+'</span></span>' +
+            '<span style="font-size:9px;font-family:var(--mono);color:var(--text3);">N='+bData.n+' · ρ+6M='+f3(sp6?.rho)+(sp6?.p!=null?' p='+sp6.p.toFixed(3):'')+' · ρDD='+f3(spDD?.rho)+(spDD?.p!=null?' p='+spDD.p.toFixed(3):'')+' · ρDD10='+f3(spDD10?.rho)+(spDD10?.p!=null?' p='+spDD10.p.toFixed(3):'')+' · ρBin='+f3(spB?.rho)+(spB?.p!=null?' p='+spB.p.toFixed(3):'')+'</span>' +
           '</div>' +
           '<table style="width:100%;border-collapse:collapse;font-size:9px;font-family:var(--mono);">' +
             '<thead><tr style="background:var(--surface2);">' +
-              '<th style="padding:3px 6px;text-align:left;color:var(--text3);">Score bloque</th>' +
-              '<th style="padding:3px 6px;text-align:right;color:var(--text3);">N</th>' +
-              '<th style="padding:3px 6px;text-align:right;color:var(--text3);">Med +3M</th>' +
-              '<th style="padding:3px 6px;text-align:right;color:var(--text3);">Med +6M</th>' +
-              '<th style="padding:3px 6px;text-align:right;color:var(--text3);">Med +12M</th>' +
-              '<th style="padding:3px 6px;text-align:right;color:var(--text3);">%Pos+12M</th>' +
-              '<th style="padding:3px 6px;text-align:right;color:var(--text3);">MaxDD</th>' +
+              '<th style="padding:3px 5px;text-align:left;color:var(--text3);">Score</th>' +
+              '<th style="padding:3px 5px;text-align:right;color:var(--text3);">N</th>' +
+              '<th style="padding:3px 5px;text-align:right;color:var(--text3);">Med+6M</th>' +
+              '<th style="padding:3px 5px;text-align:right;color:var(--text3);">Med+12M</th>' +
+              '<th style="padding:3px 5px;text-align:right;color:var(--text3);">%Pos+12M</th>' +
+              '<th style="padding:3px 5px;text-align:right;color:var(--text3);">MaxDD</th>' +
+              '<th style="padding:3px 5px;text-align:right;color:var(--text3);">VaR95%</th>' +
+              '<th style="padding:3px 5px;text-align:right;color:var(--text3);">P(DD>10%)</th>' +
+              '<th style="padding:3px 5px;text-align:right;color:var(--text3);">P(DD>15%)</th>' +
             '</tr></thead><tbody>' +
             scores.map(k => {
-              const s=bData.byScore[k];
+              const s=bData.byScore[k], ds=s?.ds12||{};
+              if(!s) return '';
               return '<tr style="border-bottom:1px solid var(--border);">' +
-                '<td style="padding:3px 6px;font-weight:700;color:' + (+k>0?'var(--green)':+k<0?'var(--red)':'var(--amber)') + ';">' + k + '</td>' +
-                '<td style="padding:3px 6px;text-align:right;color:var(--text3);">' + s.n + '</td>' +
-                '<td style="padding:3px 6px;text-align:right;color:' + col(s.med3m) + ';">' + f1(s.med3m) + '</td>' +
-                '<td style="padding:3px 6px;text-align:right;color:' + col(s.med6m) + ';">' + f1(s.med6m) + '</td>' +
-                '<td style="padding:3px 6px;text-align:right;color:' + col(s.med12m) + ';">' + f1(s.med12m) + '</td>' +
-                '<td style="padding:3px 6px;text-align:right;color:' + ((s.pctPos12m??0)>50?'var(--green)':'var(--red)') + ';">' + (s.pctPos12m!=null?s.pctPos12m+'%':'—') + '</td>' +
-                '<td style="padding:3px 6px;text-align:right;color:var(--red);">' + f1(s.medDD) + '</td>' +
+                '<td style="padding:3px 5px;font-weight:700;color:' + (+k>0?'var(--green)':+k<0?'var(--red)':'var(--amber)') + ';">' + k + '</td>' +
+                '<td style="padding:3px 5px;text-align:right;color:var(--text3);">' + (ds.n||s.n) + '</td>' +
+                '<td style="padding:3px 5px;text-align:right;color:'+col(s.med6m)+';">' + f1(s.med6m) + '</td>' +
+                '<td style="padding:3px 5px;text-align:right;color:'+col(s.med12m)+';">' + f1(s.med12m) + '</td>' +
+                '<td style="padding:3px 5px;text-align:right;color:'+((s.pctPos12m??0)>50?'var(--green)':'var(--red)')+';">' + (s.pctPos12m!=null?s.pctPos12m+'%':'—') + '</td>' +
+                '<td style="padding:3px 5px;text-align:right;color:'+(ds.medDD<-10?'var(--red)':ds.medDD<-5?'var(--amber)':'var(--green)')+';">' + f1b(ds.medDD) + '</td>' +
+                '<td style="padding:3px 5px;text-align:right;color:'+(ds.var95<-15?'var(--red)':ds.var95<-8?'var(--amber)':'var(--text3)')+';">' + f1(ds.var95) + '</td>' +
+                '<td style="padding:3px 5px;text-align:right;color:'+(ds.probDD10>30?'var(--red)':ds.probDD10>15?'var(--amber)':'var(--green)')+';">' + (ds.probDD10!=null?ds.probDD10+'%':'—') + '</td>' +
+                '<td style="padding:3px 5px;text-align:right;color:'+(ds.probDD15>15?'var(--red)':ds.probDD15>5?'var(--amber)':'var(--green)')+';">' + (ds.probDD15!=null?ds.probDD15+'%':'—') + '</td>' +
               '</tr>';
             }).join('') +
           '</tbody></table></div>';
