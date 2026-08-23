@@ -100,28 +100,28 @@ export default async function handler(req, res) {
   // ── Fetch FRED histórico ──────────────────────
   const [rSp, rNq, rRu, rAu, rBond, rDxy,
          rDgs10, rDgs2, rDff, rCpi, rCpiCore, rBbb, rM2v, rWresbal, rTotll, rGdp,
-         rLei, rM2sl] =
+         rLei, rM2sl, rHy, rVix] =
     await Promise.allSettled([
-      // SP500 en 3 chunks para evitar timeout Vercel (10s límite plan Hobby)
-      // Chunk A: hasta 2000 | Chunk B: 2000-2015 | Chunk C: 2015-presente
-      fred('SP500', key, 0, 'asc', 'm', '1976-01-01'),  // mensual 1976-presente (FRED agrega)
-      fred('SP500', key, 0, 'asc', '',  '1976-01-01'),  // diario fallback chunk A
-      fred('SP500', key, 0, 'asc', 'm', '2000-01-01'),  // mensual reciente fallback
+      fred('SP500', key, 0, 'asc', 'm', '1976-01-01'),
+      fred('SP500', key, 0, 'asc', '',  '1976-01-01'),
+      fred('SP500', key, 0, 'asc', 'm', '2000-01-01'),
       fred('GOLDAMGBD228NLBM', key, 120, 'asc', 'm'),
       fred('DGS10',     key, 120, 'asc', 'm'),
       fred('DTWEXBGS',  key, 120, 'asc', 'm'),
-      fred('DGS10',  key, 0, 'asc', '', '1976-01-01'),  // desde 1976 para histórico completo
+      fred('DGS10',  key, 0, 'asc', '', '1976-01-01'),
       fred('DGS2',   key, 0, 'asc', '', '1976-01-01'),
       fred('DFF',    key, 0, 'asc', '', '1954-01-01'),
-      fred('CPIAUCSL',   key, 0, 'asc', '', '1947-01-01'),  // asc para YoY histórico
+      fred('CPIAUCSL',   key, 0, 'asc', '', '1947-01-01'),
       fred('CPILFESL',   key, 132, 'desc'),
       fred('BAMLC0A4CBBB', key, 0, 'asc', '', '1997-01-01'),
       fred('M2V',        key, 0, 'asc', '', '1959-01-01'),
       fred('WRESBAL',    key, 0, 'asc', '', '1984-01-01'),
       fred('TOTLL',      key, 0, 'asc', '', '1973-01-01'),
       fred('GDP',        key, 0, 'asc', '', '1947-01-01'),
-      fred('USALOLITOAASTSAM', key, 0, 'asc', '', '1959-01-01'),  // LEI
-      fred('M2SL',       key, 0, 'asc', '', '1959-01-01'),        // M2 USA proxy M2 Global
+      fred('USALOLITOAASTSAM', key, 0, 'asc', '', '1959-01-01'),
+      fred('M2SL',       key, 0, 'asc', '', '1959-01-01'),
+      fred('BAMLH0A0HYM2', key, 0, 'asc', '', '1997-01-01'),  // HY OAS para Sentimiento
+      fred('VIXCLS',     key, 0, 'asc', '', '1990-01-01'),     // VIX diario para Sentimiento
     ]);
 
   // ── Procesar series ───────────────────────────
@@ -174,7 +174,40 @@ export default async function handler(req, res) {
   // Series del selector — media mensual, unidad natural
   const dgs10Monthly = toMonthly(dgs10);  // Treasury 10Y %
   const dffMonthly   = toMonthly(dff);    // Fed Funds %
-  const cpiAsc       = cpi     ? [...cpi].reverse()     : null;
+  const hy   = rHy.status  === 'fulfilled' ? rHy.value  : null;
+  const vixRaw = rVix.status === 'fulfilled' ? rVix.value : null;
+
+  // VIX → mensual (último valor del mes) + SMA200 diaria → score mensual
+  // SMA200 sobre valores diarios, luego agregar a mensual
+  const vixMonMap = new Map(); // ym → { value, aboveSMA200, score }
+  if (vixRaw && vixRaw.length >= 200) {
+    for (let i = 200; i < vixRaw.length; i++) {
+      const sma200 = vixRaw.slice(i-200, i).reduce((s,p)=>s+p.value,0)/200;
+      const above  = vixRaw[i].value > sma200;
+      const ym     = vixRaw[i].date.slice(0,7);
+      // Último valor del mes (sobreescribe hasta el último día)
+      vixMonMap.set(ym, { value: +vixRaw[i].value.toFixed(2), aboveSMA200: above, score: above ? -1 : 1 });
+    }
+  }
+  // HY → mensual (media del mes)
+  const hyMonMap = new Map();
+  if (hy) {
+    const byMonth = {};
+    hy.forEach(p => {
+      const ym = p.date.slice(0,7);
+      if (!byMonth[ym]) byMonth[ym] = [];
+      byMonth[ym].push(p.value);
+    });
+    for (const [ym, vals] of Object.entries(byMonth)) {
+      const avg = vals.reduce((a,b)=>a+b,0)/vals.length;
+      const score = avg < 3.5 ? 1 : avg < 5 ? 0 : -1;
+      hyMonMap.set(ym, { value: +avg.toFixed(3), score });
+    }
+  }
+  // CPI Core → mensual map para Inflación (CPI Headline ya existe como cpiYoYMap)
+  const cpiCoreAscFull = cpiCore ? [...cpiCore].reverse() : null;
+  const cpiCoreYoYFull = yoySeries(cpiCoreAscFull);
+  const cpiCoreYoYMap  = new Map(cpiCoreYoYFull.map(p => [p.date.slice(0,7), p.value]));
   const cpiCoreAsc   = cpiCore ? [...cpiCore].reverse() : null;
   const cpiYoY       = yoySeries(cpiAsc);      // CPI Headline YoY
   const cpiCoreYoY   = yoySeries(cpiCoreAsc);  // Core CPI YoY
@@ -343,11 +376,36 @@ export default async function handler(req, res) {
         : { value: null, score: null, maxScore: 1, valid: false, source: 'WRESBAL_T' };
 
       // 9. BBB Spread — almacenado en vector para analogías, score=0 (excluido del Macro Score)
-      // BBB ya contribuye en 1.2 Liquidez — doble conteo si se incluye aquí
       const bbbV = bbbMap.get(ym);
       comps.bbb = bbbV != null
         ? { value: bbbV, score: 0, maxScore: 0, maxAnalogias: 1, valid: true, source: 'BAMLC0A4CBBB', note: 'Max Macro: 0 | Analogías: ±1' }
         : { value: null, score: null, maxScore: 0, maxAnalogias: 1, valid: false, source: 'BAMLC0A4CBBB' };
+
+      // 10. HY Spread — RISK_RADAR_V1 Sentimiento (no en HIST_MACRO_V1 score, maxScore=0)
+      const hyV = hyMonMap.get(ym);
+      comps.hy = hyV != null
+        ? { value: hyV.value, score: hyV.score, maxScore: 0, valid: true, source: 'BAMLH0A0HYM2', note: 'RISK_RADAR_V1 Sentimiento — excluido de HIST_MACRO_V1 score' }
+        : { value: null, score: null, maxScore: 0, valid: false, source: 'BAMLH0A0HYM2' };
+
+      // 11. VIX vs SMA200 — RISK_RADAR_V1 Sentimiento (disponible desde 1990, maxScore=0)
+      const vixV = vixMonMap.get(ym);
+      comps.vix = vixV != null
+        ? { value: vixV.value, aboveSMA200: vixV.aboveSMA200, score: vixV.score, maxScore: 0, valid: true, source: 'VIXCLS_SMA200', note: 'RISK_RADAR_V1 Sentimiento — desde 1990' }
+        : { value: null, score: null, maxScore: 0, valid: false, source: 'VIXCLS_SMA200' };
+
+      // 12. CPI Headline YoY — RISK_RADAR_V1 Inflación (ya en tipoReal como input, maxScore=0 para no doble contar)
+      const cpiHeadlineV = cpiYoYMap.get(ym);
+      const scCpiH = v => v <= 2.5 ? 1 : v <= 3.5 ? 0 : -1;
+      comps.cpiHeadline = cpiHeadlineV != null
+        ? { value: +cpiHeadlineV.toFixed(2), score: scCpiH(cpiHeadlineV), maxScore: 0, valid: true, source: 'CPIAUCSL_YoY', note: 'RISK_RADAR_V1 Inflación — maxScore=0 en HIST_MACRO_V1 (input de tipoReal)' }
+        : { value: null, score: null, maxScore: 0, valid: false, source: 'CPIAUCSL_YoY' };
+
+      // 13. Core CPI YoY — RISK_RADAR_V1 Inflación (maxScore=0)
+      const cpiCoreV = cpiCoreYoYMap.get(ym);
+      const scCoreCpiH = v => v <= 2.5 ? 1 : v <= 3.0 ? 0 : -1;
+      comps.cpiCore = cpiCoreV != null
+        ? { value: +cpiCoreV.toFixed(2), score: scCoreCpiH(cpiCoreV), maxScore: 0, valid: true, source: 'CPILFESL_YoY', note: 'RISK_RADAR_V1 Inflación — maxScore=0 en HIST_MACRO_V1' }
+        : { value: null, score: null, maxScore: 0, valid: false, source: 'CPILFESL_YoY' };
 
       // Agregación — BBB con maxScore=0 no suma al denominador
       const valid = Object.values(comps).filter(c => c.valid && c.maxScore > 0);
@@ -445,7 +503,7 @@ export default async function handler(req, res) {
       {id:'reservas', block:'Política', source:'HIST_MACRO_V1', getter:m=>m.components?.reservas,  scoreFrom:c=>c?.score??null, structuralNote:'STRUCTURAL_REVIEW — nivel nominal no estacionario entre regímenes QE/QT'},
     ];
     const rst = {};
-    for (const ind of RADAR_IND) {
+    for (const ind of RADAR_IND_EXTENDED) {
       const byScore={},xs=[],ys6=[],ybin=[];
       for (const m of histMacroV1) {
         if(!m.valid) continue;
@@ -468,20 +526,24 @@ export default async function handler(req, res) {
 
     // ── Stress test por BLOQUE ─────────────────────────────────
     // ── Stress test por BLOQUE ─────────────────────────────────
-    // Sentimiento e Inflación: no en RADAR_IND (datos de macro.js, no histMacroV1)
-    // → se marcan como NOT_AVAILABLE en el stress test histórico
     const BLOCK_DEFS={
       Ciclo:    {inds:['curvaUSD','lei']},
       Liquidez: {inds:['m2usa','impulso','velM2','creditoVsPib']},
       Crédito:  {inds:['bbb']},
+      Sentimiento:{inds:['hy','vix'], note:'F&G excluido (LIVE_ONLY, sin serie histórica FRED). VIX disponible desde 1990.'},
       Política: {inds:['tipoReal','reservas']},
-      // Sentimiento e Inflación: datos de macro.js live, no en histMacroV1
-      Sentimiento: {inds:[], note:'HY/VIX/F&G no disponibles en histMacroV1 — stress test no disponible'},
-      Inflación:   {inds:[], note:'CPI/Core vienen de macro.js vivo — stress test parcialmente disponible via tipoReal'},
+      Inflación:{inds:['cpiHeadline','cpiCore'], note:'CPI/Core son RISK_RADAR_V1, maxScore=0 en HIST_MACRO_V1. Input de tipoReal pero score propio.'},
     };
+    // Ampliar RADAR_IND con Sentimiento e Inflación para el stress test
+    const RADAR_IND_EXTENDED = [...RADAR_IND,
+      {id:'hy',          block:'Sentimiento', source:'RISK_RADAR_V1', getter:m=>m.components?.hy,          scoreFrom:c=>c?.score??null},
+      {id:'vix',         block:'Sentimiento', source:'RISK_RADAR_V1', getter:m=>m.components?.vix,         scoreFrom:c=>c?.score??null},
+      {id:'cpiHeadline', block:'Inflación',   source:'RISK_RADAR_V1', getter:m=>m.components?.cpiHeadline, scoreFrom:c=>c?.score??null},
+      {id:'cpiCore',     block:'Inflación',   source:'RISK_RADAR_V1', getter:m=>m.components?.cpiCore,     scoreFrom:c=>c?.score??null},
+    ];
     const blockResults={};
     for(const[bName,bDef] of Object.entries(BLOCK_DEFS)){
-      if(!bDef.inds.length){
+      if(bDef.inds && !bDef.inds.length){
         blockResults[bName]={note:bDef.note,unavailable:true};
         continue;
       }
@@ -489,7 +551,7 @@ export default async function handler(req, res) {
       for(const m of histMacroV1){
         if(!m.valid) continue;
         let bSc=0,nV=0;
-        for(const indId of bDef.inds){const ind=RADAR_IND.find(i=>i.id===indId);const sc=ind?.scoreFrom(ind.getter(m));if(sc!=null){bSc+=sc;nV++;}}
+        for(const indId of bDef.inds){const ind=RADAR_IND_EXTENDED.find(i=>i.id===indId);const sc=ind?.scoreFrom(ind.getter(m));if(sc!=null){bSc+=sc;nV++;}}
         if(nV>0) scoreByMonth[m.month]=bSc;
       }
       const byScore={},xs=[],ys6=[],ys12=[],ybin=[],xsDD=[],ysDD=[],ysDD10=[];
