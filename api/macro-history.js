@@ -713,7 +713,7 @@ export default async function handler(req, res) {
   ];
   const REGIME_HORIZONS = [3, 6, 12];
 
-  let corrAudit = [], regimeAnalysis = [], corrMatrix = {};
+  let corrAudit = [], regimeAnalysis = [], corrMatrix = {}, quintiles = [], stabilityByIndicator = {};
   try {
     const AUDIT_MONTHS = ['2022-10', '2020-04', '2018-12', '2026-06'];
     corrAudit = AUDIT_MONTHS.map(ym => {
@@ -778,7 +778,7 @@ export default async function handler(req, res) {
     const validMonths = histMacroV1.filter(m => m.valid && m.scoreNorm != null)
       .sort((a,b) => a.scoreNorm - b.scoreNorm);
     const Q = Math.ceil(validMonths.length / 5);
-    const quintiles = [0,1,2,3,4].map(i => {
+    quintiles = [0,1,2,3,4].map(i => {
       const slice = validMonths.slice(i*Q, (i+1)*Q);
       const byHorizon = {};
       for (const h of REGIME_HORIZONS) {
@@ -851,7 +851,7 @@ export default async function handler(req, res) {
     const WINDOW_YEARS = 10;
     const allYears = [...new Set(histMacroV1.filter(m=>m.valid).map(m=>+m.month.slice(0,4)))].sort();
     const windowStarts = allYears.filter((y,i,a) => i===0 || y - a[i-1] >= 5); // cada 5 años
-    const stabilityByIndicator = {};
+    stabilityByIndicator = {};
     const KEY_INDICATORS = ['tipoReal','lei','bbb','scoreNorm'];
     for (const k of KEY_INDICATORS) {
       stabilityByIndicator[k] = windowStarts.map(startY => {
