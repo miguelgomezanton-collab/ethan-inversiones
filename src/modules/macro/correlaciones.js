@@ -74,6 +74,12 @@ export async function render(container, { actionsSlot }) {
         <td style="padding:8px 10px;text-align:center;font-family:var(--mono);font-size:10px;color:var(--text3);">
           ${n != null ? n : '—'}
         </td>
+        <td style="padding:8px 10px;text-align:center;font-family:var(--mono);font-size:10px;color:${cell?.p!=null?(cell.p<0.05?'var(--green)':'var(--amber)'):'var(--text3)'};">
+          ${cell?.p != null ? (cell.p < 0.001 ? '<0.001' : cell.p.toFixed(3)) : '—'}
+        </td>
+        <td style="padding:8px 10px;text-align:center;font-family:var(--mono);font-size:9px;color:var(--text3);">
+          ${cell?.ci95 ? '['+cell.ci95[0]+', '+cell.ci95[1]+']' : '—'}
+        </td>
         <td style="padding:8px 10px;">
           ${rho != null ? `<div style="height:6px;background:var(--surface2);border-radius:3px;overflow:hidden;">
             <div style="height:100%;width:${Math.min(Math.abs(rho)*100,100)}%;background:${rhoColor(rho)};border-radius:3px;margin-left:${rho<0?'auto':'0'};"></div>
@@ -103,6 +109,8 @@ export async function render(container, { actionsSlot }) {
             <th style="padding:8px 10px;text-align:left;font-size:9px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:0.08em;">Indicador macro</th>
             <th style="padding:8px 10px;text-align:center;font-size:9px;color:var(--text3);font-weight:600;text-transform:uppercase;">ρ Pearson</th>
             <th style="padding:8px 10px;text-align:center;font-size:9px;color:var(--text3);font-weight:600;text-transform:uppercase;">N obs</th>
+            <th style="padding:8px 10px;text-align:center;font-size:9px;color:var(--text3);font-weight:600;text-transform:uppercase;">p-value</th>
+            <th style="padding:8px 10px;text-align:center;font-size:9px;color:var(--text3);font-weight:600;text-transform:uppercase;">IC 95%</th>
             <th style="padding:8px 10px;font-size:9px;color:var(--text3);font-weight:600;text-transform:uppercase;">Intensidad</th>
           </tr></thead>
           <tbody>${rows}</tbody>
@@ -192,6 +200,66 @@ export async function render(container, { actionsSlot }) {
             Correlaciones por décadas — ¿son estables o cambian de régimen?
           </div>
         </div>
+      </div>
+
+      <div class="mac-card" style="margin-bottom:14px;">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:10px;">
+          Quintiles ScoreNorm → S&amp;P 500 Forward Return
+          <span style="font-weight:400;margin-left:6px;">N equilibrado · ¿existe monotonicidad?</span>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:10px;">
+          <thead><tr style="background:var(--surface2);">
+            <th style="padding:6px 8px;text-align:left;font-size:9px;color:var(--text3);">Q</th>
+            <th style="padding:6px 8px;text-align:center;font-size:9px;color:var(--text3);">Rango Score</th>
+            <th style="padding:6px 8px;text-align:center;font-size:9px;color:var(--text3);">N</th>
+            <th style="padding:6px 8px;text-align:center;font-size:9px;color:var(--text3);">Med +3M</th>
+            <th style="padding:6px 8px;text-align:center;font-size:9px;color:var(--text3);">Med +6M</th>
+            <th style="padding:6px 8px;text-align:center;font-size:9px;color:var(--text3);">Med +12M</th>
+            <th style="padding:6px 8px;text-align:center;font-size:9px;color:var(--text3);">% Pos +12M</th>
+            <th style="padding:6px 8px;text-align:center;font-size:9px;color:var(--text3);">MaxDD</th>
+          </tr></thead>
+          <tbody>${(hist.quintiles||[]).map(q => {
+            const f = (v,s='%')=>v!=null?(v>=0?'+':'')+v.toFixed(1)+s:'—';
+            const c = v=>v==null?'var(--text3)':v>0?'var(--green)':'var(--red)';
+            const h3=q.byHorizon?.[3],h6=q.byHorizon?.[6],h12=q.byHorizon?.[12];
+            return '<tr style="border-bottom:1px solid var(--border);">' +
+              '<td style="padding:6px 8px;color:var(--teal);font-weight:700;font-family:var(--mono);">Q'+q.quintile+'</td>' +
+              '<td style="padding:6px 8px;text-align:center;font-family:var(--mono);font-size:9px;color:var(--text3);">['+q.minScore+', '+q.maxScore+']</td>' +
+              '<td style="padding:6px 8px;text-align:center;font-family:var(--mono);color:var(--text3);">'+(h6?.n||q.nMonths)+'</td>' +
+              '<td style="padding:6px 8px;text-align:center;font-family:var(--mono);color:'+c(h3?.median)+';">'+f(h3?.median)+'</td>' +
+              '<td style="padding:6px 8px;text-align:center;font-family:var(--mono);color:'+c(h6?.median)+';">'+f(h6?.median)+'</td>' +
+              '<td style="padding:6px 8px;text-align:center;font-family:var(--mono);color:'+c(h12?.median)+';">'+f(h12?.median)+'</td>' +
+              '<td style="padding:6px 8px;text-align:center;font-family:var(--mono);color:'+((h12?.pctPos??0)>50?'var(--green)':'var(--red)')+';">'+(h12?.pctPos!=null?h12.pctPos+'%':'—')+'</td>' +
+              '<td style="padding:6px 8px;text-align:center;font-family:var(--mono);color:var(--red);">'+f(h12?.medianDD)+'</td>' +
+            '</tr>';
+          }).join('')}</tbody>
+        </table>
+        <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:6px;">
+          Monotonicidad Q1→Q5: si +12M decrece consistentemente, Score tiene relación inversa con retorno futuro. Sin patrón → Score describe régimen, no anticipa retorno absoluto.
+        </div>
+      </div>
+
+      <div class="mac-card" style="margin-bottom:14px;">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:10px;">
+          Estabilidad Temporal · ρ +6M por ventana de 10 años · * = p&lt;0.05
+        </div>
+        ${['tipoReal','lei','bbb','scoreNorm'].map(k => {
+          const IND = {tipoReal:'Tipo Real',lei:'LEI',bbb:'BBB Spread',scoreNorm:'ScoreNorm'};
+          const windows = hist.stabilityByIndicator?.[k]||[];
+          if (!windows.length) return '<div style="font-size:9px;color:var(--text3);margin-bottom:8px;">'+IND[k]+': N insuficiente</div>';
+          return '<div style="margin-bottom:10px;">' +
+            '<div style="font-size:9px;color:var(--text2);font-weight:700;font-family:var(--mono);margin-bottom:4px;">'+IND[k]+'</div>' +
+            '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+            windows.map(w => {
+              const col = w.rho==null?'var(--text3)':w.rho>0?'var(--green)':'var(--red)';
+              const sig = w.p!=null&&w.p<0.05?'*':'';
+              return '<div style="background:var(--surface2);border-radius:6px;padding:6px 10px;text-align:center;min-width:86px;">' +
+                '<div style="font-size:8px;color:var(--text3);font-family:var(--mono);">'+w.window+'</div>' +
+                '<div style="font-family:var(--mono);font-size:13px;font-weight:700;color:'+col+';margin:2px 0;">'+(w.rho!=null?(w.rho>=0?'+':'')+w.rho.toFixed(2)+sig:'—')+'</div>' +
+                '<div style="font-size:8px;color:var(--text3);">N='+w.n+'</div>' +
+              '</div>';
+            }).join('') + '</div></div>';
+        }).join('')}
       </div>
 
       <div class="co-footer">

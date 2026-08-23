@@ -774,12 +774,100 @@ export default async function handler(req, res) {
       return { ...bucket, nMonths: months.length, byHorizon };
     });
 
+    // Análisis por quintiles — N equilibrado (~78 obs por grupo)
+    const validMonths = histMacroV1.filter(m => m.valid && m.scoreNorm != null)
+      .sort((a,b) => a.scoreNorm - b.scoreNorm);
+    const Q = Math.ceil(validMonths.length / 5);
+    const quintiles = [0,1,2,3,4].map(i => {
+      const slice = validMonths.slice(i*Q, (i+1)*Q);
+      const byHorizon = {};
+      for (const h of REGIME_HORIZONS) {
+        const returns = slice.map(m => spReturn(m.month, h)).filter(v => v != null);
+        const dds     = slice.map(m => maxDrawdown(m.month, 12)).filter(v => v != null);
+        const sorted  = [...returns].sort((a,b) => a-b);
+        const med     = arr => arr.length ? +arr[Math.floor(arr.length/2)].toFixed(2) : null;
+        byHorizon[h]  = {
+          n: returns.length, median: med(sorted),
+          pctPos: returns.length ? +(returns.filter(v=>v>0).length/returns.length*100).toFixed(1) : null,
+          medianDD: med([...dds].sort((a,b)=>a-b)),
+        };
+      }
+      return {
+        quintile: i+1,
+        nMonths:  slice.length,
+        minScore: +slice[0]?.scoreNorm.toFixed(3),
+        maxScore: +slice[slice.length-1]?.scoreNorm.toFixed(3),
+        byHorizon,
+      };
+    });
+
+    // Pearson con p-value (aproximación t-student: t = r*sqrt(n-2)/sqrt(1-r^2))
+    function pearsonWithP(xs, ys) {
+      if (!xs?.length || xs.length < 20) return null;
+      const mx = xs.reduce((a,b)=>a+b,0)/xs.length;
+      const my = ys.reduce((a,b)=>a+b,0)/ys.length;
+      let num=0, dx2=0, dy2=0;
+      for (let i=0; i<xs.length; i++) {
+        const a=xs[i]-mx, b=ys[i]-my;
+        num+=a*b; dx2+=a*a; dy2+=b*b;
+      }
+      const denom = Math.sqrt(dx2*dy2);
+      if (denom===0) return null;
+      const r = num/denom;
+      const n = xs.length;
+      const t = r * Math.sqrt(n-2) / Math.sqrt(1 - r*r + 1e-10);
+      // p-value aproximado (distribución t, dos colas) — aproximación normal para n>30
+      const z = Math.abs(t);
+      const pApprox = n > 30
+        ? 2 * (1 - (0.5 * (1 + Math.sign(z) * Math.sqrt(1 - Math.exp(-2*z*z/Math.PI)))))
+        : null; // sin aproximación para n pequeño
+      // IC 95% via Fisher z-transform
+      const zr  = 0.5 * Math.log((1+r)/(1-r+1e-10));
+      const se  = 1/Math.sqrt(n-3);
+      const ci95 = [
+        +(Math.tanh(zr - 1.96*se)).toFixed(3),
+        +(Math.tanh(zr + 1.96*se)).toFixed(3),
+      ];
+      return { rho: +r.toFixed(3), n, p: pApprox != null ? +pApprox.toFixed(4) : null, ci95 };
+    }
+
+    // Recalcular corrMatrix con p-values
     for (const h of HORIZONS) {
       const fwdMap = buildForwardMap(spMap, h);
       corrMatrix[h] = {};
       for (const k of IND_KEYS) {
-        corrMatrix[h][k] = calcLeadLag(k, fwdMap);
+        const xs=[], ys=[];
+        for (const m of histMacroV1) {
+          if (!m.valid) continue;
+          const indVal = k==='scoreNorm' ? m.scoreNorm : m.components?.[k]?.valid ? m.components[k].value : null;
+          const fwdVal = fwdMap.get(m.month);
+          if (indVal!=null && fwdVal!=null) { xs.push(indVal); ys.push(fwdVal); }
+        }
+        corrMatrix[h][k] = pearsonWithP(xs, ys);
       }
+    }
+
+    // Estabilidad temporal: Pearson por ventana de 10 años
+    const WINDOW_YEARS = 10;
+    const allYears = [...new Set(histMacroV1.filter(m=>m.valid).map(m=>+m.month.slice(0,4)))].sort();
+    const windowStarts = allYears.filter((y,i,a) => i===0 || y - a[i-1] >= 5); // cada 5 años
+    const stabilityByIndicator = {};
+    const KEY_INDICATORS = ['tipoReal','lei','bbb','scoreNorm'];
+    for (const k of KEY_INDICATORS) {
+      stabilityByIndicator[k] = windowStarts.map(startY => {
+        const endY = startY + WINDOW_YEARS;
+        const fwdMap6 = buildForwardMap(spMap, 6);
+        const xs=[], ys=[];
+        for (const m of histMacroV1) {
+          const y = +m.month.slice(0,4);
+          if (!m.valid || y < startY || y >= endY) continue;
+          const indVal = k==='scoreNorm' ? m.scoreNorm : m.components?.[k]?.valid ? m.components[k].value : null;
+          const fwdVal = fwdMap6.get(m.month);
+          if (indVal!=null && fwdVal!=null) { xs.push(indVal); ys.push(fwdVal); }
+        }
+        const res = pearsonWithP(xs, ys);
+        return { window: `${startY}-${endY}`, n: xs.length, rho: res?.rho ?? null, p: res?.p ?? null };
+      }).filter(w => w.n >= 20);
     }
   } catch(e) { errs.push('corrAudit/regime/corrMatrix error: ' + e.message); }
 
@@ -859,6 +947,8 @@ export default async function handler(req, res) {
     corrMatrix,
     corrAudit,
     regimeAnalysis,
+    quintiles,
+    stabilityByIndicator,
 
     // Metadatos
     n_months: sp?.length || 0,
