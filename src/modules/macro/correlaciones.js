@@ -49,6 +49,59 @@ export async function render(container, { actionsSlot }) {
     }
   }
 
+
+    function buildSpearmanHTML(sp) {
+      if (!sp) return '<div style="font-size:9px;color:var(--text3);">Sin datos</div>';
+      const f3  = v => v != null ? (v>=0?'+':'')+v.toFixed(3) : '—';
+      const col = v => v == null ? 'var(--text3)' : v > 0 ? 'var(--green)' : 'var(--red)';
+      const sig = v => v != null && v < 0.05 ? '*' : '';
+      const cards2 = [
+        ['Spearman vs retorno +12M continuo', sp.return12m, sp.n],
+        ['Spearman vs binario positivo +12M (1/0)', sp.binary12m, sp.n],
+      ].map(([label, s, n]) =>
+        '<div style="background:var(--surface2);border-radius:8px;padding:12px;">' +
+          '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:6px;">' + label + '</div>' +
+          '<div style="font-family:var(--serif);font-size:28px;font-weight:600;font-style:italic;color:' + col(s?.rho) + ';">' + f3(s?.rho) + sig(s?.p) + '</div>' +
+          '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);">N=' + n + ' · p=' + (s?.p != null ? s.p.toFixed(4) : '—') + '</div>' +
+          '<div style="font-size:9px;color:var(--text3);">IC95: ' + (s?.ci95 ? '[' + s.ci95[0] + ', ' + s.ci95[1] + ']' : '—') + '</div>' +
+        '</div>'
+      ).join('');
+      const noOv =
+        '<div style="background:var(--surface2);border-radius:8px;padding:12px;margin-top:8px;">' +
+          '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:4px;">Obs. no solapadas cada 12M (N independiente)</div>' +
+          '<div style="font-size:13px;font-weight:700;font-family:var(--mono);color:' + col(sp.binary12mNonOverlap?.rho) + ';">' + f3(sp.binary12mNonOverlap?.rho) + sig(sp.binary12mNonOverlap?.p) + '</div>' +
+          '<div style="font-size:9px;color:var(--text3);">N=' + sp.nNonOverlap + ' · p=' + (sp.binary12mNonOverlap?.p != null ? sp.binary12mNonOverlap.p.toFixed(4) : '—') + ' · IC95: ' + (sp.binary12mNonOverlap?.ci95 ? '[' + sp.binary12mNonOverlap.ci95[0] + ', ' + sp.binary12mNonOverlap.ci95[1] + ']' : '—') + '</div>' +
+        '</div>';
+      let boot = '<div style="font-size:9px;color:var(--amber);margin-top:8px;">Bootstrap no disponible</div>';
+      if (sp.binary12mBootstrap) {
+        const b = sp.binary12mBootstrap;
+        const bCol = b.excludes0 ? '74,222,128' : b.pBoot < 0.05 ? '64,217,192' : '251,191,36';
+        const verdict = b.excludes0 ? '✓ IC95% excluye 0: señal robusta. ScoreNorm contiene información sobre probabilidad de retorno positivo a +12M.'
+          : b.pBoot < 0.05 ? '⚠ p<0.05 pero IC95 cruza 0 — señal sugestiva, no concluyente.'
+          : '⚠ IC95 cruza 0 — evidencia indicativa pero no robusta estadísticamente.';
+        const cells = [
+          ['ρ observado', (b.rhoObs>=0?'+':'')+b.rhoObs.toFixed(3), b.rhoObs<0?'var(--red)':'var(--green)'],
+          ['IC95% bootstrap', '['+b.ci95[0]+', '+b.ci95[1]+']', b.excludes0?'var(--green)':'var(--amber)'],
+          ['p bootstrap', b.pBoot.toFixed(4)+(b.pBoot<0.05?'*':''), b.pBoot<0.05?'var(--green)':'var(--amber)'],
+          ['N / bloque', b.T+' / '+b.block+'M', 'var(--text2)'],
+        ].map(([l,v,c]) =>
+          '<div style="background:var(--surface);border-radius:6px;padding:8px 10px;text-align:center;">' +
+            '<div style="font-size:8px;color:var(--text3);font-family:var(--mono);margin-bottom:4px;">' + l + '</div>' +
+            '<div style="font-family:var(--mono);font-size:13px;font-weight:700;color:' + c + ';">' + v + '</div>' +
+          '</div>'
+        ).join('');
+        boot =
+          '<div style="background:rgba(' + bCol + ',0.06);border:1px solid rgba(' + bCol + ',0.25);border-radius:8px;padding:12px;margin-top:10px;">' +
+            '<div style="font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;margin-bottom:8px;">' + b.method + '</div>' +
+            '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:8px;">' + cells + '</div>' +
+            '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);">' + verdict + '</div>' +
+          '</div>';
+      }
+      return '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' + cards2 + '</div>' +
+        noOv + boot +
+        '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:8px;">rho &lt; 0: ScoreNorm mayor asociado con menor probabilidad de retorno positivo a +12M.</div>';
+    }
+
   function paint(hist) {
     const el = document.getElementById('corr-wrap');
     const cm = hist.corrMatrix;
@@ -278,40 +331,9 @@ export async function render(container, { actionsSlot }) {
         <div style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:10px;">
           Spearman ScoreNorm → S&amp;P 500 · Retorno +12M
         </div>
-        ${(() => {
-          const sp = hist.spearman;
-          if (!sp) return '<div style="font-size:9px;color:var(--text3);">Sin datos</div>';
-          const f3 = v => v!=null?(v>=0?'+':'')+v.toFixed(3):'—';
-          const col = v => v==null?'var(--text3)':v>0?'var(--green)':'var(--red)';
-          const sig = v => v!=null&&v<0.05?'*':'';
-          return '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
-            '<div style="background:var(--surface2);border-radius:8px;padding:12px;">' +
-              '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:6px;">ρ Spearman vs retorno +12M continuo</div>' +
-              '<div style="font-family:var(--serif);font-size:28px;font-weight:600;font-style:italic;color:'+col(sp.return12m?.rho)+';">'+f3(sp.return12m?.rho)+sig(sp.return12m?.p)+'</div>' +
-              '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);">N='+sp.n+' · p='+(sp.return12m?.p!=null?sp.return12m.p.toFixed(4):'—')+'</div>' +
-              '<div style="font-size:9px;color:var(--text3);">IC95: '+(sp.return12m?.ci95?'['+sp.return12m.ci95[0]+', '+sp.return12m.ci95[1]+']':'—')+'</div>' +
-            '</div>' +
-            '<div style="background:var(--surface2);border-radius:8px;padding:12px;">' +
-              '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:6px;">ρ Spearman vs binario positivo +12M (1/0)</div>' +
-              '<div style="font-family:var(--serif);font-size:28px;font-weight:600;font-style:italic;color:'+col(sp.binary12m?.rho)+';">'+f3(sp.binary12m?.rho)+sig(sp.binary12m?.p)+'</div>' +
-              '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);">N='+sp.n+' · p='+(sp.binary12m?.p!=null?sp.binary12m.p.toFixed(4):'—')+'</div>' +
-              '<div style="font-size:9px;color:var(--text3);">IC95: '+(sp.binary12m?.ci95?'['+sp.binary12m.ci95[0]+', '+sp.binary12m.ci95[1]+']':'—')+'</div>' +
-            '</div>' +
-          '</div>' +
-          '<div style="background:var(--surface2);border-radius:8px;padding:12px;margin-top:8px;">' +
-            '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:4px;">Validación robusta — observaciones no solapadas cada 12M (sin autocorrelación)</div>' +
-            '<div style="display:flex;gap:16px;align-items:center;">' +
-              '<div>' +
-                '<div style="font-family:var(--mono);font-size:13px;font-weight:700;color:'+col(sp.binary12mNonOverlap?.rho)+';">'+f3(sp.binary12mNonOverlap?.rho)+(sp.binary12mNonOverlap?.p!=null&&sp.binary12mNonOverlap.p<0.05?'*':'')+'</div>' +
-                '<div style="font-size:9px;color:var(--text3);">N='+sp.nNonOverlap+' · p='+(sp.binary12mNonOverlap?.p!=null?sp.binary12mNonOverlap.p.toFixed(4):'—')+'</div>' +
-              '</div>' +
-              '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);">' +
-                'Si ρ sigue negativo y significativo con N independiente → señal más robusta.<br>IC95: '+(sp.binary12mNonOverlap?.ci95?'['+sp.binary12mNonOverlap.ci95[0]+', '+sp.binary12mNonOverlap.ci95[1]+']':'—') +
-              '</div>' +
-            '</div>' +
-          '</div>' +
-          '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:8px;">ρ < 0: ScoreNorm mayor se asocia históricamente con menor probabilidad de retorno positivo a +12M. ⚠ Forward returns mensuales se solapan (11/12 meses comunes) — p-value convencional es optimista. Ver validación no solapada abajo.</div>';
-        })()}
+        ${buildSpearmanHTML(hist.spearman)}
+      </div>
+
       </div>
 
       <div class="co-footer">

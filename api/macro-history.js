@@ -715,7 +715,8 @@ export default async function handler(req, res) {
 
   let corrAudit = [], regimeAnalysis = [], corrMatrix = {}, quintiles = [], stabilityByIndicator = {},
       spearmanReturn = null, spearmanBinary = null, spearmanN = 0,
-      spearmanBinaryNonOverlap = null, nonOverlapN = 0, spearmanBinaryHAC = null;
+      spearmanBinaryNonOverlap = null, nonOverlapN = 0,
+      spearmanBinaryHAC = null, spearmanBinaryBootstrap = null;
   try {
     const AUDIT_MONTHS = ['2022-10', '2020-04', '2018-12', '2026-06'];
     corrAudit = AUDIT_MONTHS.map(ym => {
@@ -1004,6 +1005,60 @@ export default async function handler(req, res) {
         method: `Newey-West HAC (Bartlett, bw=${bw})`,
       };
     } catch(eHac) { errs.push('HAC error: ' + eHac.message); }
+
+    // Block Bootstrap: bloques móviles de 12M, 5000 simulaciones
+    // Preserva la dependencia temporal de los retornos solapados
+    try {
+      const BLOCK  = 12;   // meses por bloque
+      const NSIM   = 5000;
+      const T_bb   = xs12.length;
+      const nBlocks = Math.ceil(T_bb / BLOCK);
+
+      // Par (score, binario) ya construido en xs12/ybin
+      const pairs = xs12.map((x,i) => [x, ybin[i]]);
+
+      function spearmanRho(arr) {
+        const n = arr.length;
+        const rx = rankArray(arr.map(p=>p[0]));
+        const ry = rankArray(arr.map(p=>p[1]));
+        const mx = rx.reduce((a,b)=>a+b,0)/n, my = ry.reduce((a,b)=>a+b,0)/n;
+        let num=0,dx2=0,dy2=0;
+        for(let i=0;i<n;i++){const a=rx[i]-mx,b=ry[i]-my;num+=a*b;dx2+=a*a;dy2+=b*b;}
+        const d=Math.sqrt(dx2*dy2); return d===0?0:num/d;
+      }
+
+      const rhoObs = spearmanRho(pairs);
+
+      // Semilla determinista — generador LCG simple
+      let seed = 20260823;
+      function rand() { seed=(seed*1664525+1013904223)&0xFFFFFFFF; return (seed>>>0)/4294967296; }
+
+      const bootDist = [];
+      for (let s=0; s<NSIM; s++) {
+        const sample = [];
+        while (sample.length < T_bb) {
+          const start = Math.floor(rand() * (T_bb - BLOCK + 1));
+          for (let k=0; k<BLOCK && sample.length<T_bb; k++) {
+            sample.push(pairs[(start+k) % T_bb]);
+          }
+        }
+        bootDist.push(spearmanRho(sample.slice(0, T_bb)));
+      }
+      bootDist.sort((a,b)=>a-b);
+      const ci025 = bootDist[Math.floor(NSIM*0.025)];
+      const ci975 = bootDist[Math.floor(NSIM*0.975)];
+      // p-value bootstrap: proporción de simulaciones con ρ >= 0 (cola izquierda para ρ<0)
+      const pBoot = bootDist.filter(r => r >= 0).length / NSIM;
+
+      spearmanBinaryBootstrap = {
+        rhoObs:   +rhoObs.toFixed(3),
+        ci95:     [+ci025.toFixed(3), +ci975.toFixed(3)],
+        pBoot:    +pBoot.toFixed(4),
+        excludes0: ci025 < 0 && ci975 < 0,
+        block: BLOCK, nSim: NSIM, T: T_bb,
+        method: `Block Bootstrap (bloques móviles ${BLOCK}M, ${NSIM} sims)`,
+      };
+    } catch(eBoot) { errs.push('Bootstrap error: ' + eBoot.message); }
   } catch(e) { errs.push('spearman error: ' + e.message); }
 
   // Correlaciones legacy (retornos coincidentes) — mantenidas para compatibilidad
@@ -1089,6 +1144,7 @@ export default async function handler(req, res) {
       binary12m:          spearmanBinary,
       binary12mNonOverlap: spearmanBinaryNonOverlap,
       binary12mHAC:        spearmanBinaryHAC,
+      binary12mBootstrap:  spearmanBinaryBootstrap,
       nNonOverlap: nonOverlapN,
       n:                  spearmanN,
     },
