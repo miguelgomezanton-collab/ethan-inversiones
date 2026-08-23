@@ -116,10 +116,68 @@ export async function render(container, { actionsSlot }) {
         </div>
       </div>
 
-      <div class="mac-card" style="background:rgba(251,191,36,0.04);border-color:rgba(251,191,36,0.2);">
-        <div style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:8px;">
-          Pendiente · Fase 2C
+      <div class="mac-card" style="margin-bottom:14px;font-family:var(--mono);">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:10px;">
+          🔍 Audit Trail — Verificación Lead-Lag (sin look-ahead)
         </div>
+        ${(hist.corrAudit||[]).map(a => {
+          if (a.error) return `<div style="font-size:9px;color:var(--text3);margin-bottom:6px;">${a.month}: ${a.error}</div>`;
+          return `<div style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border);">
+            <div style="font-size:10px;color:var(--teal);font-weight:700;margin-bottom:4px;">
+              ${a.month} · ScoreNorm ${a.scoreNorm>=0?'+':''}${a.scoreNorm?.toFixed(3)} · SP0: ${a.sp0!=null?a.sp0:'—'}
+            </div>
+            ${a.rows.map(r => r.error ? '' : `
+              <div style="font-size:9px;color:var(--text3);line-height:2;margin-left:8px;">
+                ${r.label}: valor=${r.value?.toFixed?.(3)??r.value} | score=${r.score>=0?'+':''}${r.score}
+                → SP0:${a.sp0??'—'} | SP+3m:${r.sp3m!=null?(r.sp3m>=0?'+':'')+r.sp3m+'%':'—'}
+                | SP+6m:${r.sp6m!=null?(r.sp6m>=0?'+':'')+r.sp6m+'% ('+r.sp6mDate+' nivel:'+r.sp6mRaw+')':'—'}
+                | SP+12m:${r.sp12m!=null?(r.sp12m>=0?'+':'')+r.sp12m+'%':'—'}
+              </div>`).join('')}
+          </div>`;
+        }).join('')}
+        <div style="font-size:9px;color:var(--text3);margin-top:4px;">
+          SP0 = nivel S&P 500 en el mes del indicador · SP+6m = nivel 6 meses después · forward return = SP+6m/SP0 − 1
+        </div>
+      </div>
+
+      <div class="mac-card" style="margin-bottom:14px;">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:10px;">
+          Distribución S&P 500 por Régimen Macro (ScoreNorm)
+          <span style="color:var(--text3);font-weight:400;margin-left:8px;">¿Qué distribución de retornos ha tenido históricamente el S&P condicionado al régimen?</span>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:10px;">
+          <thead><tr style="background:var(--surface2);">
+            <th style="padding:7px 10px;text-align:left;font-size:9px;color:var(--text3);">Régimen</th>
+            <th style="padding:7px 10px;text-align:center;font-size:9px;color:var(--text3);">N meses</th>
+            <th style="padding:7px 10px;text-align:center;font-size:9px;color:var(--text3);">Med +3M</th>
+            <th style="padding:7px 10px;text-align:center;font-size:9px;color:var(--text3);">Med +6M</th>
+            <th style="padding:7px 10px;text-align:center;font-size:9px;color:var(--text3);">Med +12M</th>
+            <th style="padding:7px 10px;text-align:center;font-size:9px;color:var(--text3);">% Pos +12M</th>
+            <th style="padding:7px 10px;text-align:center;font-size:9px;color:var(--text3);">Med MaxDD</th>
+          </tr></thead>
+          <tbody>
+            ${(hist.regimeAnalysis||[]).map(b => {
+              const h3  = b.byHorizon?.[3];
+              const h6  = b.byHorizon?.[6];
+              const h12 = b.byHorizon?.[12];
+              const f   = (v,suffix='%') => v!=null?(v>=0?'+':'')+v.toFixed(1)+suffix:'—';
+              const c   = v => v==null?'var(--text3)':v>0?'var(--green)':'var(--red)';
+              return `<tr style="border-bottom:1px solid var(--border);">
+                <td style="padding:7px 10px;color:var(--text2);">${b.label} <span style="color:var(--text3);font-size:9px;">(${b.min.toFixed(2)} → ${b.max.toFixed(2)})</span></td>
+                <td style="padding:7px 10px;text-align:center;color:var(--text3);">${b.nMonths}</td>
+                <td style="padding:7px 10px;text-align:center;font-family:var(--mono);color:${c(h3?.median)};">${f(h3?.median)}</td>
+                <td style="padding:7px 10px;text-align:center;font-family:var(--mono);color:${c(h6?.median)};">${f(h6?.median)}</td>
+                <td style="padding:7px 10px;text-align:center;font-family:var(--mono);color:${c(h12?.median)};">${f(h12?.median)}</td>
+                <td style="padding:7px 10px;text-align:center;font-family:var(--mono);color:${(h12?.pctPos??0)>50?'var(--green)':'var(--red)'};">${h12?.pctPos!=null?h12.pctPos+'%':'—'}</td>
+                <td style="padding:7px 10px;text-align:center;font-family:var(--mono);color:var(--red);">${f(h12?.medianDD)}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+        <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:8px;">
+          ⚠ Basado en SP500 disponible (${hist.corrMatrix ? 'HIST_MACRO_V1_FRED' : '—'}). N bajo = baja fiabilidad estadística. No implica predicción.
+        </div>
+      </div>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;font-size:10px;color:var(--text3);font-family:var(--mono);">
           <div style="background:var(--surface2);border-radius:8px;padding:10px 12px;">
             <div style="color:var(--text2);font-weight:700;margin-bottom:4px;">Activos adicionales</div>
