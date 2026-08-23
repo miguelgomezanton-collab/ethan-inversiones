@@ -25,8 +25,55 @@ export async function render(container,{actionsSlot}){
     const polScore=(co.tipoReal?.score||0)+(liq.reservas?.score||0);
     const infScore=(ind.cpi?.score||0);
 
-    function dotCol(sc){ return sc>0?'var(--green)':sc===0?'var(--amber)':'var(--red)'; }
-    function dotLabel(sc){ return sc>0?'🟢':sc===0?'🟡':'🔴'; }
+    // Trazabilidad detallada por componente (audit, sin cambiar reglas)
+    const auditBlocks = [
+      {
+        l: 'Ciclo Económico', sc: cicloScore,
+        components: [
+          { name: 'Curva USD', value: co.curvaUSD?.value, score: co.curvaUSD?.score, source: 'HIST_MACRO_V1', rule: '≥0.90→+1 | ≥0.48→0 | <0.48→-1' },
+          { name: 'Curva EUR', value: co.curvaEUR?.value, score: co.curvaEUR?.score, source: 'HIST_MACRO_V1', rule: '≥0.60→+1 | ≥0.40→0 | <0.40→-1' },
+          { name: 'LEI (OECD)', value: ind.lei?.value, score: ind.lei?.score, source: 'HIST_MACRO_V1', rule: 'nivel>100 y delta>0→+1 | nivel<100 y delta<0→-1 | resto→0' },
+        ]
+      },
+      {
+        l: 'Liquidez Global', sc: liqScore,
+        components: [
+          { name: 'M2 Global YoY', value: liq.m2?.value, score: liq.m2?.score, source: 'HIST_MACRO_V1', rule: '≥5%→+3 | ≥3%→+1 | <3%→-3 [PROVISIONAL]' },
+          { name: 'Impulso Crediticio', value: liq.impulso?.value, score: liq.impulso?.score, source: 'HIST_MACRO_V1', rule: '≥1.0→+2 | ≥0.5→+1 | <0.5→-2 [PROVISIONAL]' },
+          { name: 'Velocidad M2', value: liq.velM2?.value, score: liq.velM2?.score, source: 'HIST_MACRO_V1', rule: '≥0%→+2 | ≥-1.5%→-1 | <-1.5%→-2 [PROVISIONAL]' },
+          { name: 'Crédito vs PIB', value: liq.credito?.value, score: liq.credito?.score, source: 'HIST_MACRO_V1', rule: '≥3pp→+3 | ≥1.5pp→0 | <1.5pp→-3 [PROVISIONAL]' },
+        ]
+      },
+      {
+        l: 'Crédito', sc: creditoScore,
+        components: [
+          { name: 'BBB Spread', value: liq.bbbSpread?.value, score: liq.bbbSpread?.score, source: 'HIST_MACRO_V1 (solo analogías)', rule: '≤1.00%→+1 | ≤1.50%→0 | >1.50%→-1' },
+          { name: 'HY Spread', value: seg.hySpread?.value, score: seg.hySpread?.value!=null?(seg.hySpread.value<3.5?1:seg.hySpread.value<5?0:-1):null, source: '⚠ INLINE — no en HIST_MACRO_V1', rule: '<3.5%→+1 | <5%→0 | ≥5%→-1 [PROVISIONAL]' },
+        ]
+      },
+      {
+        l: 'Sentimiento', sc: sentScore,
+        components: [
+          { name: 'Fear & Greed', value: ind.fearGreed?.value, score: ind.fearGreed?.score, source: '⚠ INLINE — no en HIST_MACRO_V1', rule: '<40→+1 | ≤54→0 | >54→-1 [convención contrarian]' },
+          { name: 'VIX vs SMA200', value: seg.vix?.value, score: seg.vix?.aboveSMA200!=null?(seg.vix.aboveSMA200?-1:1):null, source: '⚠ INLINE — no en HIST_MACRO_V1', rule: '<SMA200→+1 | ≥SMA200→-1 [PROVISIONAL]' },
+        ]
+      },
+      {
+        l: 'Política Monetaria', sc: polScore,
+        components: [
+          { name: 'Tipo Real', value: co.tipoReal?.value, score: co.tipoReal?.score, source: 'HIST_MACRO_V1', rule: '≥1.0%→+1 | ≥0.5%→0 | <0.5%→-1' },
+          { name: 'Reservas Fed', value: liq.reservas?.value, score: liq.reservas?.score, source: 'HIST_MACRO_V1', rule: '≥3.5T→+1 | <3.5T→-1 [PROVISIONAL, umbral fijo]' },
+        ]
+      },
+      {
+        l: 'Inflación', sc: infScore,
+        components: [
+          { name: 'CPI score', value: co.cpi?.value, score: ind.cpi?.score ?? null, source: '⚠ CPI no tiene score en HIST_MACRO_V1 — si null→0 silencioso', rule: 'CPI es INPUT de Tipo Real en HIST_MACRO_V1, no indicador independiente' },
+        ]
+      },
+    ];
+
+    const totalAudit = auditBlocks.reduce((s,b) => s + b.sc, 0);
 
     const blocks=[
       {icon:'🔄',l:'Ciclo Económico',sc:cicloScore,detail:`Curva USD ${co.curvaUSD?.value!=null?f2(co.curvaUSD.value)+'%':'—'} · Curva EUR ${co.curvaEUR?.value!=null?f2(co.curvaEUR.value)+'%':'—'} · LEI ${ind.lei?.value!=null?f2(ind.lei.value)+'%':'—'}`},
@@ -89,6 +136,36 @@ export async function render(container,{actionsSlot}){
         </div>
       </div>
       <div class="co-footer" style="margin-top:14px;">Radar de riesgos · actualización automática</div>
+
+      <!-- AUDIT TRAIL -->
+      <div style="margin-top:14px;background:rgba(64,217,192,0.04);border:1px solid rgba(64,217,192,0.15);border-radius:10px;padding:14px 16px;">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:var(--text3);margin-bottom:10px;">
+          🔍 Audit Trail — Trazabilidad Score Total
+          <span style="color:${totalAudit===s?'var(--green)':'var(--red)'};">
+            ${auditBlocks.map(b=>`${b.l.split(' ')[0]}:${b.sc>=0?'+':''}${b.sc}`).join(' | ')} = ${totalAudit>=0?'+':''}${totalAudit}
+            ${totalAudit===s?' ✓ coincide con scoreTotal':'⚠ NO coincide con scoreTotal='+s+' (discrepancia)'}
+          </span>
+        </div>
+        ${auditBlocks.map(b => `
+          <div style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border);">
+            <div style="font-size:10px;font-weight:700;color:${b.sc>0?'var(--green)':b.sc<0?'var(--red)':'var(--amber)'};margin-bottom:4px;">
+              ${b.l} → Score: ${b.sc>=0?'+':''}${b.sc}
+            </div>
+            ${b.components.map(c => `
+              <div style="font-size:9px;font-family:var(--mono);color:var(--text3);line-height:1.8;margin-left:12px;">
+                ${c.name}:
+                valor=${c.value!=null?(typeof c.value==='number'?c.value.toFixed(3):c.value):'MISSING'} →
+                score=${c.score!=null?(c.score>=0?'+':'')+c.score:'null (→0 silencioso)'} ·
+                ${c.source.startsWith('⚠')?'<span style="color:var(--amber);">'+c.source+'</span>':c.source} ·
+                Regla: ${c.rule}
+              </div>`).join('')}
+          </div>`).join('')}
+        <div style="font-size:9px;font-family:var(--mono);color:var(--amber);margin-top:6px;line-height:1.6;">
+          ⚠ Indicadores marcados INLINE no pertenecen a HIST_MACRO_V1 y tienen reglas distintas.<br>
+          ⚠ CPI: si score=null, infScore=0 silenciosamente — puede ocultar señal de inflación.<br>
+          ⚠ Score Total del Radar ≠ scoreTotal del Motor Macro (son agregaciones distintas). Ver HIST_MACRO_V1 para referencia canónica.
+        </div>
+      </div>
     `;
   }
   document.getElementById('radar-refresh')?.addEventListener('click',()=>load(true));
