@@ -853,27 +853,47 @@ export default async function handler(req, res) {
       }
     }
 
-    // Estabilidad temporal: Pearson por ventana de 10 años
-    const WINDOW_YEARS = 10;
-    const allYears = [...new Set(histMacroV1.filter(m=>m.valid).map(m=>+m.month.slice(0,4)))].sort();
-    const windowStarts = allYears.filter((y,i,a) => i===0 || y - a[i-1] >= 5); // cada 5 años
-    stabilityByIndicator = {};
+    // Estabilidad temporal: 3 bloques iguales por N (Early / Mid / Recent)
     const KEY_INDICATORS = ['tipoReal','lei','bbb','scoreNorm'];
+    const fwdMap6stable = buildForwardMap(spMap, 6);
+    // Solo meses con forward +6M disponible, ordenados cronológicamente
+    const mthsWith6m = histMacroV1
+      .filter(m => m.valid && fwdMap6stable.get(m.month) != null)
+      .sort((a,b) => a.month.localeCompare(b.month));
+    const bSz = Math.floor(mthsWith6m.length / 3);
+    const temporalBlocks = [
+      { label: 'Early',  months: mthsWith6m.slice(0, bSz) },
+      { label: 'Mid',    months: mthsWith6m.slice(bSz, bSz*2) },
+      { label: 'Recent', months: mthsWith6m.slice(bSz*2) },
+    ].map(b => ({
+      label: b.label,
+      first: b.months[0]?.month?.slice(0,7) || '—',
+      last:  b.months[b.months.length-1]?.month?.slice(0,7) || '—',
+      n:     b.months.length,
+      months: b.months,
+    }));
+
+    stabilityByIndicator = {};
     for (const k of KEY_INDICATORS) {
-      stabilityByIndicator[k] = windowStarts.map(startY => {
-        const endY = startY + WINDOW_YEARS;
-        const fwdMap6 = buildForwardMap(spMap, 6);
+      stabilityByIndicator[k] = temporalBlocks.map(b => {
         const xs=[], ys=[];
-        for (const m of histMacroV1) {
-          const y = +m.month.slice(0,4);
-          if (!m.valid || y < startY || y >= endY) continue;
-          const indVal = k==='scoreNorm' ? m.scoreNorm : m.components?.[k]?.valid ? m.components[k].value : null;
-          const fwdVal = fwdMap6.get(m.month);
+        for (const m of b.months) {
+          const indVal = k==='scoreNorm' ? m.scoreNorm
+            : m.components?.[k]?.valid ? m.components[k].value : null;
+          const fwdVal = fwdMap6stable.get(m.month);
           if (indVal!=null && fwdVal!=null) { xs.push(indVal); ys.push(fwdVal); }
         }
-        const res = pearsonWithP(xs, ys);
-        return { window: `${startY}-${endY}`, n: xs.length, rho: res?.rho ?? null, p: res?.p ?? null };
-      }).filter(w => w.n >= 20);
+        const res = xs.length >= 10 ? pearsonWithP(xs, ys) : null;
+        return {
+          label: b.label,
+          window: `${b.first}→${b.last}`,
+          n:      xs.length,
+          rho:    res?.rho ?? null,
+          p:      res?.p  ?? null,
+          ci95:   res?.ci95 ?? null,
+          lowN:   xs.length < 15,
+        };
+      });
     }
   } catch(e) { errs.push('corrAudit/regime/corrMatrix error: ' + e.message); }
 
@@ -915,6 +935,24 @@ export default async function handler(req, res) {
     spearmanReturn = pearsonRanks(rankArray(xs12), rankArray(ys12));
     spearmanBinary = pearsonRanks(rankArray(xs12), rankArray(ybin));
     spearmanN      = xs12.length;
+
+    // Validación robusta: observaciones no solapadas cada 12M
+    // Elimina autocorrelación de los forward returns a +12M
+    const nonOverlap = [];
+    const allPairs12 = histMacroV1
+      .filter(m => m.valid && m.scoreNorm != null && fwdMap12b.get(m.month) != null)
+      .sort((a,b) => a.month.localeCompare(b.month));
+    let lastIncluded = null;
+    for (const m of allPairs12) {
+      if (lastIncluded === null ||
+          (new Date(m.month+'-01') - new Date(lastIncluded+'-01')) >= 365*24*3600*1000*0.95) {
+        nonOverlap.push({ x: m.scoreNorm, y: fwdMap12b.get(m.month) });
+        lastIncluded = m.month;
+      }
+    }
+    const xno = nonOverlap.map(p=>p.x), yno = nonOverlap.map(p=>p.y), ybno = yno.map(v=>v>0?1:0);
+    const spearmanBinaryNonOverlap = nonOverlap.length >= 10
+      ? pearsonRanks(rankArray(xno), rankArray(ybno)) : null;
   } catch(e) { errs.push('spearman error: ' + e.message); }
 
   // Correlaciones legacy (retornos coincidentes) — mantenidas para compatibilidad
@@ -995,7 +1033,13 @@ export default async function handler(req, res) {
     regimeAnalysis,
     quintiles,
     stabilityByIndicator,
-    spearman: { return12m: spearmanReturn, binary12m: spearmanBinary, n: spearmanN },
+    spearman: {
+      return12m:          spearmanReturn,
+      binary12m:          spearmanBinary,
+      binary12mNonOverlap: spearmanBinaryNonOverlap,
+      nNonOverlap:        nonOverlap?.length ?? 0,
+      n:                  spearmanN,
+    },
 
     // Metadatos
     n_months: sp?.length || 0,

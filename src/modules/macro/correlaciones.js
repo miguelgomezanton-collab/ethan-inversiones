@@ -298,7 +298,19 @@ export async function render(container, { actionsSlot }) {
               '<div style="font-size:9px;color:var(--text3);">IC95: '+(sp.binary12m?.ci95?'['+sp.binary12m.ci95[0]+', '+sp.binary12m.ci95[1]+']':'—')+'</div>' +
             '</div>' +
           '</div>' +
-          '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:8px;">El Spearman binario mide si Score alto → mayor probabilidad de retorno positivo. Caída Q5 al 63,6% sugiere que puede haber señal negativa en la dirección.</div>';
+          '<div style="background:var(--surface2);border-radius:8px;padding:12px;margin-top:8px;">' +
+            '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:4px;">Validación robusta — observaciones no solapadas cada 12M (sin autocorrelación)</div>' +
+            '<div style="display:flex;gap:16px;align-items:center;">' +
+              '<div>' +
+                '<div style="font-family:var(--mono);font-size:13px;font-weight:700;color:'+col(sp.binary12mNonOverlap?.rho)+';">'+f3(sp.binary12mNonOverlap?.rho)+(sp.binary12mNonOverlap?.p!=null&&sp.binary12mNonOverlap.p<0.05?'*':'')+'</div>' +
+                '<div style="font-size:9px;color:var(--text3);">N='+sp.nNonOverlap+' · p='+(sp.binary12mNonOverlap?.p!=null?sp.binary12mNonOverlap.p.toFixed(4):'—')+'</div>' +
+              '</div>' +
+              '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);">' +
+                'Si ρ sigue negativo y significativo con N independiente → señal más robusta.<br>IC95: '+(sp.binary12mNonOverlap?.ci95?'['+sp.binary12mNonOverlap.ci95[0]+', '+sp.binary12mNonOverlap.ci95[1]+']':'—') +
+              '</div>' +
+            '</div>' +
+          '</div>' +
+          '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:8px;">ρ < 0: ScoreNorm mayor se asocia históricamente con menor probabilidad de retorno positivo a +12M. ⚠ Forward returns mensuales se solapan (11/12 meses comunes) — p-value convencional es optimista. Ver validación no solapada abajo.</div>';
         })()}
       </div>
 
