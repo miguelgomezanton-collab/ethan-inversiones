@@ -120,17 +120,8 @@ export default async function handler(req, res) {
   // vía type=componentvalidation-recompute (cron mensual, ver vercel.json).
   // No necesita FRED_API_KEY ni el fetch histórico: por eso vive antes de todo eso.
   if (type === 'componentvalidation') {
-    res.setHeader('Cache-Control', 'no-store'); // el propio doc de Firestore ya actúa de caché
-    try {
-      const db = getDB();
-      const snap = await db.collection(CV_COLLECTION).doc(CV_DOC).get();
-      if (!snap.exists) {
-        return res.status(200).json({ notComputedYet: true, componentValidation: {}, componentMatrix: [] });
-      }
-      return res.status(200).json(snap.data());
-    } catch (e) {
-      return res.status(500).json({ error: 'Firestore read failed: ' + e.message });
-    }
+    // Sin Firestore disponible → calcular en vivo igual que blockvalidation
+    res.setHeader('Cache-Control', 'no-store');
   }
 
   res.setHeader('Cache-Control', 's-maxage=3600,stale-while-revalidate=7200');
@@ -699,7 +690,7 @@ export default async function handler(req, res) {
   // NUNCA lo dispara el frontend — solo el cron mensual (ver vercel.json), autenticado
   // con CRON_SECRET. El resultado se persiste en Firestore y el frontend solo lee ese
   // snapshot (rama type==='componentvalidation' más arriba, antes del fetch a FRED).
-  if (type === 'blockvalidation' || type === 'componentvalidation-recompute') {
+  if (type === 'blockvalidation' || type === 'componentvalidation' || type === 'componentvalidation-recompute') {
     if (type === 'componentvalidation-recompute') {
       const cronSecret = process.env.CRON_SECRET;
       const authHeader = req.headers?.['authorization'];
