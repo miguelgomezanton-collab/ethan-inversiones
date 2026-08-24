@@ -300,14 +300,21 @@ async function calcGlobalM2(fredKey, manualChinaM2pct) {
     components.chn = { yoy: null, freshness: 'missing', weight: 30, valid: false, error: errMsg };
   }
 
-  // ── Agregación con cobertura dinámica ────────────────────────
+  // ── Agregación con cobertura dinámica y renormalización explícita ──
   const available = Object.values(components).filter(c => c.valid && c.yoy != null);
   const coverageWeight = available.reduce((s, c) => s + c.weight, 0);
-  const MIN_COVERAGE = 60; // mínimo 60/100 para emitir score
+  const allRegions = ['us','eur','jp','chn'];
+  const missingRegions = allRegions.filter(k => !components[k]?.valid);
+  const MIN_COVERAGE = 60;
+  const renormalized = missingRegions.length > 0; // pesos renormalizados cuando falta alguna región
   let globalYoY = null;
   if (available.length > 0) {
+    // Renormalización: dividir por suma de pesos disponibles (no 100)
     globalYoY = +(available.reduce((s, c) => s + c.yoy * c.weight, 0) / coverageWeight).toFixed(2);
   }
+  const coverageOk = coverageWeight >= MIN_COVERAGE;
+  // PARTIAL = score posible pero cobertura incompleta
+  const aggregateStatus = !coverageOk ? 'INSUFFICIENT' : missingRegions.length > 0 ? 'PARTIAL' : 'OK';
 
   // FX spot (solo informativo — no afecta YoY)
   const eurusd = rEURUSD.status === 'fulfilled' ? rEURUSD.value.value : null;
@@ -317,7 +324,10 @@ async function calcGlobalM2(fredKey, manualChinaM2pct) {
     globalYoY,
     coverageWeight,
     coveragePct: +(coverageWeight / 100).toFixed(4),
-    coverageOk: coverageWeight >= MIN_COVERAGE,
+    coverageOk,
+    aggregateStatus,   // 'OK' | 'PARTIAL' | 'INSUFFICIENT'
+    renormalized,      // true cuando se renormalizan pesos por ausencia de región
+    missingRegions,    // lista de regiones ausentes
     components,
     fx: { eurusd, usdjpy },
     errors,
@@ -774,9 +784,12 @@ export default async function handler(req, res) {
       date: null,
       score: (g.globalYoY != null && g.coverageOk) ? scM2(g.globalYoY) : null,
       weight: 3, auto: true,
-      // Audit trail — FIX 02: M2 Global traceability
+      // Audit trail — FIX 02+03: M2 Global traceability
       audit: {
         methodology: 'Weighted average YoY of regional M2s. Weights: USA=35, EUR=25, JPN=10, CHN=30. Min coverage=60/100 for valid score.',
+        aggregateStatus: g.aggregateStatus,  // OK | PARTIAL | INSUFFICIENT
+        renormalized: g.renormalized,         // true → pesos renormalizados por ausencia de región
+        missingRegions: g.missingRegions,     // regiones ausentes
         historicalProxy: 'HIST_MACRO_V1 uses M2SL (USA) as HISTORICAL_PROXY for M2 Global. China/EUR/JPN not available for pre-2016 history.',
         series: {
           usa: { seriesId: 'M2SL', source: 'FRED', frequency: 'monthly', weight: 35,
@@ -789,7 +802,10 @@ export default async function handler(req, res) {
             yoy: g.components.eur?.yoy, ageDays: g.components.eur?.ageDays,
             freshness: g.components.eur?.freshness, status: g.components.eur?.valid ? 'OK' : (g.components.eur?.freshness || 'MISSING'),
             nObs: null, error: g.components.eur?.error || null },
-          jpn: { seriesId: 'BOJ_M2', source: g.components.jp?.source || 'BOJ_via_CloudflareWorker', frequency: 'monthly', weight: 10,
+          jpn: { seriesId: 'MAM1NAM2M2MO (nivel) + MAM1YAM2M2MO (YoY oficial)',
+            source: g.components.jp?.source || 'BOJ_PROXY',
+            sourceNote: 'BOJ Time-Series API (stat-search.boj.or.jp) via Cloudflare Worker proxy. MAM1NAM2M2MO = M2+CD stock, fin de mes. MAM1YAM2M2MO = variación interanual oficial BOJ. No es proxy: es la serie oficial BOJ de M2.',
+            frequency: 'monthly', weight: 10,
             value: g.components.jp?.currentValue, date: g.components.jp?.currentDate,
             yoy: g.components.jp?.yoy, ageDays: g.components.jp?.ageDays,
             freshness: g.components.jp?.freshness, status: g.components.jp?.valid ? 'OK' : (g.components.jp?.freshness || 'MISSING'),
