@@ -201,7 +201,7 @@ export default async function handler(req, res) {
   const cpiCoreYoYFull = yoySeries(cpiCoreAscFull);
   const cpiCoreYoYMap  = new Map(cpiCoreYoYFull.map(p => [p.date.slice(0,7), p.value]));
   const cpiCoreAsc   = cpiCore ? [...cpiCore].reverse() : null;
-  const cpiYoY       = yoySeries(cpiAsc);      // CPI Headline YoY
+  const cpiYoY       = yoySeries(cpi);          // CPI Headline YoY (cpi ya viene asc desde fetch)
   const cpiCoreYoY   = yoySeries(cpiCoreAsc);  // Core CPI YoY
   const m2YoY    = yoySeries(m2v);
   const totllYoY = yoySeries(totll);
