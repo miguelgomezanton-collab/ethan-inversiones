@@ -657,6 +657,70 @@ export default async function handler(req, res) {
     });
   }
 
+  // ── BLOCK VALIDATION REPORT (type=blockvalidation) ──────────
+  if (type === 'blockvalidation') {
+    const fm3v = new Map(), fm6v = new Map(), fm12v = new Map();
+    for (const [ym] of spMap) {
+      const b=new Date(ym+'-01');
+      [[3,fm3v],[6,fm6v],[12,fm12v]].forEach(([h,m])=>{
+        const t=new Date(b); t.setMonth(t.getMonth()+h);
+        const ty=t.toISOString().slice(0,7), fr=spMap.get(ym), to=spMap.get(ty);
+        if(fr&&to) m.set(ym,+((to/fr-1)*100).toFixed(3));
+      });
+    }
+    function bvDD(fromYM,months){const fr=spMap.get(fromYM);if(!fr)return null;let pk=fr,mx=0;for(let i=1;i<=months;i++){const t=new Date(fromYM+'-01');t.setMonth(t.getMonth()+i);const v=spMap.get(t.toISOString().slice(0,7));if(!v)continue;if(v>pk)pk=v;const d=(v-pk)/pk*100;if(d<mx)mx=d;}return+mx.toFixed(3);}
+    function bvSt(months){
+      const r3=months.map(m=>fm3v.get(m)).filter(v=>v!=null),r6=months.map(m=>fm6v.get(m)).filter(v=>v!=null),r12=months.map(m=>fm12v.get(m)).filter(v=>v!=null);
+      const dd6=months.map(m=>bvDD(m,6)).filter(v=>v!=null),dd12=months.map(m=>bvDD(m,12)).filter(v=>v!=null);
+      const med=a=>{if(!a.length)return null;const s=[...a].sort((x,y)=>x-y);return+s[Math.floor(s.length/2)].toFixed(2);};
+      const pct=(a,p)=>{if(!a.length)return null;const s=[...a].sort((x,y)=>x-y);return+s[Math.max(0,Math.floor(s.length*p)-1)].toFixed(2);};
+      const nc=n=>Math.max(1,Math.floor(n*0.05));
+      return{n:months.length,medR3:med(r3),medR6:med(r6),medR12:med(r12),pctPos12:r12.length?+(r12.filter(v=>v>0).length/r12.length*100).toFixed(1):null,medDD6:med(dd6),medDD12:med(dd12),pDD10:dd12.length?+(dd12.filter(d=>d<-10).length/dd12.length*100).toFixed(1):null,pDD15:dd12.length?+(dd12.filter(d=>d<-15).length/dd12.length*100).toFixed(1):null,var95:r12.length?pct([...r12].sort((x,y)=>x-y),0.05):null,cvar95:r12.length?(()=>{const s=[...r12].sort((x,y)=>x-y),nc2=nc(r12.length);return+(s.slice(0,nc2).reduce((a,b)=>a+b,0)/nc2).toFixed(2);})():null,worstR12:r12.length?+Math.min(...r12).toFixed(2):null,lowN:months.length<10};
+    }
+    function bvP(xs,ys){if(!xs||xs.length<10)return null;const mx=xs.reduce((a,b)=>a+b,0)/xs.length,my=ys.reduce((a,b)=>a+b,0)/ys.length;let num=0,dx2=0,dy2=0;for(let i=0;i<xs.length;i++){const a=xs[i]-mx,b=ys[i]-my;num+=a*b;dx2+=a*a;dy2+=b*b;}const d=Math.sqrt(dx2*dy2);if(!d)return null;const r=num/d,n=xs.length,t=r*Math.sqrt(n-2)/Math.sqrt(1-r*r+1e-10),z=Math.abs(t),p=n>30?2*(1-(0.5*(1+Math.sign(z)*Math.sqrt(1-Math.exp(-2*z*z/Math.PI))))):null,zr=0.5*Math.log((1+r)/(1-r+1e-10)),se=1/Math.sqrt(n-3);return{rho:+r.toFixed(3),n,p:p!=null?+p.toFixed(4):null,ci95:[+(Math.tanh(zr-1.96*se)).toFixed(3),+(Math.tanh(zr+1.96*se)).toFixed(3)]};}
+    function bvRk(arr){const s=[...arr].map((v,i)=>({v,i})).sort((a,b)=>a.v-b.v);const r=new Array(arr.length);let i=0;while(i<s.length){let j=i;while(j<s.length&&s[j].v===s[i].v)j++;const avg=(i+j-1)/2;for(let k=i;k<j;k++)r[s[k].i]=avg;i=j;}return r;}
+    function bvSp(xs,ys){return bvP(bvRk(xs),bvRk(ys));}
+    function bvBoot(pairs,NSIM=5000,BL=12){const T=pairs.length;if(T<15)return null;function rhoF(a){const n=a.length,rx=bvRk(a.map(p=>p[0])),ry=bvRk(a.map(p=>p[1]));const mx=rx.reduce((a,b)=>a+b,0)/n,my=ry.reduce((a,b)=>a+b,0)/n;let num=0,dx2=0,dy2=0;for(let i=0;i<n;i++){const a2=rx[i]-mx,b2=ry[i]-my;num+=a2*b2;dx2+=a2*a2;dy2+=b2*b2;}const d=Math.sqrt(dx2*dy2);return d?num/d:0;}const rO=rhoF(pairs);let sd=20260823;function rnd(){sd=(sd*1664525+1013904223)&0xFFFFFFFF;return(sd>>>0)/4294967296;}const bt=[];for(let s=0;s<NSIM;s++){const sm=[];while(sm.length<T){const st=Math.floor(rnd()*(T-BL+1));for(let k=0;k<BL&&sm.length<T;k++)sm.push(pairs[(st+k)%T]);}bt.push(rhoF(sm.slice(0,T)));}bt.sort((a,b)=>a-b);const ci025=bt[Math.floor(NSIM*0.025)],ci975=bt[Math.floor(NSIM*0.975)],pB=(rO<0?bt.filter(r=>r>=0).length:bt.filter(r=>r<=0).length)/NSIM;return{rhoObs:+rO.toFixed(3),ci95:[+ci025.toFixed(3),+ci975.toFixed(3)],pBoot:+pB.toFixed(4),excludes0:(rO<0&&ci975<0)||(rO>0&&ci025>0),T,NSIM,BL};}
+    function bvNO(pairs){const s=[...pairs].sort((a,b)=>a[0].localeCompare(b[0]));const sel=[];let last=null;for(const p of s){if(!last||(new Date(p[0]+'-01')-new Date(last+'-01'))>=365*24*3600*1e3*0.95){sel.push(p);last=p[0];}}if(sel.length<10)return{n:sel.length,insufficient:true};const res=bvSp(sel.map(p=>p[1]),sel.map(p=>p[2]));return{n:sel.length,...(res||{})};}
+
+    const IND_G={curvaUSD:m=>m.components?.curvaUSD?.score??null,lei:m=>m.components?.lei?.score??null,m2usa:m=>m.components?.m2usa?.score??null,impulso:m=>m.components?.impulso?.score??null,velM2:m=>m.components?.velM2?.score??null,creditoVsPib:m=>m.components?.creditoVsPib?.score??null,bbb:m=>{const v=m.components?.bbb?.value;return v!=null?(v<=1?1:v<=1.5?0:-1):null;},hy:m=>m.components?.hy?.score??null,vix:m=>m.components?.vix?.score??null,cpiHeadline:m=>m.components?.cpiHeadline?.score??null,cpiCore:m=>m.components?.cpiCore?.score??null,tipoReal:m=>m.components?.tipoReal?.score??null,reservas:m=>m.components?.reservas?.score??null};
+    const BV_BL={'Ciclo Económico':{inds:['curvaUSD','lei']},'Liquidez Global':{inds:['m2usa','impulso','velM2','creditoVsPib']},'Crédito':{inds:['bbb'],note:'BBB score propio RISK_RADAR_V1'},'Sentimiento':{inds:['hy','vix'],note:'F&G=LIVE_ONLY excluido. VIX desde 1990.'},'Política Monetaria':{inds:['tipoReal','reservas']},'Inflación':{inds:['cpiHeadline','cpiCore'],note:'maxScore=0 en HIST_MACRO_V1; regla RISK_RADAR_V1 propia'}};
+
+    const bVal={};
+    for(const[bN,bD] of Object.entries(BV_BL)){
+      const monthly=[];
+      for(const m of histMacroV1){if(!m.valid)continue;let bSc=0,nV=0;for(const id of bD.inds){const sc=IND_G[id]?.(m);if(sc!=null){bSc+=sc;nV++;}}if(nV>0)monthly.push({ym:m.month,bSc,nV,nT:bD.inds.length});}
+      const byScore={};
+      for(const d of monthly){const k=d.bSc>=0?'+'+d.bSc:String(d.bSc);if(!byScore[k])byScore[k]=[];byScore[k].push(d.ym);}
+      const bss={};for(const[k,ms] of Object.entries(byScore))bss[k]=bvSt(ms);
+      const p6=[],p12=[],pDD6=[],pDD12=[],pBin=[],pDD10=[],pDD15=[];
+      for(const d of monthly){const r6=fm6v.get(d.ym),r12=fm12v.get(d.ym),dd6=bvDD(d.ym,6),dd12=bvDD(d.ym,12);if(r6!=null)p6.push([d.ym,d.bSc,r6]);if(r12!=null){p12.push([d.ym,d.bSc,r12]);pBin.push([d.ym,d.bSc,r12>0?1:0]);}if(dd6!=null)pDD6.push([d.ym,d.bSc,dd6]);if(dd12!=null){pDD12.push([d.ym,d.bSc,dd12]);pDD10.push([d.ym,d.bSc,dd12<-10?1:0]);pDD15.push([d.ym,d.bSc,dd12<-15?1:0]);}}
+      const sp=p=>bvSp(p.map(q=>q[1]),p.map(q=>q[2]));
+      const corr={spR6:sp(p6),spR12:sp(p12),spDD6:sp(pDD6),spDD12:sp(pDD12),spBin12:sp(pBin),spDD10:sp(pDD10),spDD15:sp(pDD15)};
+      const btTarget=pDD12.length>=15?pDD12:pBin;
+      const boot=bvBoot(btTarget.map(p=>[p[1],p[2]])),bootBin=bvBoot(pBin.map(p=>[p[1],p[2]]));
+      const noOvDD=bvNO(pDD12),noOvBin=bvNO(pBin);
+      const chrono=[...p6].sort((a,b)=>a[0].localeCompare(b[0]));
+      const bSzT=Math.floor(chrono.length/3);
+      const temp=['Early','Mid','Recent'].map((label,i)=>{const bl=chrono.slice(i*bSzT,i===2?chrono.length:(i+1)*bSzT);const res=bvSp(bl.map(p=>p[1]),bl.map(p=>p[2]));return{label,n:bl.length,first:bl[0]?.[0],last:bl[bl.length-1]?.[0],rho:res?.rho??null,p:res?.p??null,ci95:res?.ci95??null};});
+      const signs=temp.filter(b=>b.rho!=null).map(b=>Math.sign(b.rho)),regDep=signs.length>=2&&signs.some(s=>s!==signs[0]);
+      const mainN=Math.max(p12.length,pDD12.length);
+      const hasRobust=(boot?.excludes0)||(noOvDD?.rho!=null&&noOvDD?.ci95&&((noOvDD.rho<0&&noOvDD.ci95[1]<0)||(noOvDD.rho>0&&noOvDD.ci95[0]>0)));
+      const indicative=(boot?.pBoot!=null&&boot.pBoot<0.1)||(corr.spDD12?.p!=null&&corr.spDD12.p<0.1)||(corr.spBin12?.p!=null&&corr.spBin12.p<0.1);
+      const descriptive=(corr.spDD12?.p??1)>0.3&&(corr.spBin12?.p??1)>0.3&&(corr.spR12?.p??1)>0.3;
+      const verdict=mainN<15?'INSUFFICIENT DATA':regDep?'REGIME DEPENDENT':hasRobust?'ROBUST RISK SIGNAL':indicative?'INDICATIVE RISK SIGNAL':descriptive?'DESCRIPTIVE ONLY':'INDICATIVE RISK SIGNAL';
+      bVal[bN]={note:bD.note,n:monthly.length,nWith12m:p12.length,byScore:bss,corr,boot,bootBin,noOvDD,noOvBin,temp,regDep,verdict};
+    }
+    const cmpV={};
+    for(const id of['hy','vix','cpiHeadline','cpiCore']){
+      const p12c=[],pDD12c=[],pBinc=[];
+      for(const m of histMacroV1){if(!m.valid)continue;const sc=IND_G[id]?.(m);if(sc==null)continue;const r12=fm12v.get(m.month),dd12=bvDD(m.month,12);if(r12!=null){p12c.push([m.month,sc,r12]);pBinc.push([m.month,sc,r12>0?1:0]);}if(dd12!=null)pDD12c.push([m.month,sc,dd12]);}
+      const sp=p=>bvSp(p.map(q=>q[1]),p.map(q=>q[2]));
+      cmpV[id]={n:p12c.length,spR12:sp(p12c),spDD12:sp(pDD12c),spBin12:sp(pBinc),boot:bvBoot(pDD12c.map(p=>[p[1],p[2]])),noOverlap:bvNO(pDD12c)};
+    }
+    return res.status(200).json({updatedAt:new Date().toISOString(),blockValidation:bVal,componentValidation:cmpV,summary:Object.fromEntries(Object.entries(bVal).map(([k,v])=>[k,{verdict:v.verdict,n:v.n,regDep:v.regDep}])),errors:errs.length?errs:undefined});
+  }
+
   function spReturn(fromYM, monthsForward) {
     const from = spMap.get(fromYM);
     if (from == null || from === 0) return null;
