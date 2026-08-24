@@ -550,7 +550,23 @@ export async function render(container, { actionsSlot }) {
     if (blockData && !force) { paintBlockValidation(blockData); return; }
     document.getElementById('radar-wrap').innerHTML = '<div class="empty"><div class="loader-ring"></div></div>';
     try {
-      blockData = await fetch('/api/macro-history?type=blockvalidation').then(r=>r.ok?r.json():null);
+      // Dos peticiones independientes — el backend las separó porque juntas
+      // superaban el límite de tiempo de Vercel. Si una falla/tarda, la otra
+      // igualmente se pinta.
+      const [blockRes, compRes] = await Promise.allSettled([
+        fetch('/api/macro-history?type=blockvalidation').then(r=>r.ok?r.json():null),
+        fetch('/api/macro-history?type=componentvalidation').then(r=>r.ok?r.json():null),
+      ]);
+      const bPart = blockRes.status==='fulfilled' ? blockRes.value : null;
+      const cPart = compRes.status==='fulfilled' ? compRes.value : null;
+      blockData = (bPart || cPart) ? {
+        updatedAt: bPart?.updatedAt || cPart?.updatedAt,
+        blockValidation: bPart?.blockValidation || {},
+        summary: bPart?.summary || {},
+        componentValidation: cPart?.componentValidation || {},
+        componentMatrix: cPart?.componentMatrix || [],
+        partialBlock: !bPart, partialComponent: !cPart,
+      } : null;
       paintBlockValidation(blockData);
     } catch(e) {
       document.getElementById('radar-wrap').innerHTML = `<div class="empty"><div class="empty-icon">⚠</div><div class="empty-title">Error</div><div class="empty-desc">${e.message}</div></div>`;
@@ -681,33 +697,80 @@ export async function render(container, { actionsSlot }) {
         '</tbody></table></div>';
     }).join('');
 
-    // Componentes internos
-    const compHTML = '<div class="mac-card" style="margin-top:14px;">' +
-      '<div style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:10px;">Componentes internos — Sentimiento e Inflación</div>' +
+    const IND_LABELS_CV = {
+      curvaUSD:'Curva USD 10Y-2Y', lei:'LEI (OECD CLI)', m2usa:'M2 USA YoY', impulso:'Impulso Crediticio',
+      velM2:'Velocidad M2', creditoVsPib:'Crédito vs PIB', bbb:'BBB Spread', hy:'HY Spread',
+      vix:'VIX vs SMA200', cpiHeadline:'CPI Headline YoY', cpiCore:'Core CPI YoY',
+      tipoReal:'Tipo Real (FFR-CPI)', reservas:'Reservas Bancarias',
+    };
+    const classColor = c => c==='ROBUST' ? 'var(--green)' : c==='INDICATIVE' ? 'var(--teal)'
+      : c==='REGIME DEPENDENT' ? 'var(--amber)' : c==='INSUFFICIENT DATA' ? 'var(--text3)' : 'var(--red)';
+
+    // Componentes internos — COMPONENT VALIDATION: los 13 indicadores individuales, sin agregar por bloque
+    const compHTML = data.partialComponent
+      ? '<div class="mac-card" style="margin-top:14px;"><div class="empty"><div class="empty-icon">⚠</div><div class="empty-title">Component Validation no disponible</div><div class="empty-desc">La petición /api/macro-history?type=componentvalidation falló o superó el tiempo límite.</div></div></div>'
+      : '<div class="mac-card" style="margin-top:14px;">' +
+      '<div style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:10px;">Component Validation — Indicadores Individuales (sin agregar por bloque)</div>' +
       '<table style="width:100%;border-collapse:collapse;font-size:9px;font-family:var(--mono);">' +
         '<thead><tr style="background:var(--surface2);">' +
           '<th style="padding:4px 6px;text-align:left;color:var(--text3);">Indicador</th>' +
+          '<th style="padding:4px 6px;text-align:left;color:var(--text3);">Bloque</th>' +
           '<th style="padding:4px 6px;text-align:center;color:var(--text3);">N</th>' +
+          '<th style="padding:4px 6px;text-align:center;color:var(--text3);">ρ Ret+6M</th>' +
           '<th style="padding:4px 6px;text-align:center;color:var(--text3);">ρ Ret+12M</th>' +
+          '<th style="padding:4px 6px;text-align:center;color:var(--text3);">ρ DD+6M</th>' +
           '<th style="padding:4px 6px;text-align:center;color:var(--text3);">ρ DD+12M</th>' +
           '<th style="padding:4px 6px;text-align:center;color:var(--text3);">ρ Bin+12M</th>' +
-          '<th style="padding:4px 6px;text-align:center;color:var(--text3);">Bootstrap ρDD</th>' +
-          '<th style="padding:4px 6px;text-align:center;color:var(--text3);">No-overlap N</th>' +
+          '<th style="padding:4px 6px;text-align:center;color:var(--text3);">Bootstrap</th>' +
+          '<th style="padding:4px 6px;text-align:center;color:var(--text3);">Temporal</th>' +
+          '<th style="padding:4px 6px;text-align:center;color:var(--text3);">Clasificación</th>' +
         '</tr></thead><tbody>' +
       Object.entries(data.componentValidation||{}).map(([id,cv]) => {
-        const labels={hy:'HY Spread',vix:'VIX vs SMA200',cpiHeadline:'CPI Headline YoY',cpiCore:'Core CPI YoY'};
+        const c = cv.corr || {};
         return '<tr style="border-bottom:1px solid var(--border);">' +
-          '<td style="padding:4px 6px;color:var(--text2);">' + (labels[id]||id) + '</td>' +
+          '<td style="padding:4px 6px;color:var(--text2);">' + (IND_LABELS_CV[id]||id) + '</td>' +
+          '<td style="padding:4px 6px;color:var(--text3);">' + (cv.block||'—') + '</td>' +
           '<td style="padding:4px 6px;text-align:center;color:var(--text3);">' + (cv.n||'—') + '</td>' +
-          '<td style="padding:4px 6px;text-align:center;color:' + col(cv.spR12?.rho) + ';">' + f3(cv.spR12?.rho) + (cv.spR12?.p!=null&&cv.spR12.p<0.05?'*':'') + '</td>' +
-          '<td style="padding:4px 6px;text-align:center;color:' + col(cv.spDD12?.rho) + ';">' + f3(cv.spDD12?.rho) + (cv.spDD12?.p!=null&&cv.spDD12.p<0.05?'*':'') + '</td>' +
-          '<td style="padding:4px 6px;text-align:center;color:' + col(cv.spBin12?.rho) + ';">' + f3(cv.spBin12?.rho) + (cv.spBin12?.p!=null&&cv.spBin12.p<0.05?'*':'') + '</td>' +
+          '<td style="padding:4px 6px;text-align:center;color:' + col(c.spR6?.rho) + ';">' + f3(c.spR6?.rho) + (c.spR6?.p!=null&&c.spR6.p<0.05?'*':'') + '</td>' +
+          '<td style="padding:4px 6px;text-align:center;color:' + col(c.spR12?.rho) + ';">' + f3(c.spR12?.rho) + (c.spR12?.p!=null&&c.spR12.p<0.05?'*':'') + '</td>' +
+          '<td style="padding:4px 6px;text-align:center;color:' + col(c.spDD6?.rho) + ';">' + f3(c.spDD6?.rho) + (c.spDD6?.p!=null&&c.spDD6.p<0.05?'*':'') + '</td>' +
+          '<td style="padding:4px 6px;text-align:center;color:' + col(c.spDD12?.rho) + ';">' + f3(c.spDD12?.rho) + (c.spDD12?.p!=null&&c.spDD12.p<0.05?'*':'') + '</td>' +
+          '<td style="padding:4px 6px;text-align:center;color:' + col(c.spBin12?.rho) + ';">' + f3(c.spBin12?.rho) + (c.spBin12?.p!=null&&c.spBin12.p<0.05?'*':'') + '</td>' +
           '<td style="padding:4px 6px;text-align:center;font-size:9px;color:' + (cv.boot?.excludes0?'var(--green)':cv.boot?.pBoot!=null&&cv.boot.pBoot<0.1?'var(--amber)':'var(--text3)') + ';">' + (cv.boot?'ρ='+cv.boot.rhoObs+' p='+cv.boot.pBoot:'—') + '</td>' +
-          '<td style="padding:4px 6px;text-align:center;color:var(--text3);">' + (cv.noOverlap?.insufficient?'LOW N':cv.noOverlap?.n||'—') + '</td>' +
+          '<td style="padding:4px 6px;text-align:center;color:' + (cv.regDep?'var(--amber)':'var(--text3)') + ';">' + (cv.regDep?'INESTABLE':'estable') + '</td>' +
+          '<td style="padding:4px 6px;text-align:center;font-weight:700;color:' + classColor(cv.classification) + ';">' + (cv.classification||'—') + '</td>' +
         '</tr>';
       }).join('') +
+      '</tbody></table>' +
+      '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:8px;">RISK_RADAR_V1 permanece FROZEN — esta pantalla es solo diagnóstico para decidir la arquitectura de V2. * = p&lt;0.05</div>' +
+      '</div>';
+
+    // Matriz final resumen — Indicador | Bloque actual | Return signal | Downside signal | Temporal stability | Bootstrap | Classification
+    const matrixHTML = (!data.componentMatrix || !data.componentMatrix.length) ? '' :
+      '<div class="mac-card" style="margin-top:14px;">' +
+      '<div style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:10px;">Matriz Final — Component Validation</div>' +
+      '<table style="width:100%;border-collapse:collapse;font-size:9px;font-family:var(--mono);">' +
+        '<thead><tr style="background:var(--surface2);">' +
+          '<th style="padding:4px 6px;text-align:left;color:var(--text3);">Indicador</th>' +
+          '<th style="padding:4px 6px;text-align:left;color:var(--text3);">Bloque actual</th>' +
+          '<th style="padding:4px 6px;text-align:center;color:var(--text3);">Return signal</th>' +
+          '<th style="padding:4px 6px;text-align:center;color:var(--text3);">Downside signal</th>' +
+          '<th style="padding:4px 6px;text-align:center;color:var(--text3);">Temporal stability</th>' +
+          '<th style="padding:4px 6px;text-align:center;color:var(--text3);">Bootstrap</th>' +
+          '<th style="padding:4px 6px;text-align:center;color:var(--text3);">Classification</th>' +
+        '</tr></thead><tbody>' +
+      data.componentMatrix.map(r => '<tr style="border-bottom:1px solid var(--border);">' +
+          '<td style="padding:4px 6px;color:var(--text2);">' + (IND_LABELS_CV[r.id]||r.id) + '</td>' +
+          '<td style="padding:4px 6px;color:var(--text3);">' + r.block + '</td>' +
+          '<td style="padding:4px 6px;text-align:center;color:var(--text3);">' + r.returnSignal + '</td>' +
+          '<td style="padding:4px 6px;text-align:center;color:var(--text3);">' + r.downsideSignal + '</td>' +
+          '<td style="padding:4px 6px;text-align:center;color:var(--text3);">' + r.temporalStability + '</td>' +
+          '<td style="padding:4px 6px;text-align:center;color:var(--text3);">' + r.bootstrap + '</td>' +
+          '<td style="padding:4px 6px;text-align:center;font-weight:700;color:' + classColor(r.classification) + ';">' + r.classification + '</td>' +
+        '</tr>').join('') +
       '</tbody></table></div>';
 
-    el.innerHTML = summaryHTML + detailHTML + compHTML +
-      '<div class="co-footer" style="margin-top:14px;">RISK_RADAR_V1 Block Validation · ' + (data.updatedAt||'').slice(0,10) + ' · FROZEN — no modificar thresholds hasta completar análisis</div>';
+    el.innerHTML = summaryHTML + detailHTML + compHTML + matrixHTML +
+      '<div class="co-footer" style="margin-top:14px;">RISK_RADAR_V1 Block + Component Validation · ' + (data.updatedAt||'').slice(0,10) + ' · FROZEN — no modificar thresholds hasta completar análisis' +
+      (data.partialBlock?' · ⚠ Block Validation no disponible':'') + '</div>';
   }

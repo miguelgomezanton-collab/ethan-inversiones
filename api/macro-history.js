@@ -651,8 +651,11 @@ export default async function handler(req, res) {
     });
   }
 
-  // ── BLOCK VALIDATION REPORT (type=blockvalidation) ──────────
-  if (type === 'blockvalidation') {
+  // ── BLOCK VALIDATION REPORT (type=blockvalidation) + COMPONENT VALIDATION (type=componentvalidation) ──
+  // Separados en dos ramas independientes: cada una por sí sola ya es pesada
+  // (bootstrap 5.000 sims × N indicadores/bloques) y compartir petición las hacía
+  // sumar tiempo y superar el límite de 10s de Vercel Hobby.
+  if (type === 'blockvalidation' || type === 'componentvalidation') {
     const fm3v = new Map(), fm6v = new Map(), fm12v = new Map();
     for (const [ym] of spMap) {
       const b=new Date(ym+'-01');
@@ -681,6 +684,7 @@ export default async function handler(req, res) {
     const BV_BL={'Ciclo Económico':{inds:['curvaUSD','lei']},'Liquidez Global':{inds:['m2usa','impulso','velM2','creditoVsPib']},'Crédito':{inds:['bbb'],note:'BBB score propio RISK_RADAR_V1'},'Sentimiento':{inds:['hy','vix'],note:'F&G=LIVE_ONLY excluido. VIX desde 1990.'},'Política Monetaria':{inds:['tipoReal','reservas']},'Inflación':{inds:['cpiHeadline','cpiCore'],note:'maxScore=0 en HIST_MACRO_V1; regla RISK_RADAR_V1 propia'}};
 
     const bVal={};
+    if (type === 'blockvalidation')
     for(const[bN,bD] of Object.entries(BV_BL)){
       const monthly=[];
       for(const m of histMacroV1){if(!m.valid)continue;let bSc=0,nV=0;for(const id of bD.inds){const sc=IND_G[id]?.(m);if(sc!=null){bSc+=sc;nV++;}}if(nV>0)monthly.push({ym:m.month,bSc,nV,nT:bD.inds.length});}
@@ -705,14 +709,74 @@ export default async function handler(req, res) {
       const verdict=mainN<15?'INSUFFICIENT DATA':regDep?'REGIME DEPENDENT':hasRobust?'ROBUST RISK SIGNAL':indicative?'INDICATIVE RISK SIGNAL':descriptive?'DESCRIPTIVE ONLY':'INDICATIVE RISK SIGNAL';
       bVal[bN]={note:bD.note,n:monthly.length,nWith12m:p12.length,byScore:bss,corr,boot,bootBin,noOvDD,noOvBin,temp,regDep,verdict};
     }
-    const cmpV={};
-    for(const id of['hy','vix','cpiHeadline','cpiCore']){
-      const p12c=[],pDD12c=[],pBinc=[];
-      for(const m of histMacroV1){if(!m.valid)continue;const sc=IND_G[id]?.(m);if(sc==null)continue;const r12=fm12v.get(m.month),dd12=bvDD(m.month,12);if(r12!=null){p12c.push([m.month,sc,r12]);pBinc.push([m.month,sc,r12>0?1:0]);}if(dd12!=null)pDD12c.push([m.month,sc,dd12]);}
-      const sp=p=>bvSp(p.map(q=>q[1]),p.map(q=>q[2]));
-      cmpV[id]={n:p12c.length,spR12:sp(p12c),spDD12:sp(pDD12c),spBin12:sp(pBinc),boot:bvBoot(pDD12c.map(p=>[p[1],p[2]])),noOverlap:bvNO(pDD12c)};
+    // ── COMPONENT VALIDATION — mismo stress test, a nivel de indicador individual ──
+    // RISK_RADAR_V1 permanece FROZEN. No se recalibran thresholds ni scores aquí.
+    const IND_BLOCK = {};
+    for (const [bN, bD] of Object.entries(BV_BL)) for (const id of bD.inds) IND_BLOCK[id] = bN;
+
+    const cmpV = {};
+    if (type === 'componentvalidation')
+    for (const id of Object.keys(IND_G)) {
+      const monthly = [];
+      for (const m of histMacroV1) { if (!m.valid) continue; const sc = IND_G[id]?.(m); if (sc != null) monthly.push({ ym: m.month, sc }); }
+
+      const p6=[],p12=[],pDD6=[],pDD12=[],pBin=[],pDD10=[],pDD15=[];
+      for (const d of monthly) {
+        const r6=fm6v.get(d.ym), r12=fm12v.get(d.ym), dd6=bvDD(d.ym,6), dd12=bvDD(d.ym,12);
+        if (r6!=null) p6.push([d.ym,d.sc,r6]);
+        if (r12!=null) { p12.push([d.ym,d.sc,r12]); pBin.push([d.ym,d.sc,r12>0?1:0]); }
+        if (dd6!=null) pDD6.push([d.ym,d.sc,dd6]);
+        if (dd12!=null) { pDD12.push([d.ym,d.sc,dd12]); pDD10.push([d.ym,d.sc,dd12<-10?1:0]); pDD15.push([d.ym,d.sc,dd12<-15?1:0]); }
+      }
+      const sp = p => bvSp(p.map(q=>q[1]), p.map(q=>q[2]));
+      const corr = { spR6: sp(p6), spR12: sp(p12), spDD6: sp(pDD6), spDD12: sp(pDD12), spBin12: sp(pBin), spDD10: sp(pDD10), spDD15: sp(pDD15) };
+
+      const btTarget = pDD12.length >= 15 ? pDD12 : pBin;
+      const boot    = bvBoot(btTarget.map(p=>[p[1],p[2]]));
+      const bootBin = bvBoot(pBin.map(p=>[p[1],p[2]]));
+      const noOvDD  = bvNO(pDD12), noOvBin = bvNO(pBin);
+
+      // Estabilidad temporal Early/Mid/Recent (sobre retorno +6M, igual que en Block Validation)
+      const chrono = [...p6].sort((a,b)=>a[0].localeCompare(b[0]));
+      const bSzT = Math.floor(chrono.length/3);
+      const temp = ['Early','Mid','Recent'].map((label,i) => {
+        const bl = chrono.slice(i*bSzT, i===2?chrono.length:(i+1)*bSzT);
+        const res = bvSp(bl.map(p=>p[1]), bl.map(p=>p[2]));
+        return { label, n: bl.length, first: bl[0]?.[0], last: bl[bl.length-1]?.[0], rho: res?.rho ?? null, p: res?.p ?? null, ci95: res?.ci95 ?? null };
+      });
+      const signs  = temp.filter(b=>b.rho!=null).map(b=>Math.sign(b.rho));
+      const regDep = signs.length>=2 && signs.some(s=>s!==signs[0]);
+
+      const mainN     = Math.max(p12.length, pDD12.length);
+      const hasRobust = (boot?.excludes0) || (noOvDD?.rho!=null && noOvDD?.ci95 && ((noOvDD.rho<0 && noOvDD.ci95[1]<0)||(noOvDD.rho>0 && noOvDD.ci95[0]>0)));
+      const indicative = (boot?.pBoot!=null && boot.pBoot<0.1) || (corr.spDD12?.p!=null && corr.spDD12.p<0.1) || (corr.spBin12?.p!=null && corr.spBin12.p<0.1);
+      // Clasificación pedida: ROBUST / INDICATIVE / REGIME DEPENDENT / NO SIGNAL / INSUFFICIENT DATA
+      const classification = mainN<15 ? 'INSUFFICIENT DATA'
+        : regDep ? 'REGIME DEPENDENT'
+        : hasRobust ? 'ROBUST'
+        : indicative ? 'INDICATIVE'
+        : 'NO SIGNAL';
+
+      cmpV[id] = { block: IND_BLOCK[id]||'—', n: monthly.length, nWith12m: p12.length, corr, boot, bootBin, noOvDD, noOvBin, temp, regDep, classification };
     }
-    return res.status(200).json({updatedAt:new Date().toISOString(),blockValidation:bVal,componentValidation:cmpV,summary:Object.fromEntries(Object.entries(bVal).map(([k,v])=>[k,{verdict:v.verdict,n:v.n,regDep:v.regDep}])),errors:errs.length?errs:undefined});
+
+    // Matriz final: Indicador | Bloque actual | Return signal | Downside signal | Temporal stability | Bootstrap | Classification
+    let componentMatrix = [];
+    if (type === 'componentvalidation') {
+      componentMatrix = Object.entries(cmpV).map(([id,v]) => ({
+        id, block: v.block,
+        returnSignal:    v.corr.spR12?.p!=null   ? (v.corr.spR12.p<0.05?'SIG':v.corr.spR12.p<0.15?'WEAK':'NONE')   : '—',
+        downsideSignal:  v.corr.spDD12?.p!=null  ? (v.corr.spDD12.p<0.05?'SIG':v.corr.spDD12.p<0.15?'WEAK':'NONE') : '—',
+        temporalStability: v.regDep ? 'UNSTABLE' : 'STABLE',
+        bootstrap: v.boot?.excludes0 ? 'EXCLUDES 0' : v.boot?.pBoot!=null ? `p=${v.boot.pBoot}` : '—',
+        classification: v.classification,
+      }));
+    }
+
+    if (type === 'componentvalidation') {
+      return res.status(200).json({updatedAt:new Date().toISOString(),componentValidation:cmpV,componentMatrix,errors:errs.length?errs:undefined});
+    }
+    return res.status(200).json({updatedAt:new Date().toISOString(),blockValidation:bVal,summary:Object.fromEntries(Object.entries(bVal).map(([k,v])=>[k,{verdict:v.verdict,n:v.n,regDep:v.regDep}])),errors:errs.length?errs:undefined});
   }
 
   function spReturn(fromYM, monthsForward) {
