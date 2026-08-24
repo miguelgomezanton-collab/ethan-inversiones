@@ -166,8 +166,25 @@ export async function render(container, { actionsSlot }) {
                     ? (c.chn.source === 'manual override'
                       ? `${f2(c.chn.yoy)}% (manual override)`
                       : `${c.chn.currentDate||'—'} | YoY calc. ${c.chn.yoy!=null?(c.chn.yoy>=0?'+':'')+f2(c.chn.yoy)+'%':'—'} | base ${c.chn.baseDate||'—'} | N=${c.chn.nObs||'—'} | ${c.chn.ageDays!=null?c.chn.ageDays+'d':'-'} · ✓ OK [${c.chn.source||'—'}]`)
-                    : `<span style="color:var(--red)">⚠ MISSING</span> · ${c.chn?.diag?.error||c.chn?.error||'sin datos'}` +
-                      (c.chn?.diag ? ` · HTTP:${c.chn.diag.httpStatus||'—'} · branch:${c.chn.diag.parserBranch||'—'} · nObs:${c.chn.diag.nObsReceived||0}→${c.chn.diag.nObsParsed||0}` : '')}`,
+                    : (() => {
+                        const d = c.chn?.diag || {};
+                        const diagAll = c.chn?.diagAll || [d];
+                        return `<span style="color:var(--red)">⚠ MISSING</span><br>` +
+                          diagAll.map((sd,i) => {
+                            const lines = [
+                              `Fuente ${i+1} [${sd.source||'—'}]: HTTP ${sd.httpStatus||'—'} · branch:${sd.parserBranch||'—'} · nObs:${sd.nObsReceived||0}→${sd.nObsParsed||0}`,
+                              sd.last3?.length ? `Más recientes: ${sd.last3.join(' | ')}` : null,
+                              sd.first3?.length ? `Más antiguas: ${sd.first3.join(' | ')}` : null,
+                              sd.latestDate ? `current: ${sd.latestDate} = ${sd.latestValue}` : null,
+                              sd.targetBaseDate ? `target base: ${sd.targetBaseDate}` : null,
+                              sd.baseDate ? `base found: ${sd.baseDate} = ${sd.baseValue} (Δ${sd.baseDeltaDays}d)` : null,
+                              sd.yoyCalc ? `YoY calc: ${sd.yoyCalc}` : null,
+                              sd.failReason ? `<strong style="color:var(--red)">FAIL: ${sd.failReason}</strong>` : null,
+                              sd.error ? `Error: ${sd.error}` : null,
+                            ].filter(Boolean);
+                            return lines.join('<br>');
+                          }).join('<br>---<br>');
+                      })()}`,
                   `Cobertura: ${liq.m2.coverageWeight||'—'}/100 (mín. 60) · Global YoY: ${liq.m2.value!=null?(liq.m2.value>=0?'+':'')+f2(liq.m2.value)+'%':'bloqueado'} · Estado: <strong style="color:${liq.m2.audit?.aggregateStatus==='OK'?'var(--green)':liq.m2.audit?.aggregateStatus==='PARTIAL'?'var(--amber)':'var(--red)'};">${liq.m2.audit?.aggregateStatus||'—'}</strong>${liq.m2.audit?.renormalized?' · Pesos renormalizados (missing: '+liq.m2.audit?.missingRegions?.join(', ')?.toUpperCase()+')':''}`,
                   `<span style="color:var(--text3);font-size:9px;">Metodología: media ponderada YoY | Pesos USA=35 EUR=25 JPN=10 CHN=30 | ${liq.m2.audit?.historicalProxy?'HIST_MACRO_V1 usa M2SL USA como HISTORICAL_PROXY para pre-2016':''}</span>`,
                 ].join('<br>');

@@ -179,7 +179,35 @@ async function fetchChinaM2_Live() {
     }).filter(r => r.date && /^\d{4}-\d{2}$/.test(r.date) && Number.isFinite(r.value) && r.value > 0)
       .sort((a,b) => b.date.localeCompare(a.date));
     diag.nObsParsed = obs.length;
-    if (!obs.length) { diag.error = 'CHN_NO_VALID_OBS_AFTER_PARSE'; return { diag, missing: true }; }
+    if (!obs.length) { diag.error = 'CHN_NO_VALID_OBS_AFTER_PARSE'; diag.failReason = 'INVALID_DATE_OR_VALUE'; return { diag, missing: true }; }
+
+    // Debug: primeras/últimas observaciones para diagnóstico
+    diag.first3 = obs.slice(-3).map(r => `${r.date}=${r.value}`); // obs está desc, las últimas son las más antiguas
+    diag.last3  = obs.slice(0, 3).map(r => `${r.date}=${r.value}`);  // primeras en desc = más recientes
+
+    const current = obs[0];
+    diag.latestDate  = current.date;
+    diag.latestValue = current.value;
+
+    const [year, month] = current.date.split('-').map(Number);
+    const targetBase = `${year - 1}-${String(month).padStart(2, '0')}`;
+    diag.targetBaseDate = targetBase;
+
+    const base = obs.find(r => r.date === targetBase)
+      || obs.find(r => Math.abs(new Date(r.date+'-01') - new Date(targetBase+'-01')) <= 35*24*3600*1000);
+
+    if (!base) {
+      diag.failReason = 'NO_BASE_12M';
+      diag.error = `YoY base no encontrada cerca de ${targetBase}. Obs disponibles: ${obs.slice(0,5).map(r=>r.date).join(',')}...`;
+      return { diag, missing: true };
+    }
+
+    diag.baseDate = base.date;
+    diag.baseValue = base.value;
+    diag.baseDeltaDays = Math.round(Math.abs(new Date(base.date+'-01') - new Date(targetBase+'-01')) / (1000*60*60*24));
+
+    const yoy = +((current.value / base.value - 1) * 100).toFixed(2);
+    diag.yoyCalc = `${current.value}/${base.value}-1 = ${yoy}%`;
     return { obs, source: 'PBOC_VIA_CHINADATA', diag };
   } catch(e) { diag.error = `fetch error: ${e.message}`; return { diag, missing: true }; }
 }
@@ -363,12 +391,14 @@ async function calcGlobalM2(fredKey, manualChinaM2pct) {
       ageDays, freshness, weight: 30,
       nObs:         chnRaw.nObs || null,
       diag:         chnDiag,
+      diagAll:      chnRaw?.diagAll,
     };
   } else if (manualChinaM2pct != null) {
     components.chn = {
       yoy: manualChinaM2pct, currentDate: null, freshness: 'manual',
       weight: 30, valid: true, source: 'manual override',
       diag: chnDiag,
+      diagAll: chnRaw?.diagAll,
     };
   } else {
     // MISSING — diagnostico completo expuesto, no sustituido silenciosamente
@@ -377,6 +407,7 @@ async function calcGlobalM2(fredKey, manualChinaM2pct) {
     components.chn = {
       yoy: null, freshness: 'missing', weight: 30, valid: false,
       error: errMsg, diag: chnDiag,
+      diagAll: chnRaw?.diagAll,
     };
   }
 
