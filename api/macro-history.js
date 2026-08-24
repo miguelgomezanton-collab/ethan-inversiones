@@ -2,6 +2,29 @@
 // Datos históricos para Timeline y Correlaciones
 // La FRED API key vive SOLO aquí, nunca en el frontend
 
+import { initializeApp, getApps, cert } from 'firebase-admin/app';
+import { getFirestore } from 'firebase-admin/firestore';
+
+// ── Firebase Admin (para persistencia de Component Validation) ──
+function getDB() {
+  if (!getApps().length) {
+    initializeApp({
+      credential: cert({
+        projectId:   process.env.FIREBASE_ADMIN_PROJECT_ID,
+        clientEmail: process.env.FIREBASE_ADMIN_CLIENT_EMAIL,
+        privateKey:  process.env.FIREBASE_ADMIN_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+      }),
+    });
+  }
+  return getFirestore();
+}
+const CV_COLLECTION = 'risk_radar_validation';
+const CV_DOC = 'component_validation_latest';
+const HIST_MACRO_VERSION = 'HIST_MACRO_V1_FRED';
+const RISK_RADAR_VERSION = 'RISK_RADAR_V1';
+const COMPONENT_VALIDATION_METHOD_VERSION = 'COMPONENT_VALIDATION_V1';
+const CV_NSIM = 5000, CV_BLOCKSIZE = 12;
+
 const FRED = 'https://api.stlouisfed.org/fred/series/observations';
 
 async function fred(id, key, limit = 96, order = 'asc', freq = '', observationStart = '') {
@@ -90,11 +113,30 @@ function alignByDate(a, b) {
 }
 
 export default async function handler(req, res) {
+  const type = req.query.type || 'all'; // 'timeline' | 'correlaciones' | 'radar' | 'all' | 'blockvalidation' | 'componentvalidation' | 'componentvalidation-recompute'
+
+  // ── COMPONENT VALIDATION — lectura rápida del snapshot persistido ──
+  // NO recalcula nada aquí. El cálculo (5.000 sims/indicador) solo corre
+  // vía type=componentvalidation-recompute (cron mensual, ver vercel.json).
+  // No necesita FRED_API_KEY ni el fetch histórico: por eso vive antes de todo eso.
+  if (type === 'componentvalidation') {
+    res.setHeader('Cache-Control', 'no-store'); // el propio doc de Firestore ya actúa de caché
+    try {
+      const db = getDB();
+      const snap = await db.collection(CV_COLLECTION).doc(CV_DOC).get();
+      if (!snap.exists) {
+        return res.status(200).json({ notComputedYet: true, componentValidation: {}, componentMatrix: [] });
+      }
+      return res.status(200).json(snap.data());
+    } catch (e) {
+      return res.status(500).json({ error: 'Firestore read failed: ' + e.message });
+    }
+  }
+
   res.setHeader('Cache-Control', 's-maxage=3600,stale-while-revalidate=7200');
   const key = process.env.FRED_API_KEY;
   if (!key) return res.status(500).json({ error: 'FRED_API_KEY no configurada' });
 
-  const type = req.query.type || 'all'; // 'timeline' | 'correlaciones' | 'radar' | 'all'
   const errs = [];
 
   // ── Fetch FRED histórico ──────────────────────
@@ -651,11 +693,20 @@ export default async function handler(req, res) {
     });
   }
 
-  // ── BLOCK VALIDATION REPORT (type=blockvalidation) + COMPONENT VALIDATION (type=componentvalidation) ──
-  // Separados en dos ramas independientes: cada una por sí sola ya es pesada
-  // (bootstrap 5.000 sims × N indicadores/bloques) y compartir petición las hacía
-  // sumar tiempo y superar el límite de 10s de Vercel Hobby.
-  if (type === 'blockvalidation' || type === 'componentvalidation') {
+  // ── BLOCK VALIDATION REPORT (type=blockvalidation, live) + COMPONENT VALIDATION RECOMPUTE (type=componentvalidation-recompute, solo cron) ──
+  // blockvalidation sigue en vivo (operativo, ~8-9s, dentro del límite).
+  // componentvalidation-recompute es pesado (13 indicadores × bootstrap 5.000 sims) y
+  // NUNCA lo dispara el frontend — solo el cron mensual (ver vercel.json), autenticado
+  // con CRON_SECRET. El resultado se persiste en Firestore y el frontend solo lee ese
+  // snapshot (rama type==='componentvalidation' más arriba, antes del fetch a FRED).
+  if (type === 'blockvalidation' || type === 'componentvalidation-recompute') {
+    if (type === 'componentvalidation-recompute') {
+      const cronSecret = process.env.CRON_SECRET;
+      const authHeader = req.headers?.['authorization'];
+      if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+        return res.status(401).json({ error: 'Unauthorized — componentvalidation-recompute es solo para el cron' });
+      }
+    }
     const fm3v = new Map(), fm6v = new Map(), fm12v = new Map();
     for (const [ym] of spMap) {
       const b=new Date(ym+'-01');
@@ -715,7 +766,7 @@ export default async function handler(req, res) {
     for (const [bN, bD] of Object.entries(BV_BL)) for (const id of bD.inds) IND_BLOCK[id] = bN;
 
     const cmpV = {};
-    if (type === 'componentvalidation')
+    if (type === 'componentvalidation-recompute')
     for (const id of Object.keys(IND_G)) {
       const monthly = [];
       for (const m of histMacroV1) { if (!m.valid) continue; const sc = IND_G[id]?.(m); if (sc != null) monthly.push({ ym: m.month, sc }); }
@@ -762,7 +813,7 @@ export default async function handler(req, res) {
 
     // Matriz final: Indicador | Bloque actual | Return signal | Downside signal | Temporal stability | Bootstrap | Classification
     let componentMatrix = [];
-    if (type === 'componentvalidation') {
+    if (type === 'componentvalidation-recompute') {
       componentMatrix = Object.entries(cmpV).map(([id,v]) => ({
         id, block: v.block,
         returnSignal:    v.corr.spR12?.p!=null   ? (v.corr.spR12.p<0.05?'SIG':v.corr.spR12.p<0.15?'WEAK':'NONE')   : '—',
@@ -773,8 +824,33 @@ export default async function handler(req, res) {
       }));
     }
 
-    if (type === 'componentvalidation') {
-      return res.status(200).json({updatedAt:new Date().toISOString(),componentValidation:cmpV,componentMatrix,errors:errs.length?errs:undefined});
+    if (type === 'componentvalidation-recompute') {
+      // dataThrough = último mes con dato válido en histMacroV1
+      const lastValidMonth = [...histMacroV1].reverse().find(m => m.valid)?.month || null;
+      const snapshot = {
+        updatedAt: new Date().toISOString(),
+        calculatedAt: new Date().toISOString(),
+        dataThrough: lastValidMonth,
+        histMacroVersion: HIST_MACRO_VERSION,
+        riskRadarVersion: RISK_RADAR_VERSION,
+        methodologyVersion: COMPONENT_VALIDATION_METHOD_VERSION,
+        nSim: CV_NSIM,
+        blockSize: CV_BLOCKSIZE,
+        componentValidation: cmpV,
+        componentMatrix,
+        errors: errs.length ? errs : undefined,
+      };
+      // HARD RULE: si algo de lo anterior ha fallado catastróficamente, ni siquiera
+      // llegamos aquí (el handler habría devuelto 500 antes) — así que si llegamos
+      // a este punto el cálculo es completo. Solo entonces escribimos en Firestore.
+      // Si la propia escritura falla, NO tocamos el snapshot anterior.
+      try {
+        const db = getDB();
+        await db.collection(CV_COLLECTION).doc(CV_DOC).set(snapshot);
+        return res.status(200).json({ status: 'persisted', ...snapshot });
+      } catch (e) {
+        return res.status(500).json({ status: 'compute_ok_but_persist_failed', error: e.message, previousSnapshotPreserved: true });
+      }
     }
     return res.status(200).json({updatedAt:new Date().toISOString(),blockValidation:bVal,summary:Object.fromEntries(Object.entries(bVal).map(([k,v])=>[k,{verdict:v.verdict,n:v.n,regDep:v.regDep}])),errors:errs.length?errs:undefined});
   }

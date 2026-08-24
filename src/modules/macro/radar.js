@@ -566,6 +566,11 @@ export async function render(container, { actionsSlot }) {
         componentValidation: cPart?.componentValidation || {},
         componentMatrix: cPart?.componentMatrix || [],
         partialBlock: !bPart, partialComponent: !cPart,
+        componentNotComputedYet: !!cPart?.notComputedYet,
+        componentCalculatedAt: cPart?.calculatedAt || null,
+        componentDataThrough: cPart?.dataThrough || null,
+        componentNSim: cPart?.nSim ?? null,
+        componentBlockSize: cPart?.blockSize ?? null,
       } : null;
       paintBlockValidation(blockData);
     } catch(e) {
@@ -707,9 +712,21 @@ export async function render(container, { actionsSlot }) {
       : c==='REGIME DEPENDENT' ? 'var(--amber)' : c==='INSUFFICIENT DATA' ? 'var(--text3)' : 'var(--red)';
 
     // Componentes internos — COMPONENT VALIDATION: los 13 indicadores individuales, sin agregar por bloque
-    const compHTML = data.partialComponent
-      ? '<div class="mac-card" style="margin-top:14px;"><div class="empty"><div class="empty-icon">⚠</div><div class="empty-title">Component Validation no disponible</div><div class="empty-desc">La petición /api/macro-history?type=componentvalidation falló o superó el tiempo límite.</div></div></div>'
+    // Se lee de un snapshot PERSISTIDO en Firestore (cron mensual), no se recalcula al abrir la pestaña.
+    const fmtDT = iso => { if (!iso) return '—'; const d = new Date(iso); return d.toLocaleDateString('es-ES') + ' ' + d.toLocaleTimeString('es-ES', {hour:'2-digit', minute:'2-digit'}); };
+    const statusLineHTML = '<div style="font-size:9px;font-family:var(--mono);color:var(--text3);margin-bottom:10px;padding:8px 10px;background:var(--surface2);border-radius:6px;">' +
+      '📌 Último cálculo: <strong style="color:var(--text2);">' + fmtDT(data.componentCalculatedAt) + '</strong>' +
+      ' · datos hasta <strong style="color:var(--text2);">' + (data.componentDataThrough||'—') + '</strong>' +
+      ' · <strong style="color:var(--text2);">' + (data.componentNSim!=null?data.componentNSim.toLocaleString('es-ES'):'—') + '</strong> sims' +
+      ' · recálculo mensual automático (cron), no en cada carga' +
+      '</div>';
+
+    const compHTML = data.componentNotComputedYet
+      ? '<div class="mac-card" style="margin-top:14px;">' + statusLineHTML + '<div class="empty"><div class="empty-icon">🕐</div><div class="empty-title">Component Validation aún no calculado</div><div class="empty-desc">El cron mensual todavía no ha corrido. Se persistirá automáticamente en Firestore la próxima ejecución.</div></div></div>'
+      : data.partialComponent
+      ? '<div class="mac-card" style="margin-top:14px;"><div class="empty"><div class="empty-icon">⚠</div><div class="empty-title">Component Validation no disponible</div><div class="empty-desc">La lectura de /api/macro-history?type=componentvalidation falló.</div></div></div>'
       : '<div class="mac-card" style="margin-top:14px;">' +
+      statusLineHTML +
       '<div style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:10px;">Component Validation — Indicadores Individuales (sin agregar por bloque)</div>' +
       '<table style="width:100%;border-collapse:collapse;font-size:9px;font-family:var(--mono);">' +
         '<thead><tr style="background:var(--surface2);">' +
