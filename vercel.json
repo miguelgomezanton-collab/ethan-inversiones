@@ -4,17 +4,12 @@
   "framework": "vite",
   "functions": {
     "api/smart-money.js": { "maxDuration": 60 },
-    "api/fundamental.js": { "maxDuration": 60 },
-    "api/macro-history.js": { "maxDuration": 60 }
+    "api/fundamental.js": { "maxDuration": 60 }
   },
   "crons": [
     {
       "path": "/api/cron-daily-prices",
       "schedule": "30 21 * * *"
-    },
-    {
-      "path": "/api/macro-history?type=componentvalidation-recompute",
-      "schedule": "0 7 3 * *"
     }
   ],
   "rewrites": [

@@ -550,30 +550,7 @@ export async function render(container, { actionsSlot }) {
     if (blockData && !force) { paintBlockValidation(blockData); return; }
     document.getElementById('radar-wrap').innerHTML = '<div class="empty"><div class="loader-ring"></div></div>';
     try {
-      // Dos peticiones independientes — el backend las separó porque juntas
-      // superaban el límite de tiempo de Vercel. Si una falla/tarda, la otra
-      // igualmente se pinta.
-      const [blockRes, compRes] = await Promise.allSettled([
-        fetch('/api/macro-history?type=blockvalidation').then(r=>r.ok?r.json():null),
-        fetch('/api/macro-history?type=componentvalidation').then(r=>r.ok?r.json():null),
-      ]);
-      const bPart = blockRes.status==='fulfilled' ? blockRes.value : null;
-      const cPart = compRes.status==='fulfilled' ? compRes.value : null;
-      blockData = (bPart || cPart) ? {
-        updatedAt: bPart?.updatedAt || cPart?.updatedAt,
-        blockValidation: bPart?.blockValidation || {},
-        summary: bPart?.summary || {},
-        componentValidation: cPart?.componentValidation || {},
-        componentMatrix: cPart?.componentMatrix || [],
-        partialBlock: !bPart, partialComponent: !cPart,
-        componentNotComputedYet: !!cPart?.notComputedYet,
-        componentCalculatedAt: cPart?.calculatedAt || null,
-        componentDataThrough: cPart?.dataThrough || null,
-        componentNSim: cPart?.nSim ?? null,
-        componentBlockSize: cPart?.blockSize ?? null,
-        componentTitle: cPart?.title || null,
-        componentFrozenNote: cPart?.frozen || null,
-      } : null;
+      blockData = await fetch('/api/macro-history?type=blockvalidation').then(r=>r.ok?r.json():null);
       paintBlockValidation(blockData);
     } catch(e) {
       document.getElementById('radar-wrap').innerHTML = `<div class="empty"><div class="empty-icon">⚠</div><div class="empty-title">Error</div><div class="empty-desc">${e.message}</div></div>`;
@@ -704,131 +681,33 @@ export async function render(container, { actionsSlot }) {
         '</tbody></table></div>';
     }).join('');
 
-    const IND_LABELS_CV = {
-      curvaUSD:'Curva USD 10Y-2Y', lei:'LEI (OECD CLI)', m2usa:'M2 USA YoY', impulso:'Impulso Crediticio',
-      velM2:'Velocidad M2', creditoVsPib:'Crédito vs PIB', bbb:'BBB Spread', hy:'HY Spread',
-      vix:'VIX vs SMA200', cpiHeadline:'CPI Headline YoY', cpiCore:'Core CPI YoY',
-      tipoReal:'Tipo Real (FFR-CPI)', reservas:'Reservas Bancarias',
-    };
-    const classColor = c => c==='ROBUST' ? 'var(--green)' : c==='INDICATIVE' ? 'var(--teal)'
-      : c==='REGIME DEPENDENT' ? 'var(--amber)' : c==='INSUFFICIENT DATA' ? 'var(--text3)' : 'var(--red)';
-    const v2Color = v => v==='MACRO REGIME' ? 'var(--blue)' : v==='MARKET RISK' ? 'var(--purple)'
-      : v==='REVIEW' ? 'var(--amber)' : 'var(--text3)';
-
-    // Componentes internos — COMPONENT VALIDATION: los 13 indicadores individuales, sin agregar por bloque
-    // Se lee de un snapshot PERSISTIDO en Firestore (cron mensual), no se recalcula al abrir la pestaña.
-    const fmtDT = iso => { if (!iso) return '—'; const d = new Date(iso); return d.toLocaleDateString('es-ES') + ' ' + d.toLocaleTimeString('es-ES', {hour:'2-digit', minute:'2-digit'}); };
-    const titleHTML = '<div style="font-size:11px;font-weight:700;color:var(--teal);font-family:var(--mono);letter-spacing:0.04em;margin:18px 0 6px;">' +
-      (data.componentTitle || 'RISK_RADAR_V1 — COMPONENT VALIDATION REPORT') + '</div>' +
-      (data.componentFrozenNote ? '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:10px;">' + data.componentFrozenNote + '</div>' : '');
-    const statusLineHTML = '<div style="font-size:9px;font-family:var(--mono);color:var(--text3);margin-bottom:10px;padding:8px 10px;background:var(--surface2);border-radius:6px;">' +
-      '📌 Último cálculo: <strong style="color:var(--text2);">' + fmtDT(data.componentCalculatedAt) + '</strong>' +
-      ' · datos hasta <strong style="color:var(--text2);">' + (data.componentDataThrough||'—') + '</strong>' +
-      ' · <strong style="color:var(--text2);">' + (data.componentNSim!=null?data.componentNSim.toLocaleString('es-ES'):'—') + '</strong> sims' +
-      ' · recálculo mensual automático (cron), no en cada carga' +
-      '</div>';
-
-    // Distribución por score real del indicador — Score|N|Med+6M|Med+12M|%Pos+12M|MedDD+6M|MedDD+12M|P(DD>10%)|P(DD>15%)|VaR95|CVaR95
-    function byScoreTableHTML(byScore) {
-      if (!byScore || !Object.keys(byScore).length) return '';
-      const scores = Object.keys(byScore).sort((a,b)=>parseFloat(a)-parseFloat(b));
-      return '<table style="width:100%;border-collapse:collapse;font-size:8.5px;font-family:var(--mono);margin-top:4px;margin-bottom:8px;">' +
-        '<thead><tr style="background:var(--surface2);">' +
-          ['Score','N','Med+6M','Med+12M','%Pos+12M','MedDD+6M','MedDD+12M','P(DD>10%)','P(DD>15%)','VaR95','CVaR95'].map(h=>'<th style="padding:3px 5px;text-align:center;color:var(--text3);">'+h+'</th>').join('') +
-        '</tr></thead><tbody>' +
-        scores.map(k => { const s = byScore[k];
-          return '<tr style="border-bottom:1px solid var(--border);' + (s.lowN?'opacity:0.55;':'') + '">' +
-            '<td style="padding:3px 5px;text-align:center;color:var(--text2);font-weight:700;">' + k + '</td>' +
-            '<td style="padding:3px 5px;text-align:center;color:var(--text3);">' + s.n + (s.lowN?' <span style="color:var(--amber);">LOW N</span>':'') + '</td>' +
-            '<td style="padding:3px 5px;text-align:center;color:' + col(s.medR6) + ';">' + f1(s.medR6) + '</td>' +
-            '<td style="padding:3px 5px;text-align:center;color:' + col(s.medR12) + ';">' + f1(s.medR12) + '</td>' +
-            '<td style="padding:3px 5px;text-align:center;color:' + ((s.pctPos12??0)>50?'var(--green)':'var(--red)') + ';">' + (s.pctPos12!=null?s.pctPos12+'%':'—') + '</td>' +
-            '<td style="padding:3px 5px;text-align:center;color:' + colDD(s.medDD6) + ';">' + (s.medDD6!=null?s.medDD6.toFixed(1)+'%':'—') + '</td>' +
-            '<td style="padding:3px 5px;text-align:center;color:' + colDD(s.medDD12) + ';">' + (s.medDD12!=null?s.medDD12.toFixed(1)+'%':'—') + '</td>' +
-            '<td style="padding:3px 5px;text-align:center;color:' + ((s.pDD10??0)>30?'var(--red)':(s.pDD10??0)>15?'var(--amber)':'var(--green)') + ';">' + (s.pDD10!=null?s.pDD10+'%':'—') + '</td>' +
-            '<td style="padding:3px 5px;text-align:center;color:' + ((s.pDD15??0)>15?'var(--red)':'var(--text3)') + ';">' + (s.pDD15!=null?s.pDD15+'%':'—') + '</td>' +
-            '<td style="padding:3px 5px;text-align:center;color:' + colDD(s.var95) + ';">' + f1(s.var95) + '</td>' +
-            '<td style="padding:3px 5px;text-align:center;color:' + colDD(s.cvar95) + ';">' + f1(s.cvar95) + '</td>' +
-          '</tr>';
-        }).join('') +
-        '</tbody></table>';
-    }
-
-    const compHTML = data.componentNotComputedYet
-      ? '<div class="mac-card" style="margin-top:14px;">' + titleHTML + statusLineHTML + '<div class="empty"><div class="empty-icon">🕐</div><div class="empty-title">Component Validation aún no calculado</div><div class="empty-desc">El cron mensual todavía no ha corrido. Se persistirá automáticamente en Firestore la próxima ejecución.</div></div></div>'
-      : data.partialComponent
-      ? '<div class="mac-card" style="margin-top:14px;"><div class="empty"><div class="empty-icon">⚠</div><div class="empty-title">Component Validation no disponible</div><div class="empty-desc">La lectura de /api/macro-history?type=componentvalidation falló.</div></div></div>'
-      : '<div class="mac-card" style="margin-top:14px;">' +
-      titleHTML + statusLineHTML +
-      '<div style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:10px;">Component Validation — Indicadores Individuales (sin agregar por bloque)</div>' +
+    // Componentes internos
+    const compHTML = '<div class="mac-card" style="margin-top:14px;">' +
+      '<div style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:10px;">Componentes internos — Sentimiento e Inflación</div>' +
       '<table style="width:100%;border-collapse:collapse;font-size:9px;font-family:var(--mono);">' +
         '<thead><tr style="background:var(--surface2);">' +
           '<th style="padding:4px 6px;text-align:left;color:var(--text3);">Indicador</th>' +
-          '<th style="padding:4px 6px;text-align:left;color:var(--text3);">Bloque</th>' +
           '<th style="padding:4px 6px;text-align:center;color:var(--text3);">N</th>' +
-          '<th style="padding:4px 6px;text-align:center;color:var(--text3);">ρ Ret+6M</th>' +
           '<th style="padding:4px 6px;text-align:center;color:var(--text3);">ρ Ret+12M</th>' +
-          '<th style="padding:4px 6px;text-align:center;color:var(--text3);">ρ DD+6M</th>' +
           '<th style="padding:4px 6px;text-align:center;color:var(--text3);">ρ DD+12M</th>' +
           '<th style="padding:4px 6px;text-align:center;color:var(--text3);">ρ Bin+12M</th>' +
-          '<th style="padding:4px 6px;text-align:center;color:var(--text3);">Bootstrap</th>' +
-          '<th style="padding:4px 6px;text-align:center;color:var(--text3);">Temporal</th>' +
-          '<th style="padding:4px 6px;text-align:center;color:var(--text3);">Clasificación</th>' +
+          '<th style="padding:4px 6px;text-align:center;color:var(--text3);">Bootstrap ρDD</th>' +
+          '<th style="padding:4px 6px;text-align:center;color:var(--text3);">No-overlap N</th>' +
         '</tr></thead><tbody>' +
       Object.entries(data.componentValidation||{}).map(([id,cv]) => {
-        const c = cv.corr || {};
+        const labels={hy:'HY Spread',vix:'VIX vs SMA200',cpiHeadline:'CPI Headline YoY',cpiCore:'Core CPI YoY'};
         return '<tr style="border-bottom:1px solid var(--border);">' +
-          '<td style="padding:4px 6px;color:var(--text2);">' + (IND_LABELS_CV[id]||id) + '</td>' +
-          '<td style="padding:4px 6px;color:var(--text3);">' + (cv.block||'—') + '</td>' +
+          '<td style="padding:4px 6px;color:var(--text2);">' + (labels[id]||id) + '</td>' +
           '<td style="padding:4px 6px;text-align:center;color:var(--text3);">' + (cv.n||'—') + '</td>' +
-          '<td style="padding:4px 6px;text-align:center;color:' + col(c.spR6?.rho) + ';">' + f3(c.spR6?.rho) + (c.spR6?.p!=null&&c.spR6.p<0.05?'*':'') + '</td>' +
-          '<td style="padding:4px 6px;text-align:center;color:' + col(c.spR12?.rho) + ';">' + f3(c.spR12?.rho) + (c.spR12?.p!=null&&c.spR12.p<0.05?'*':'') + '</td>' +
-          '<td style="padding:4px 6px;text-align:center;color:' + col(c.spDD6?.rho) + ';">' + f3(c.spDD6?.rho) + (c.spDD6?.p!=null&&c.spDD6.p<0.05?'*':'') + '</td>' +
-          '<td style="padding:4px 6px;text-align:center;color:' + col(c.spDD12?.rho) + ';">' + f3(c.spDD12?.rho) + (c.spDD12?.p!=null&&c.spDD12.p<0.05?'*':'') + '</td>' +
-          '<td style="padding:4px 6px;text-align:center;color:' + col(c.spBin12?.rho) + ';">' + f3(c.spBin12?.rho) + (c.spBin12?.p!=null&&c.spBin12.p<0.05?'*':'') + '</td>' +
+          '<td style="padding:4px 6px;text-align:center;color:' + col(cv.spR12?.rho) + ';">' + f3(cv.spR12?.rho) + (cv.spR12?.p!=null&&cv.spR12.p<0.05?'*':'') + '</td>' +
+          '<td style="padding:4px 6px;text-align:center;color:' + col(cv.spDD12?.rho) + ';">' + f3(cv.spDD12?.rho) + (cv.spDD12?.p!=null&&cv.spDD12.p<0.05?'*':'') + '</td>' +
+          '<td style="padding:4px 6px;text-align:center;color:' + col(cv.spBin12?.rho) + ';">' + f3(cv.spBin12?.rho) + (cv.spBin12?.p!=null&&cv.spBin12.p<0.05?'*':'') + '</td>' +
           '<td style="padding:4px 6px;text-align:center;font-size:9px;color:' + (cv.boot?.excludes0?'var(--green)':cv.boot?.pBoot!=null&&cv.boot.pBoot<0.1?'var(--amber)':'var(--text3)') + ';">' + (cv.boot?'ρ='+cv.boot.rhoObs+' p='+cv.boot.pBoot:'—') + '</td>' +
-          '<td style="padding:4px 6px;text-align:center;color:' + (cv.regDep?'var(--amber)':'var(--text3)') + ';">' + (cv.regDep?'INESTABLE':'estable') + '</td>' +
-          '<td style="padding:4px 6px;text-align:center;font-weight:700;color:' + classColor(cv.classification) + ';">' + (cv.classification||'—') + '</td>' +
-        '</tr>' +
-        (cv.note ? '<tr><td colspan="11" style="padding:2px 6px 8px;font-size:8.5px;color:var(--text3);font-style:italic;">ℹ ' + cv.note + '</td></tr>' : '') +
-        '<tr><td colspan="11" style="padding:0 6px 10px;">' + byScoreTableHTML(cv.byScore) + '</td></tr>';
+          '<td style="padding:4px 6px;text-align:center;color:var(--text3);">' + (cv.noOverlap?.insufficient?'LOW N':cv.noOverlap?.n||'—') + '</td>' +
+        '</tr>';
       }).join('') +
-      '</tbody></table>' +
-      '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:8px;">RISK_RADAR_V1 permanece FROZEN — esta pantalla es solo diagnóstico para decidir la arquitectura de V2. * = p&lt;0.05 · debajo de cada fila, distribución por score real (N&lt;10 → LOW N, no se clasifica como robusta)</div>' +
-      '</div>';
+      '</tbody></table></div>';
 
-    // Matriz final resumen — Indicador | Bloque actual | Return signal | Downside signal | Temporal stability | Bootstrap | Classification | Propuesta V2
-    const matrixHTML = (!data.componentMatrix || !data.componentMatrix.length) ? '' :
-      '<div class="mac-card" style="margin-top:14px;">' +
-      '<div style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:10px;">Matriz Final — Component Validation</div>' +
-      '<table style="width:100%;border-collapse:collapse;font-size:9px;font-family:var(--mono);">' +
-        '<thead><tr style="background:var(--surface2);">' +
-          '<th style="padding:4px 6px;text-align:left;color:var(--text3);">Indicador</th>' +
-          '<th style="padding:4px 6px;text-align:left;color:var(--text3);">Bloque</th>' +
-          '<th style="padding:4px 6px;text-align:center;color:var(--text3);">N</th>' +
-          '<th style="padding:4px 6px;text-align:center;color:var(--text3);">Return signal</th>' +
-          '<th style="padding:4px 6px;text-align:center;color:var(--text3);">Downside signal</th>' +
-          '<th style="padding:4px 6px;text-align:center;color:var(--text3);">Temporal stability</th>' +
-          '<th style="padding:4px 6px;text-align:center;color:var(--text3);">Bootstrap</th>' +
-          '<th style="padding:4px 6px;text-align:center;color:var(--text3);">Classification</th>' +
-          '<th style="padding:4px 6px;text-align:center;color:var(--text3);">Propuesta V2</th>' +
-        '</tr></thead><tbody>' +
-      data.componentMatrix.map(r => '<tr style="border-bottom:1px solid var(--border);">' +
-          '<td style="padding:4px 6px;color:var(--text2);">' + (IND_LABELS_CV[r.id]||r.id) + '</td>' +
-          '<td style="padding:4px 6px;color:var(--text3);">' + r.block + '</td>' +
-          '<td style="padding:4px 6px;text-align:center;color:var(--text3);">' + (r.n??'—') + '</td>' +
-          '<td style="padding:4px 6px;text-align:center;color:var(--text3);">' + r.returnSignal + '</td>' +
-          '<td style="padding:4px 6px;text-align:center;color:var(--text3);">' + r.downsideSignal + '</td>' +
-          '<td style="padding:4px 6px;text-align:center;color:var(--text3);">' + r.temporalStability + '</td>' +
-          '<td style="padding:4px 6px;text-align:center;color:var(--text3);">' + r.bootstrap + '</td>' +
-          '<td style="padding:4px 6px;text-align:center;font-weight:700;color:' + classColor(r.classification) + ';">' + r.classification + '</td>' +
-          '<td style="padding:4px 6px;text-align:center;font-weight:700;color:' + v2Color(r.proposalV2) + ';">' + (r.proposalV2||'—') + '</td>' +
-        '</tr>').join('') +
-      '</tbody></table>' +
-      '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:8px;">Propuesta V2 es solo informativa — no se implementa V2 en esta pantalla.</div>' +
-      '</div>';
-
-    el.innerHTML = summaryHTML + detailHTML + compHTML + matrixHTML +
-      '<div class="co-footer" style="margin-top:14px;">RISK_RADAR_V1 Block + Component Validation · ' + (data.updatedAt||'').slice(0,10) + ' · FROZEN — no modificar thresholds hasta completar análisis' +
-      (data.partialBlock?' · ⚠ Block Validation no disponible':'') + '</div>';
+    el.innerHTML = summaryHTML + detailHTML + compHTML +
+      '<div class="co-footer" style="margin-top:14px;">RISK_RADAR_V1 Block Validation · ' + (data.updatedAt||'').slice(0,10) + ' · FROZEN — no modificar thresholds hasta completar análisis</div>';
   }

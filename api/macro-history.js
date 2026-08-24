@@ -2,29 +2,6 @@
 // Datos históricos para Timeline y Correlaciones
 // La FRED API key vive SOLO aquí, nunca en el frontend
 
-import { initializeApp, getApps, cert } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
-
-// ── Firebase Admin (para persistencia de Component Validation) ──
-function getDB() {
-  if (!getApps().length) {
-    initializeApp({
-      credential: cert({
-        projectId:   process.env.FIREBASE_ADMIN_PROJECT_ID,
-        clientEmail: process.env.FIREBASE_ADMIN_CLIENT_EMAIL,
-        privateKey:  process.env.FIREBASE_ADMIN_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-      }),
-    });
-  }
-  return getFirestore();
-}
-const CV_COLLECTION = 'risk_radar_validation';
-const CV_DOC = 'component_validation_latest';
-const HIST_MACRO_VERSION = 'HIST_MACRO_V1_FRED';
-const RISK_RADAR_VERSION = 'RISK_RADAR_V1';
-const COMPONENT_VALIDATION_METHOD_VERSION = 'COMPONENT_VALIDATION_V1';
-const CV_NSIM = 5000, CV_BLOCKSIZE = 12;
-
 const FRED = 'https://api.stlouisfed.org/fred/series/observations';
 
 async function fred(id, key, limit = 96, order = 'asc', freq = '', observationStart = '') {
@@ -113,58 +90,62 @@ function alignByDate(a, b) {
 }
 
 export default async function handler(req, res) {
-  const type = req.query.type || 'all'; // 'timeline' | 'correlaciones' | 'radar' | 'all' | 'blockvalidation' | 'componentvalidation' | 'componentvalidation-recompute'
-
-  // ── COMPONENT VALIDATION — lectura rápida del snapshot persistido ──
-  // NO recalcula nada aquí. El cálculo (5.000 sims/indicador) solo corre
-  // vía type=componentvalidation-recompute (cron mensual, ver vercel.json).
-  // No necesita FRED_API_KEY ni el fetch histórico: por eso vive antes de todo eso.
-  if (type === 'componentvalidation') {
-    res.setHeader('Cache-Control', 'no-store'); // el propio doc de Firestore ya actúa de caché
-    try {
-      const db = getDB();
-      const snap = await db.collection(CV_COLLECTION).doc(CV_DOC).get();
-      if (!snap.exists) {
-        return res.status(200).json({ notComputedYet: true, componentValidation: {}, componentMatrix: [] });
-      }
-      return res.status(200).json(snap.data());
-    } catch (e) {
-      return res.status(500).json({ error: 'Firestore read failed: ' + e.message });
-    }
-  }
-
   res.setHeader('Cache-Control', 's-maxage=3600,stale-while-revalidate=7200');
   const key = process.env.FRED_API_KEY;
   if (!key) return res.status(500).json({ error: 'FRED_API_KEY no configurada' });
 
+  const type = req.query.type || 'all'; // 'timeline' | 'correlaciones' | 'radar' | 'blockvalidation' | 'all'
   const errs = [];
+  const isLightType = type === 'radar' || type === 'blockvalidation';
 
   // ── Fetch FRED histórico ──────────────────────
+  // Core (15 series): siempre. Extras (5 series): solo para timeline/correlaciones/all.
+  // Separar en dos allSettled reduce a 15 fetches para radar/blockvalidation → cabe en timeout Vercel 10s.
   const [rSp, rNq, rRu, rAu, rBond, rDxy,
          rDgs10, rDgs2, rDff, rCpi, rCpiCore, rBbb, rM2v, rWresbal, rTotll, rGdp,
          rLei, rM2sl, rHy, rVix] =
-    await Promise.allSettled([
-      fred('SP500', key, 0, 'asc', 'm', '1976-01-01'),
-      fred('SP500', key, 0, 'asc', '',  '1976-01-01'),
-      fred('SP500', key, 0, 'asc', 'm', '2000-01-01'),
-      fred('GOLDAMGBD228NLBM', key, 120, 'asc', 'm'),
-      fred('DGS10',     key, 120, 'asc', 'm'),
-      fred('DTWEXBGS',  key, 120, 'asc', 'm'),
-      fred('DGS10',  key, 0, 'asc', '', '1976-01-01'),
-      fred('DGS2',   key, 0, 'asc', '', '1976-01-01'),
-      fred('DFF',    key, 0, 'asc', '', '1954-01-01'),
-      fred('CPIAUCSL',   key, 0, 'asc', '', '1947-01-01'),
-      fred('CPILFESL',   key, 132, 'desc'),
-      fred('BAMLC0A4CBBB', key, 0, 'asc', '', '1997-01-01'),
-      fred('M2V',        key, 0, 'asc', '', '1959-01-01'),
-      fred('WRESBAL',    key, 0, 'asc', '', '1984-01-01'),
-      fred('TOTLL',      key, 0, 'asc', '', '1973-01-01'),
-      fred('GDP',        key, 0, 'asc', '', '1947-01-01'),
-      fred('USALOLITOAASTSAM', key, 0, 'asc', '', '1959-01-01'),
-      fred('M2SL',       key, 0, 'asc', '', '1959-01-01'),
-      fred('BAMLH0A0HYM2', key, 0, 'asc', 'm', '1997-01-01'),  // HY OAS mensual (media FRED)
-      fred('VIXCLS',     key, 0, 'asc', 'm', '1990-01-01'),     // VIX mensual (evita 9k obs diarias)
-    ]);
+    isLightType
+    ? [...(await Promise.allSettled([
+        fred('SP500',            key, 0, 'asc', 'm', '1976-01-01'),
+        fred('DGS10',            key, 0, 'asc', '', '1976-01-01'),
+        fred('DGS2',             key, 0, 'asc', '', '1976-01-01'),
+        fred('DFF',              key, 0, 'asc', '', '1954-01-01'),
+        fred('CPIAUCSL',         key, 0, 'asc', '', '1947-01-01'),
+        fred('CPILFESL',         key, 132, 'desc'),
+        fred('BAMLC0A4CBBB',     key, 0, 'asc', '', '1997-01-01'),
+        fred('M2V',              key, 0, 'asc', '', '1959-01-01'),
+        fred('WRESBAL',          key, 0, 'asc', '', '1984-01-01'),
+        fred('TOTLL',            key, 0, 'asc', '', '1973-01-01'),
+        fred('GDP',              key, 0, 'asc', '', '1947-01-01'),
+        fred('USALOLITOAASTSAM', key, 0, 'asc', '', '1959-01-01'),
+        fred('M2SL',             key, 0, 'asc', '', '1959-01-01'),
+        fred('BAMLH0A0HYM2',     key, 0, 'asc', 'm', '1997-01-01'),
+        fred('VIXCLS',           key, 0, 'asc', 'm', '1990-01-01'),
+      ])),
+      // Extras vacíos para mantener el mismo destructuring
+      {status:'rejected'},{status:'rejected'},{status:'rejected'},{status:'rejected'},{status:'rejected'}]
+    : await Promise.allSettled([
+        fred('SP500',            key, 0, 'asc', 'm', '1976-01-01'),
+        fred('SP500',            key, 0, 'asc', '',  '1976-01-01'),
+        fred('SP500',            key, 0, 'asc', 'm', '2000-01-01'),
+        fred('GOLDAMGBD228NLBM', key, 120, 'asc', 'm'),
+        fred('DGS10',            key, 120, 'asc', 'm'),
+        fred('DTWEXBGS',         key, 120, 'asc', 'm'),
+        fred('DGS10',            key, 0, 'asc', '', '1976-01-01'),
+        fred('DGS2',             key, 0, 'asc', '', '1976-01-01'),
+        fred('DFF',              key, 0, 'asc', '', '1954-01-01'),
+        fred('CPIAUCSL',         key, 0, 'asc', '', '1947-01-01'),
+        fred('CPILFESL',         key, 132, 'desc'),
+        fred('BAMLC0A4CBBB',     key, 0, 'asc', '', '1997-01-01'),
+        fred('M2V',              key, 0, 'asc', '', '1959-01-01'),
+        fred('WRESBAL',          key, 0, 'asc', '', '1984-01-01'),
+        fred('TOTLL',            key, 0, 'asc', '', '1973-01-01'),
+        fred('GDP',              key, 0, 'asc', '', '1947-01-01'),
+        fred('USALOLITOAASTSAM', key, 0, 'asc', '', '1959-01-01'),
+        fred('M2SL',             key, 0, 'asc', '', '1959-01-01'),
+        fred('BAMLH0A0HYM2',     key, 0, 'asc', 'm', '1997-01-01'),
+        fred('VIXCLS',           key, 0, 'asc', 'm', '1990-01-01'),
+      ]);
 
   // ── Procesar series ───────────────────────────
   // SP500: usar el chunk más completo disponible, con fallback progresivo
@@ -216,34 +197,42 @@ export default async function handler(req, res) {
   // Series del selector — media mensual, unidad natural
   const dgs10Monthly = toMonthly(dgs10);  // Treasury 10Y %
   const dffMonthly   = toMonthly(dff);    // Fed Funds %
-  const hy    = rHy.status  === 'fulfilled' ? rHy.value  : null;
-  const vixMon = rVix.status === 'fulfilled' ? rVix.value : null; // ya mensual via FRED frequency=m
+  const hy   = rHy.status  === 'fulfilled' ? rHy.value  : null;
+  const vixRaw = rVix.status === 'fulfilled' ? rVix.value : null;
 
-  // VIX mensual → SMA200 sobre medias mensuales, score: por encima=−1, por debajo=+1
-  const vixMonMap = new Map();
-  if (vixMon && vixMon.length >= 200) {
-    for (let i = 200; i < vixMon.length; i++) {
-      const sma200 = vixMon.slice(i-200, i).reduce((s,p)=>s+p.value,0)/200;
-      const above  = vixMon[i].value > sma200;
-      const ym     = vixMon[i].date.slice(0,7);
-      vixMonMap.set(ym, { value: +vixMon[i].value.toFixed(2), aboveSMA200: above, score: above ? -1 : 1 });
+  // VIX → mensual (último valor del mes) + SMA200 diaria → score mensual
+  // SMA200 sobre valores diarios, luego agregar a mensual
+  const vixMonMap = new Map(); // ym → { value, aboveSMA200, score }
+  if (vixRaw && vixRaw.length >= 200) {
+    for (let i = 200; i < vixRaw.length; i++) {
+      const sma200 = vixRaw.slice(i-200, i).reduce((s,p)=>s+p.value,0)/200;
+      const above  = vixRaw[i].value > sma200;
+      const ym     = vixRaw[i].date.slice(0,7);
+      // Último valor del mes (sobreescribe hasta el último día)
+      vixMonMap.set(ym, { value: +vixRaw[i].value.toFixed(2), aboveSMA200: above, score: above ? -1 : 1 });
     }
   }
-  // HY mensual (FRED ya entrega media mensual con frequency=m)
+  // HY → mensual (media del mes)
   const hyMonMap = new Map();
   if (hy) {
+    const byMonth = {};
     hy.forEach(p => {
       const ym = p.date.slice(0,7);
-      const score = p.value < 3.5 ? 1 : p.value < 5 ? 0 : -1;
-      hyMonMap.set(ym, { value: +p.value.toFixed(3), score });
+      if (!byMonth[ym]) byMonth[ym] = [];
+      byMonth[ym].push(p.value);
     });
+    for (const [ym, vals] of Object.entries(byMonth)) {
+      const avg = vals.reduce((a,b)=>a+b,0)/vals.length;
+      const score = avg < 3.5 ? 1 : avg < 5 ? 0 : -1;
+      hyMonMap.set(ym, { value: +avg.toFixed(3), score });
+    }
   }
   // CPI Core → mensual map para Inflación (CPI Headline ya existe como cpiYoYMap)
   const cpiCoreAscFull = cpiCore ? [...cpiCore].reverse() : null;
   const cpiCoreYoYFull = yoySeries(cpiCoreAscFull);
   const cpiCoreYoYMap  = new Map(cpiCoreYoYFull.map(p => [p.date.slice(0,7), p.value]));
   const cpiCoreAsc   = cpiCore ? [...cpiCore].reverse() : null;
-  const cpiYoY       = yoySeries(cpi);          // CPI Headline YoY (cpi ya viene asc desde fetch)
+  const cpiYoY       = yoySeries(cpiAsc);      // CPI Headline YoY
   const cpiCoreYoY   = yoySeries(cpiCoreAsc);  // Core CPI YoY
   const m2YoY    = yoySeries(m2v);
   const totllYoY = yoySeries(totll);
@@ -536,15 +525,6 @@ export default async function handler(req, res) {
       {id:'tipoReal', block:'Política', source:'HIST_MACRO_V1', getter:m=>m.components?.tipoReal,  scoreFrom:c=>c?.score??null},
       {id:'reservas', block:'Política', source:'HIST_MACRO_V1', getter:m=>m.components?.reservas,  scoreFrom:c=>c?.score??null, structuralNote:'STRUCTURAL_REVIEW — nivel nominal no estacionario entre regímenes QE/QT'},
     ];
-    // Ampliar RADAR_IND con Sentimiento e Inflación para el stress test
-    // (declarado aquí, antes de su primer uso — antes vivía más abajo y rompía con TDZ ReferenceError)
-    const RADAR_IND_EXTENDED = [...RADAR_IND,
-      {id:'hy',          block:'Sentimiento', source:'RISK_RADAR_V1', getter:m=>m.components?.hy,          scoreFrom:c=>c?.score??null},
-      {id:'vix',         block:'Sentimiento', source:'RISK_RADAR_V1', getter:m=>m.components?.vix,         scoreFrom:c=>c?.score??null},
-      {id:'cpiHeadline', block:'Inflación',   source:'RISK_RADAR_V1', getter:m=>m.components?.cpiHeadline, scoreFrom:c=>c?.score??null},
-      {id:'cpiCore',     block:'Inflación',   source:'RISK_RADAR_V1', getter:m=>m.components?.cpiCore,     scoreFrom:c=>c?.score??null},
-    ];
-
     const rst = {};
     for (const ind of RADAR_IND_EXTENDED) {
       const byScore={},xs=[],ys6=[],ybin=[];
@@ -577,6 +557,13 @@ export default async function handler(req, res) {
       Política: {inds:['tipoReal','reservas']},
       Inflación:{inds:['cpiHeadline','cpiCore'], note:'CPI/Core son RISK_RADAR_V1, maxScore=0 en HIST_MACRO_V1. Input de tipoReal pero score propio.'},
     };
+    // Ampliar RADAR_IND con Sentimiento e Inflación para el stress test
+    const RADAR_IND_EXTENDED = [...RADAR_IND,
+      {id:'hy',          block:'Sentimiento', source:'RISK_RADAR_V1', getter:m=>m.components?.hy,          scoreFrom:c=>c?.score??null},
+      {id:'vix',         block:'Sentimiento', source:'RISK_RADAR_V1', getter:m=>m.components?.vix,         scoreFrom:c=>c?.score??null},
+      {id:'cpiHeadline', block:'Inflación',   source:'RISK_RADAR_V1', getter:m=>m.components?.cpiHeadline, scoreFrom:c=>c?.score??null},
+      {id:'cpiCore',     block:'Inflación',   source:'RISK_RADAR_V1', getter:m=>m.components?.cpiCore,     scoreFrom:c=>c?.score??null},
+    ];
     const blockResults={};
     for(const[bName,bDef] of Object.entries(BLOCK_DEFS)){
       if(bDef.inds && !bDef.inds.length){
@@ -693,65 +680,38 @@ export default async function handler(req, res) {
     });
   }
 
-  // ── BLOCK VALIDATION REPORT (type=blockvalidation, live) + COMPONENT VALIDATION RECOMPUTE (type=componentvalidation-recompute, solo cron) ──
-  // blockvalidation sigue en vivo (operativo, ~8-9s, dentro del límite).
-  // componentvalidation-recompute es pesado (13 indicadores × bootstrap 5.000 sims) y
-  // NUNCA lo dispara el frontend — solo el cron mensual (ver vercel.json), autenticado
-  // con CRON_SECRET. El resultado se persiste en Firestore y el frontend solo lee ese
-  // snapshot (rama type==='componentvalidation' más arriba, antes del fetch a FRED).
-  if (type === 'blockvalidation' || type === 'componentvalidation-recompute') {
-    if (type === 'componentvalidation-recompute') {
-      const cronSecret = process.env.CRON_SECRET;
-      const authHeader = req.headers?.['authorization'];
-      if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
-        return res.status(401).json({ error: 'Unauthorized — componentvalidation-recompute es solo para el cron' });
-      }
-    }
-    const fm3v = new Map(), fm6v = new Map(), fm12v = new Map();
-    for (const [ym] of spMap) {
-      const b=new Date(ym+'-01');
-      [[3,fm3v],[6,fm6v],[12,fm12v]].forEach(([h,m])=>{
-        const t=new Date(b); t.setMonth(t.getMonth()+h);
-        const ty=t.toISOString().slice(0,7), fr=spMap.get(ym), to=spMap.get(ty);
-        if(fr&&to) m.set(ym,+((to/fr-1)*100).toFixed(3));
-      });
-    }
+  // ── BLOCK VALIDATION REPORT ───────────────────
+  if (type === 'blockvalidation') {
+    const fm3v=new Map(),fm6v=new Map(),fm12v=new Map();
+    for(const[ym] of spMap){[[3,fm3v],[6,fm6v],[12,fm12v]].forEach(([h,m])=>{const t=new Date(ym+'-01');t.setMonth(t.getMonth()+h);const ty=t.toISOString().slice(0,7),fr=spMap.get(ym),to=spMap.get(ty);if(fr&&to)m.set(ym,+((to/fr-1)*100).toFixed(3));});}
     function bvDD(fromYM,months){const fr=spMap.get(fromYM);if(!fr)return null;let pk=fr,mx=0;for(let i=1;i<=months;i++){const t=new Date(fromYM+'-01');t.setMonth(t.getMonth()+i);const v=spMap.get(t.toISOString().slice(0,7));if(!v)continue;if(v>pk)pk=v;const d=(v-pk)/pk*100;if(d<mx)mx=d;}return+mx.toFixed(3);}
-    function bvSt(months){
-      const r3=months.map(m=>fm3v.get(m)).filter(v=>v!=null),r6=months.map(m=>fm6v.get(m)).filter(v=>v!=null),r12=months.map(m=>fm12v.get(m)).filter(v=>v!=null);
-      const dd6=months.map(m=>bvDD(m,6)).filter(v=>v!=null),dd12=months.map(m=>bvDD(m,12)).filter(v=>v!=null);
-      const med=a=>{if(!a.length)return null;const s=[...a].sort((x,y)=>x-y);return+s[Math.floor(s.length/2)].toFixed(2);};
-      const pct=(a,p)=>{if(!a.length)return null;const s=[...a].sort((x,y)=>x-y);return+s[Math.max(0,Math.floor(s.length*p)-1)].toFixed(2);};
-      const nc=n=>Math.max(1,Math.floor(n*0.05));
-      return{n:months.length,medR3:med(r3),medR6:med(r6),medR12:med(r12),pctPos12:r12.length?+(r12.filter(v=>v>0).length/r12.length*100).toFixed(1):null,medDD6:med(dd6),medDD12:med(dd12),pDD10:dd12.length?+(dd12.filter(d=>d<-10).length/dd12.length*100).toFixed(1):null,pDD15:dd12.length?+(dd12.filter(d=>d<-15).length/dd12.length*100).toFixed(1):null,var95:r12.length?pct([...r12].sort((x,y)=>x-y),0.05):null,cvar95:r12.length?(()=>{const s=[...r12].sort((x,y)=>x-y),nc2=nc(r12.length);return+(s.slice(0,nc2).reduce((a,b)=>a+b,0)/nc2).toFixed(2);})():null,worstR12:r12.length?+Math.min(...r12).toFixed(2):null,lowN:months.length<10};
-    }
-    function bvP(xs,ys){if(!xs||xs.length<10)return null;const mx=xs.reduce((a,b)=>a+b,0)/xs.length,my=ys.reduce((a,b)=>a+b,0)/ys.length;let num=0,dx2=0,dy2=0;for(let i=0;i<xs.length;i++){const a=xs[i]-mx,b=ys[i]-my;num+=a*b;dx2+=a*a;dy2+=b*b;}const d=Math.sqrt(dx2*dy2);if(!d)return null;const r=num/d,n=xs.length,t=r*Math.sqrt(n-2)/Math.sqrt(1-r*r+1e-10),z=Math.abs(t),p=n>30?2*(1-(0.5*(1+Math.sign(z)*Math.sqrt(1-Math.exp(-2*z*z/Math.PI))))):null,zr=0.5*Math.log((1+r)/(1-r+1e-10)),se=1/Math.sqrt(n-3);return{rho:+r.toFixed(3),n,p:p!=null?+p.toFixed(4):null,ci95:[+(Math.tanh(zr-1.96*se)).toFixed(3),+(Math.tanh(zr+1.96*se)).toFixed(3)]};}
-    function bvRk(arr){const s=[...arr].map((v,i)=>({v,i})).sort((a,b)=>a.v-b.v);const r=new Array(arr.length);let i=0;while(i<s.length){let j=i;while(j<s.length&&s[j].v===s[i].v)j++;const avg=(i+j-1)/2;for(let k=i;k<j;k++)r[s[k].i]=avg;i=j;}return r;}
-    function bvSp(xs,ys){return bvP(bvRk(xs),bvRk(ys));}
-    function bvBoot(pairs,NSIM=5000,BL=12){const T=pairs.length;if(T<15)return null;function rhoF(a){const n=a.length,rx=bvRk(a.map(p=>p[0])),ry=bvRk(a.map(p=>p[1]));const mx=rx.reduce((a,b)=>a+b,0)/n,my=ry.reduce((a,b)=>a+b,0)/n;let num=0,dx2=0,dy2=0;for(let i=0;i<n;i++){const a2=rx[i]-mx,b2=ry[i]-my;num+=a2*b2;dx2+=a2*a2;dy2+=b2*b2;}const d=Math.sqrt(dx2*dy2);return d?num/d:0;}const rO=rhoF(pairs);let sd=20260823;function rnd(){sd=(sd*1664525+1013904223)&0xFFFFFFFF;return(sd>>>0)/4294967296;}const bt=[];for(let s=0;s<NSIM;s++){const sm=[];while(sm.length<T){const st=Math.floor(rnd()*(T-BL+1));for(let k=0;k<BL&&sm.length<T;k++)sm.push(pairs[(st+k)%T]);}bt.push(rhoF(sm.slice(0,T)));}bt.sort((a,b)=>a-b);const ci025=bt[Math.floor(NSIM*0.025)],ci975=bt[Math.floor(NSIM*0.975)],pB=(rO<0?bt.filter(r=>r>=0).length:bt.filter(r=>r<=0).length)/NSIM;return{rhoObs:+rO.toFixed(3),ci95:[+ci025.toFixed(3),+ci975.toFixed(3)],pBoot:+pB.toFixed(4),excludes0:(rO<0&&ci975<0)||(rO>0&&ci025>0),T,NSIM,BL};}
-    function bvNO(pairs){const s=[...pairs].sort((a,b)=>a[0].localeCompare(b[0]));const sel=[];let last=null;for(const p of s){if(!last||(new Date(p[0]+'-01')-new Date(last+'-01'))>=365*24*3600*1e3*0.95){sel.push(p);last=p[0];}}if(sel.length<10)return{n:sel.length,insufficient:true};const res=bvSp(sel.map(p=>p[1]),sel.map(p=>p[2]));return{n:sel.length,...(res||{})};}
+    function bvSt(months){const r6=months.map(m=>fm6v.get(m)).filter(v=>v!=null),r12=months.map(m=>fm12v.get(m)).filter(v=>v!=null),dd6=months.map(m=>bvDD(m,6)).filter(v=>v!=null),dd12=months.map(m=>bvDD(m,12)).filter(v=>v!=null);const med=a=>{if(!a.length)return null;const s=[...a].sort((x,y)=>x-y);return+s[Math.floor(s.length/2)].toFixed(2);};const pct=(a,p)=>{if(!a.length)return null;const s=[...a].sort((x,y)=>x-y);return+s[Math.max(0,Math.floor(s.length*p)-1)].toFixed(2);};const nc=n=>Math.max(1,Math.floor(n*0.05));return{n:months.length,medR6:med(r6),medR12:med(r12),pctPos12:r12.length?+(r12.filter(v=>v>0).length/r12.length*100).toFixed(1):null,medDD6:med(dd6),medDD12:med(dd12),pDD10:dd12.length?+(dd12.filter(d=>d<-10).length/dd12.length*100).toFixed(1):null,pDD15:dd12.length?+(dd12.filter(d=>d<-15).length/dd12.length*100).toFixed(1):null,var95:r12.length?pct([...r12].sort((x,y)=>x-y),0.05):null,cvar95:r12.length?(()=>{const s=[...r12].sort((x,y)=>x-y),nc2=nc(r12.length);return+(s.slice(0,nc2).reduce((a,b)=>a+b,0)/nc2).toFixed(2);})():null,worstR12:r12.length?+Math.min(...r12).toFixed(2):null,lowN:months.length<10};}
+    function bvP2(xs,ys){if(!xs||xs.length<10)return null;const mx=xs.reduce((a,b)=>a+b,0)/xs.length,my=ys.reduce((a,b)=>a+b,0)/ys.length;let num=0,dx2=0,dy2=0;for(let i=0;i<xs.length;i++){const a=xs[i]-mx,b=ys[i]-my;num+=a*b;dx2+=a*a;dy2+=b*b;}const d=Math.sqrt(dx2*dy2);if(!d)return null;const r=num/d,n=xs.length,t2=r*Math.sqrt(n-2)/Math.sqrt(1-r*r+1e-10),z=Math.abs(t2),p=n>30?2*(1-(0.5*(1+Math.sign(z)*Math.sqrt(1-Math.exp(-2*z*z/Math.PI))))):null,zr=0.5*Math.log((1+r)/(1-r+1e-10)),se=1/Math.sqrt(n-3);return{rho:+r.toFixed(3),n,p:p!=null?+p.toFixed(4):null,ci95:[+(Math.tanh(zr-1.96*se)).toFixed(3),+(Math.tanh(zr+1.96*se)).toFixed(3)]};}
+    function bvRk2(arr){const s=[...arr].map((v,i)=>({v,i})).sort((a,b)=>a.v-b.v);const r=new Array(arr.length);let i=0;while(i<s.length){let j=i;while(j<s.length&&s[j].v===s[i].v)j++;const avg=(i+j-1)/2;for(let k=i;k<j;k++)r[s[k].i]=avg;i=j;}return r;}
+    function bvSp2(xs,ys){return bvP2(bvRk2(xs),bvRk2(ys));}
+    function bvBoot2(pairs,NSIM=5000,BL=12){const T=pairs.length;if(T<15)return null;function rhoF(a){const n=a.length,rx=bvRk2(a.map(p=>p[0])),ry=bvRk2(a.map(p=>p[1]));const mx=rx.reduce((a,b)=>a+b,0)/n,my=ry.reduce((a,b)=>a+b,0)/n;let num=0,dx2=0,dy2=0;for(let i=0;i<n;i++){const a2=rx[i]-mx,b2=ry[i]-my;num+=a2*b2;dx2+=a2*a2;dy2+=b2*b2;}const d=Math.sqrt(dx2*dy2);return d?num/d:0;}const rO=rhoF(pairs);let sd=20260823;function rnd(){sd=(sd*1664525+1013904223)&0xFFFFFFFF;return(sd>>>0)/4294967296;}const bt=[];for(let s=0;s<NSIM;s++){const sm=[];while(sm.length<T){const st=Math.floor(rnd()*(T-BL+1));for(let k=0;k<BL&&sm.length<T;k++)sm.push(pairs[(st+k)%T]);}bt.push(rhoF(sm.slice(0,T)));}bt.sort((a,b)=>a-b);const ci025=bt[Math.floor(NSIM*0.025)],ci975=bt[Math.floor(NSIM*0.975)],pB=(rO<0?bt.filter(r=>r>=0).length:bt.filter(r=>r<=0).length)/NSIM;return{rhoObs:+rO.toFixed(3),ci95:[+ci025.toFixed(3),+ci975.toFixed(3)],pBoot:+pB.toFixed(4),excludes0:(rO<0&&ci975<0)||(rO>0&&ci025>0),T,NSIM,BL};}
+    function bvNO2(pairs){const s=[...pairs].sort((a,b)=>a[0].localeCompare(b[0]));const sel=[];let last=null;for(const p of s){if(!last||(new Date(p[0]+'-01')-new Date(last+'-01'))>=365*24*3600*1e3*0.95){sel.push(p);last=p[0];}}if(sel.length<10)return{n:sel.length,insufficient:true};const res=bvSp2(sel.map(p=>p[1]),sel.map(p=>p[2]));return{n:sel.length,...(res||{})};}
 
-    const IND_G={curvaUSD:m=>m.components?.curvaUSD?.score??null,lei:m=>m.components?.lei?.score??null,m2usa:m=>m.components?.m2usa?.score??null,impulso:m=>m.components?.impulso?.score??null,velM2:m=>m.components?.velM2?.score??null,creditoVsPib:m=>m.components?.creditoVsPib?.score??null,bbb:m=>{const v=m.components?.bbb?.value;return v!=null?(v<=1?1:v<=1.5?0:-1):null;},hy:m=>m.components?.hy?.score??null,vix:m=>m.components?.vix?.score??null,cpiHeadline:m=>m.components?.cpiHeadline?.score??null,cpiCore:m=>m.components?.cpiCore?.score??null,tipoReal:m=>m.components?.tipoReal?.score??null,reservas:m=>m.components?.reservas?.score??null};
-    const BV_BL={'Ciclo Económico':{inds:['curvaUSD','lei']},'Liquidez Global':{inds:['m2usa','impulso','velM2','creditoVsPib']},'Crédito':{inds:['bbb'],note:'BBB score propio RISK_RADAR_V1'},'Sentimiento':{inds:['hy','vix'],note:'F&G=LIVE_ONLY excluido. VIX desde 1990.'},'Política Monetaria':{inds:['tipoReal','reservas']},'Inflación':{inds:['cpiHeadline','cpiCore'],note:'maxScore=0 en HIST_MACRO_V1; regla RISK_RADAR_V1 propia'}};
+    const IND_G2={curvaUSD:m=>m.components?.curvaUSD?.score??null,lei:m=>m.components?.lei?.score??null,m2usa:m=>m.components?.m2usa?.score??null,impulso:m=>m.components?.impulso?.score??null,velM2:m=>m.components?.velM2?.score??null,creditoVsPib:m=>m.components?.creditoVsPib?.score??null,bbb:m=>{const v=m.components?.bbb?.value;return v!=null?(v<=1?1:v<=1.5?0:-1):null;},hy:m=>m.components?.hy?.score??null,vix:m=>m.components?.vix?.score??null,cpiHeadline:m=>m.components?.cpiHeadline?.score??null,cpiCore:m=>m.components?.cpiCore?.score??null,tipoReal:m=>m.components?.tipoReal?.score??null,reservas:m=>m.components?.reservas?.score??null};
+    const BV_BL2={'Ciclo Económico':{inds:['curvaUSD','lei']},'Liquidez Global':{inds:['m2usa','impulso','velM2','creditoVsPib']},'Crédito':{inds:['bbb'],note:'BBB score propio RISK_RADAR_V1'},'Sentimiento':{inds:['hy','vix'],note:'F&G=LIVE_ONLY excluido. VIX desde 1990.'},'Política Monetaria':{inds:['tipoReal','reservas']},'Inflación':{inds:['cpiHeadline','cpiCore'],note:'maxScore=0 en HIST_MACRO_V1'}};
 
     const bVal={};
-    if (type === 'blockvalidation')
-    for(const[bN,bD] of Object.entries(BV_BL)){
+    for(const[bN,bD] of Object.entries(BV_BL2)){
       const monthly=[];
-      for(const m of histMacroV1){if(!m.valid)continue;let bSc=0,nV=0;for(const id of bD.inds){const sc=IND_G[id]?.(m);if(sc!=null){bSc+=sc;nV++;}}if(nV>0)monthly.push({ym:m.month,bSc,nV,nT:bD.inds.length});}
+      for(const m of histMacroV1){if(!m.valid)continue;let bSc=0,nV=0;for(const id of bD.inds){const sc=IND_G2[id]?.(m);if(sc!=null){bSc+=sc;nV++;}}if(nV>0)monthly.push({ym:m.month,bSc,nV,nT:bD.inds.length});}
       const byScore={};
       for(const d of monthly){const k=d.bSc>=0?'+'+d.bSc:String(d.bSc);if(!byScore[k])byScore[k]=[];byScore[k].push(d.ym);}
       const bss={};for(const[k,ms] of Object.entries(byScore))bss[k]=bvSt(ms);
       const p6=[],p12=[],pDD6=[],pDD12=[],pBin=[],pDD10=[],pDD15=[];
       for(const d of monthly){const r6=fm6v.get(d.ym),r12=fm12v.get(d.ym),dd6=bvDD(d.ym,6),dd12=bvDD(d.ym,12);if(r6!=null)p6.push([d.ym,d.bSc,r6]);if(r12!=null){p12.push([d.ym,d.bSc,r12]);pBin.push([d.ym,d.bSc,r12>0?1:0]);}if(dd6!=null)pDD6.push([d.ym,d.bSc,dd6]);if(dd12!=null){pDD12.push([d.ym,d.bSc,dd12]);pDD10.push([d.ym,d.bSc,dd12<-10?1:0]);pDD15.push([d.ym,d.bSc,dd12<-15?1:0]);}}
-      const sp=p=>bvSp(p.map(q=>q[1]),p.map(q=>q[2]));
-      const corr={spR6:sp(p6),spR12:sp(p12),spDD6:sp(pDD6),spDD12:sp(pDD12),spBin12:sp(pBin),spDD10:sp(pDD10),spDD15:sp(pDD15)};
+      const sp2=p=>bvSp2(p.map(q=>q[1]),p.map(q=>q[2]));
+      const corr={spR6:sp2(p6),spR12:sp2(p12),spDD6:sp2(pDD6),spDD12:sp2(pDD12),spBin12:sp2(pBin),spDD10:sp2(pDD10),spDD15:sp2(pDD15)};
       const btTarget=pDD12.length>=15?pDD12:pBin;
-      const boot=bvBoot(btTarget.map(p=>[p[1],p[2]])),bootBin=bvBoot(pBin.map(p=>[p[1],p[2]]));
-      const noOvDD=bvNO(pDD12),noOvBin=bvNO(pBin);
+      const boot=bvBoot2(btTarget.map(p=>[p[1],p[2]])),bootBin=bvBoot2(pBin.map(p=>[p[1],p[2]]));
+      const noOvDD=bvNO2(pDD12),noOvBin=bvNO2(pBin);
       const chrono=[...p6].sort((a,b)=>a[0].localeCompare(b[0]));
       const bSzT=Math.floor(chrono.length/3);
-      const temp=['Early','Mid','Recent'].map((label,i)=>{const bl=chrono.slice(i*bSzT,i===2?chrono.length:(i+1)*bSzT);const res=bvSp(bl.map(p=>p[1]),bl.map(p=>p[2]));return{label,n:bl.length,first:bl[0]?.[0],last:bl[bl.length-1]?.[0],rho:res?.rho??null,p:res?.p??null,ci95:res?.ci95??null};});
+      const temp=['Early','Mid','Recent'].map((label,i)=>{const bl=chrono.slice(i*bSzT,i===2?chrono.length:(i+1)*bSzT);const res=bvSp2(bl.map(p=>p[1]),bl.map(p=>p[2]));return{label,n:bl.length,first:bl[0]?.[0],last:bl[bl.length-1]?.[0],rho:res?.rho??null,p:res?.p??null,ci95:res?.ci95??null};});
       const signs=temp.filter(b=>b.rho!=null).map(b=>Math.sign(b.rho)),regDep=signs.length>=2&&signs.some(s=>s!==signs[0]);
       const mainN=Math.max(p12.length,pDD12.length);
       const hasRobust=(boot?.excludes0)||(noOvDD?.rho!=null&&noOvDD?.ci95&&((noOvDD.rho<0&&noOvDD.ci95[1]<0)||(noOvDD.rho>0&&noOvDD.ci95[0]>0)));
@@ -760,139 +720,14 @@ export default async function handler(req, res) {
       const verdict=mainN<15?'INSUFFICIENT DATA':regDep?'REGIME DEPENDENT':hasRobust?'ROBUST RISK SIGNAL':indicative?'INDICATIVE RISK SIGNAL':descriptive?'DESCRIPTIVE ONLY':'INDICATIVE RISK SIGNAL';
       bVal[bN]={note:bD.note,n:monthly.length,nWith12m:p12.length,byScore:bss,corr,boot,bootBin,noOvDD,noOvBin,temp,regDep,verdict};
     }
-    // ── COMPONENT VALIDATION — mismo stress test, a nivel de indicador individual ──
-    // RISK_RADAR_V1 permanece FROZEN. No se recalibran thresholds ni scores aquí.
-    const IND_BLOCK = {};
-    for (const [bN, bD] of Object.entries(BV_BL)) for (const id of bD.inds) IND_BLOCK[id] = bN;
-
-    const cmpV = {};
-    const IND_NOTES = {
-      hy: 'Fuente y metodología separadas de BBB (BAMLH0A0HYM2, mensual).',
-      bbb: 'Fuente y metodología separadas de HY (BAMLC0A4CBBB).',
-      vix: 'Histórico desde 1990 (VIXCLS). Fear & Greed queda LIVE_ONLY, sin serie histórica — no incluido aquí.',
-      cpiHeadline: 'YoY por fecha real (misma transformación que módulo Inflación, CPIAUCSL).',
-      cpiCore: 'YoY por fecha real (misma transformación que módulo Inflación, CPILFESL).',
-      reservas: 'STRUCTURAL_REVIEW — nivel nominal no estacionario entre regímenes QE/QT.',
-    };
-    // Categoría base para "Propuesta V2" (solo informativo — no se implementa V2 aquí)
-    const V2_BASE = {
-      curvaUSD:'MACRO REGIME', lei:'MACRO REGIME', m2usa:'MACRO REGIME', impulso:'MACRO REGIME',
-      velM2:'MACRO REGIME', creditoVsPib:'MACRO REGIME', tipoReal:'MACRO REGIME', reservas:'MACRO REGIME',
-      cpiHeadline:'MACRO REGIME', cpiCore:'MACRO REGIME',
-      bbb:'MARKET RISK', hy:'MARKET RISK', vix:'MARKET RISK',
-    };
-
-    if (type === 'componentvalidation-recompute')
-    for (const id of Object.keys(IND_G)) {
-      const monthly = [];
-      for (const m of histMacroV1) { if (!m.valid) continue; const sc = IND_G[id]?.(m); if (sc != null) monthly.push({ ym: m.month, sc }); }
-
-      const p6=[],p12=[],pDD6=[],pDD12=[],pBin=[],pDD10=[],pDD15=[];
-      for (const d of monthly) {
-        const r6=fm6v.get(d.ym), r12=fm12v.get(d.ym), dd6=bvDD(d.ym,6), dd12=bvDD(d.ym,12);
-        if (r6!=null) p6.push([d.ym,d.sc,r6]);
-        if (r12!=null) { p12.push([d.ym,d.sc,r12]); pBin.push([d.ym,d.sc,r12>0?1:0]); }
-        if (dd6!=null) pDD6.push([d.ym,d.sc,dd6]);
-        if (dd12!=null) { pDD12.push([d.ym,d.sc,dd12]); pDD10.push([d.ym,d.sc,dd12<-10?1:0]); pDD15.push([d.ym,d.sc,dd12<-15?1:0]); }
-      }
-      const sp = p => bvSp(p.map(q=>q[1]), p.map(q=>q[2]));
-      const corr = { spR6: sp(p6), spR12: sp(p12), spDD6: sp(pDD6), spDD12: sp(pDD12), spBin12: sp(pBin), spDD10: sp(pDD10), spDD15: sp(pDD15) };
-
-      const btTarget = pDD12.length >= 15 ? pDD12 : pBin;
-      const boot    = bvBoot(btTarget.map(p=>[p[1],p[2]]));
-      const bootBin = bvBoot(pBin.map(p=>[p[1],p[2]]));
-      const noOvDD  = bvNO(pDD12), noOvBin = bvNO(pBin);
-
-      // Distribución por score real del indicador — Score|N|Med+6M|Med+12M|%Pos+12M|MedDD+6M|MedDD+12M|P(DD>10%)|P(DD>15%)|VaR95|CVaR95
-      // N<10 → LOW N (bvSt ya lo marca vía .lowN), no se clasifica como señal robusta.
-      const byScore = {};
-      const byScoreGroups = {};
-      for (const d of monthly) { const k = d.sc>=0?'+'+d.sc:String(d.sc); (byScoreGroups[k] ||= []).push(d.ym); }
-      for (const [k, ms] of Object.entries(byScoreGroups)) byScore[k] = bvSt(ms);
-
-      // Estabilidad temporal Early/Mid/Recent (sobre retorno +6M, igual que en Block Validation)
-      const chrono = [...p6].sort((a,b)=>a[0].localeCompare(b[0]));
-      const bSzT = Math.floor(chrono.length/3);
-      const temp = ['Early','Mid','Recent'].map((label,i) => {
-        const bl = chrono.slice(i*bSzT, i===2?chrono.length:(i+1)*bSzT);
-        const res = bvSp(bl.map(p=>p[1]), bl.map(p=>p[2]));
-        return { label, n: bl.length, first: bl[0]?.[0], last: bl[bl.length-1]?.[0], rho: res?.rho ?? null, p: res?.p ?? null, ci95: res?.ci95 ?? null };
-      });
-      const signs  = temp.filter(b=>b.rho!=null).map(b=>Math.sign(b.rho));
-      const regDep = signs.length>=2 && signs.some(s=>s!==signs[0]);
-
-      // Coherencia de signo económico: por convención RISK_RADAR_V1, score alto = estado
-      // más favorable → se espera ρ>0 con retorno y con DD (DD menos negativo = mayor valor),
-      // y ρ>0 con binario positivo. Exigimos esto además de significancia para ROBUST/INDICATIVE
-      // — así no se clasifica por p-value solo, tal como pide el spec.
-      const dirVotes = [corr.spR12, corr.spDD12, corr.spBin12]
-        .filter(c => c?.p != null && c.p < 0.3)
-        .map(c => Math.sign(c.rho));
-      const signCoherent = dirVotes.length > 0 && dirVotes.filter(s=>s>0).length >= dirVotes.filter(s=>s<0).length;
-
-      const mainN     = Math.max(p12.length, pDD12.length);
-      const hasRobust = signCoherent && ((boot?.excludes0) || (noOvDD?.rho!=null && noOvDD?.ci95 && ((noOvDD.rho<0 && noOvDD.ci95[1]<0)||(noOvDD.rho>0 && noOvDD.ci95[0]>0))));
-      const indicative = signCoherent && ((boot?.pBoot!=null && boot.pBoot<0.1) || (corr.spDD12?.p!=null && corr.spDD12.p<0.1) || (corr.spBin12?.p!=null && corr.spBin12.p<0.1));
-      // Clasificación: N + estabilidad temporal + bootstrap + magnitud/signo económico — no solo p<0.05
-      const classification = mainN<15 ? 'INSUFFICIENT DATA'
-        : regDep ? 'REGIME DEPENDENT'
-        : hasRobust ? 'ROBUST'
-        : indicative ? 'INDICATIVE'
-        : 'NO SIGNAL';
-
-      // Propuesta V2 — solo informativo, no se implementa aquí
-      const proposalV2 = (classification==='INSUFFICIENT DATA' || classification==='NO SIGNAL') ? 'DROP CANDIDATE'
-        : classification==='REGIME DEPENDENT' ? 'REVIEW'
-        : (V2_BASE[id] || 'REVIEW');
-
-      cmpV[id] = { block: IND_BLOCK[id]||'—', note: IND_NOTES[id]||undefined, n: monthly.length, nWith12m: p12.length, byScore, corr, boot, bootBin, noOvDD, noOvBin, temp, regDep, signCoherent, classification, proposalV2 };
+    const cmpV={};
+    for(const id of['hy','vix','cpiHeadline','cpiCore']){
+      const p12c=[],pDD12c=[],pBinc=[];
+      for(const m of histMacroV1){if(!m.valid)continue;const sc=IND_G2[id]?.(m);if(sc==null)continue;const r12=fm12v.get(m.month),dd12=bvDD(m.month,12);if(r12!=null){p12c.push([m.month,sc,r12]);pBinc.push([m.month,sc,r12>0?1:0]);}if(dd12!=null)pDD12c.push([m.month,sc,dd12]);}
+      const sp2=p=>bvSp2(p.map(q=>q[1]),p.map(q=>q[2]));
+      cmpV[id]={n:p12c.length,spR12:sp2(p12c),spDD12:sp2(pDD12c),spBin12:sp2(pBinc),boot:bvBoot2(pDD12c.map(p=>[p[1],p[2]])),noOverlap:bvNO2(pDD12c)};
     }
-
-    // Matriz final: Indicador | Bloque | N | Return signal | Downside signal | Temporal stability | Bootstrap | Classification | Propuesta V2
-    let componentMatrix = [];
-    if (type === 'componentvalidation-recompute') {
-      componentMatrix = Object.entries(cmpV).map(([id,v]) => ({
-        id, block: v.block, n: v.nWith12m,
-        returnSignal:    v.corr.spR12?.p!=null   ? (v.corr.spR12.p<0.05?'SIG':v.corr.spR12.p<0.15?'WEAK':'NONE')   : '—',
-        downsideSignal:  v.corr.spDD12?.p!=null  ? (v.corr.spDD12.p<0.05?'SIG':v.corr.spDD12.p<0.15?'WEAK':'NONE') : '—',
-        temporalStability: v.regDep ? 'UNSTABLE' : 'STABLE',
-        bootstrap: v.boot?.excludes0 ? 'EXCLUDES 0' : v.boot?.pBoot!=null ? `p=${v.boot.pBoot}` : '—',
-        classification: v.classification,
-        proposalV2: v.proposalV2,
-      }));
-    }
-
-    if (type === 'componentvalidation-recompute') {
-      // dataThrough = último mes con dato válido en histMacroV1
-      const lastValidMonth = [...histMacroV1].reverse().find(m => m.valid)?.month || null;
-      const snapshot = {
-        title: 'RISK_RADAR_V1 — COMPONENT VALIDATION REPORT',
-        frozen: 'RISK_RADAR_V1 permanece FROZEN — no se han modificado thresholds, signos, pesos ni agregaciones.',
-        updatedAt: new Date().toISOString(),
-        calculatedAt: new Date().toISOString(),
-        dataThrough: lastValidMonth,
-        histMacroVersion: HIST_MACRO_VERSION,
-        riskRadarVersion: RISK_RADAR_VERSION,
-        methodologyVersion: COMPONENT_VALIDATION_METHOD_VERSION,
-        nSim: CV_NSIM,
-        blockSize: CV_BLOCKSIZE,
-        componentValidation: cmpV,
-        componentMatrix,
-        errors: errs.length ? errs : undefined,
-      };
-      // HARD RULE: si algo de lo anterior ha fallado catastróficamente, ni siquiera
-      // llegamos aquí (el handler habría devuelto 500 antes) — así que si llegamos
-      // a este punto el cálculo es completo. Solo entonces escribimos en Firestore.
-      // Si la propia escritura falla, NO tocamos el snapshot anterior.
-      try {
-        const db = getDB();
-        await db.collection(CV_COLLECTION).doc(CV_DOC).set(snapshot);
-        return res.status(200).json({ status: 'persisted', ...snapshot });
-      } catch (e) {
-        return res.status(500).json({ status: 'compute_ok_but_persist_failed', error: e.message, previousSnapshotPreserved: true });
-      }
-    }
-    return res.status(200).json({updatedAt:new Date().toISOString(),blockValidation:bVal,summary:Object.fromEntries(Object.entries(bVal).map(([k,v])=>[k,{verdict:v.verdict,n:v.n,regDep:v.regDep}])),errors:errs.length?errs:undefined});
+    return res.status(200).json({updatedAt:new Date().toISOString(),blockValidation:bVal,componentValidation:cmpV,summary:Object.fromEntries(Object.entries(bVal).map(([k,v])=>[k,{verdict:v.verdict,n:v.n,regDep:v.regDep}])),errors:errs.length?errs:undefined});
   }
 
   function spReturn(fromYM, monthsForward) {
@@ -1585,35 +1420,6 @@ export default async function handler(req, res) {
 
   let radarStressTest = {};
   try {
-    // rankArray/pearsonRanks viven como function-declarations dentro de OTRO try{} anterior
-    // (bloque de Spearman ScoreNorm) — en ESM estricto eso las deja block-scoped a ese try,
-    // así que aquí quedaban fuera de alcance (ReferenceError, capturado silenciosamente
-    // por el catch de abajo). Copia local para que este bloque sea autosuficiente.
-    function rankArray(arr) {
-      const sorted = [...arr].map((v,i)=>({v,i})).sort((a,b)=>a.v-b.v);
-      const ranks = new Array(arr.length);
-      let i=0;
-      while (i < sorted.length) {
-        let j=i;
-        while (j<sorted.length && sorted[j].v===sorted[i].v) j++;
-        const avg = (i+j-1)/2;
-        for (let k=i;k<j;k++) ranks[sorted[k].i]=avg;
-        i=j;
-      }
-      return ranks;
-    }
-    function pearsonRanks(xs,ys) {
-      if (!xs?.length||xs.length<10) return null;
-      const mx=xs.reduce((a,b)=>a+b,0)/xs.length, my=ys.reduce((a,b)=>a+b,0)/ys.length;
-      let num=0,dx2=0,dy2=0;
-      for(let i=0;i<xs.length;i++){const a=xs[i]-mx,b=ys[i]-my;num+=a*b;dx2+=a*a;dy2+=b*b;}
-      const d=Math.sqrt(dx2*dy2); if(d===0) return null;
-      const r=num/d, n=xs.length;
-      const t=r*Math.sqrt(n-2)/Math.sqrt(1-r*r+1e-10);
-      const z=Math.abs(t), p=n>30?2*(1-(0.5*(1+Math.sign(z)*Math.sqrt(1-Math.exp(-2*z*z/Math.PI))))):null;
-      const zr=0.5*Math.log((1+r)/(1-r+1e-10)), se=1/Math.sqrt(n-3);
-      return { rho:+r.toFixed(3), n, p:p!=null?+p.toFixed(4):null, ci95:[+(Math.tanh(zr-1.96*se)).toFixed(3),+(Math.tanh(zr+1.96*se)).toFixed(3)] };
-    }
     const fwdMap3  = buildForwardMap(spMap, 3);
     const fwdMap6  = buildForwardMap(spMap, 6);
     const fwdMap12 = buildForwardMap(spMap, 12);
