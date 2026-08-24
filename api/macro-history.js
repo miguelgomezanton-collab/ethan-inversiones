@@ -99,32 +99,37 @@ export default async function handler(req, res) {
   const isLightType = type === 'radar' || type === 'blockvalidation';
 
   // ── Fetch FRED histórico ──────────────────────
-  // Core (15 series): siempre. Extras (5 series): solo para timeline/correlaciones/all.
-  // Separar en dos allSettled reduce a 15 fetches para radar/blockvalidation → cabe en timeout Vercel 10s.
-  const [rSp, rNq, rRu, rAu, rBond, rDxy,
-         rDgs10, rDgs2, rDff, rCpi, rCpiCore, rBbb, rM2v, rWresbal, rTotll, rGdp,
-         rLei, rM2sl, rHy, rVix] =
-    isLightType
-    ? [...(await Promise.allSettled([
-        fred('SP500',            key, 0, 'asc', 'm', '1976-01-01'),
-        fred('DGS10',            key, 0, 'asc', '', '1976-01-01'),
-        fred('DGS2',             key, 0, 'asc', '', '1976-01-01'),
-        fred('DFF',              key, 0, 'asc', '', '1954-01-01'),
-        fred('CPIAUCSL',         key, 0, 'asc', '', '1947-01-01'),
-        fred('CPILFESL',         key, 132, 'desc'),
-        fred('BAMLC0A4CBBB',     key, 0, 'asc', '', '1997-01-01'),
-        fred('M2V',              key, 0, 'asc', '', '1959-01-01'),
-        fred('WRESBAL',          key, 0, 'asc', '', '1984-01-01'),
-        fred('TOTLL',            key, 0, 'asc', '', '1973-01-01'),
-        fred('GDP',              key, 0, 'asc', '', '1947-01-01'),
-        fred('USALOLITOAASTSAM', key, 0, 'asc', '', '1959-01-01'),
-        fred('M2SL',             key, 0, 'asc', '', '1959-01-01'),
-        fred('BAMLH0A0HYM2',     key, 0, 'asc', 'm', '1997-01-01'),
-        fred('VIXCLS',           key, 0, 'asc', 'm', '1990-01-01'),
-      ])),
-      // Extras vacíos para mantener el mismo destructuring
-      {status:'rejected'},{status:'rejected'},{status:'rejected'},{status:'rejected'},{status:'rejected'}]
-    : await Promise.allSettled([
+  // Modo light (radar/blockvalidation): 15 fetches core → cabe en timeout Vercel 10s
+  // Modo full (timeline/correlaciones/all): 20 fetches incluyendo activos de mercado
+  let rSp,rNq,rRu,rAu,rBond,rDxy,rDgs10,rDgs2,rDff,rCpi,rCpiCore,rBbb,rM2v,rWresbal,rTotll,rGdp,rLei,rM2sl,rHy,rVix;
+
+  if (isLightType) {
+    // 15 core series en orden correcto para destructuring
+    const light = await Promise.allSettled([
+      fred('SP500',            key, 0, 'asc', 'm', '1976-01-01'), // rSp
+      fred('DGS10',            key, 0, 'asc', '', '1976-01-01'),  // rDgs10
+      fred('DGS2',             key, 0, 'asc', '', '1976-01-01'),  // rDgs2
+      fred('DFF',              key, 0, 'asc', '', '1954-01-01'),  // rDff
+      fred('CPIAUCSL',         key, 0, 'asc', '', '1947-01-01'),  // rCpi
+      fred('CPILFESL',         key, 132, 'desc'),                  // rCpiCore
+      fred('BAMLC0A4CBBB',     key, 0, 'asc', '', '1997-01-01'),  // rBbb
+      fred('M2V',              key, 0, 'asc', '', '1959-01-01'),  // rM2v
+      fred('WRESBAL',          key, 0, 'asc', '', '1984-01-01'),  // rWresbal
+      fred('TOTLL',            key, 0, 'asc', '', '1973-01-01'),  // rTotll
+      fred('GDP',              key, 0, 'asc', '', '1947-01-01'),  // rGdp
+      fred('USALOLITOAASTSAM', key, 0, 'asc', '', '1959-01-01'), // rLei
+      fred('M2SL',             key, 0, 'asc', '', '1959-01-01'), // rM2sl
+      fred('BAMLH0A0HYM2',     key, 0, 'asc', 'm', '1997-01-01'),// rHy
+      fred('VIXCLS',           key, 0, 'asc', 'm', '1990-01-01'),// rVix
+    ]);
+    const rej = { status: 'rejected' };
+    [rSp,rNq,rRu,rAu,rBond,rDxy,rDgs10,rDgs2,rDff,rCpi,rCpiCore,rBbb,rM2v,rWresbal,rTotll,rGdp,rLei,rM2sl,rHy,rVix]
+      = [light[0],rej,rej,rej,rej,rej,light[1],light[2],light[3],light[4],light[5],light[6],light[7],light[8],light[9],light[10],light[11],light[12],light[13],light[14]];
+  } else {
+    [rSp, rNq, rRu, rAu, rBond, rDxy,
+     rDgs10, rDgs2, rDff, rCpi, rCpiCore, rBbb, rM2v, rWresbal, rTotll, rGdp,
+     rLei, rM2sl, rHy, rVix] =
+      await Promise.allSettled([
         fred('SP500',            key, 0, 'asc', 'm', '1976-01-01'),
         fred('SP500',            key, 0, 'asc', '',  '1976-01-01'),
         fred('SP500',            key, 0, 'asc', 'm', '2000-01-01'),
@@ -146,6 +151,7 @@ export default async function handler(req, res) {
         fred('BAMLH0A0HYM2',     key, 0, 'asc', 'm', '1997-01-01'),
         fred('VIXCLS',           key, 0, 'asc', 'm', '1990-01-01'),
       ]);
+  }
 
   // ── Procesar series ───────────────────────────
   // SP500: usar el chunk más completo disponible, con fallback progresivo
