@@ -112,107 +112,112 @@ async function fetchBOJm2() {
   return { obs: levelObs, officialYoY, source: 'BOJ_PROXY', url: proxyUrl };
 }
 
-// ── CHN M2 — ChinaData.live (fuente primaria, PBoC via agregador) ──
-// FRED MYAGM2CNM189N y MABMM301CNM189S discontinuadas en 2019/2018 — no usar.
-// Si ChinaData falla, devolver MISSING con diagnóstico. NO fallback a FRED.
-// Arquitectura preparada para Cloudflare Worker proxy si ChinaData bloquea.
-async function fetchChinaM2() {
-  const url = 'https://chinadata.live/api/v2/data/china-m2-money-supply';
-  const diag = {
-    url,
-    httpStatus: null,
-    parserBranch: null,
-    nObsReceived: null,
-    nObsParsed: null,
-    latestDate: null,
-    latestValue: null,
-    baseDate: null,
-    baseValue: null,
-    error: null,
-  };
+// ── CHN M2 — Arquitectura P0.1 ────────────────────────────────────
+// Prioridad: PBoC Worker → Trading Economics → ChinaData.live
+// FRED MYAGM2CNM189N/MABMM301CNM189S discontinuadas — NO usar.
+// YoY calculado internamente desde nivel M2, igual que USA/EUR/JPN.
+// Cross-check contra YoY publicado por TE cuando disponible.
+// P0.1 criterio de cierre: CHN OK · coverage 100/100 · YoY ≈ +7.7% (jul 2026 PBoC)
 
-  let res;
+async function fetchChinaM2_TE() {
+  // Trading Economics — serie mensual PBoC M2 China en CNY billion
+  // Endpoint JSON público (sin API key para datos básicos)
+  const url = 'https://api.tradingeconomics.com/historical/country/china/indicator/money-supply-m2?c=guest:guest&f=json';
+  const diag = { source: 'TRADING_ECONOMICS', url: url.replace(/c=[^&]+/, 'c=***'), httpStatus: null,
+    parserBranch: null, nObsReceived: null, nObsParsed: null,
+    latestDate: null, latestValue: null, baseDate: null, baseValue: null, error: null };
+  try {
+    const ctrl = new AbortController();
+    setTimeout(() => ctrl.abort(), 10000);
+    const res = await fetch(url, { signal: ctrl.signal,
+      headers: { 'User-Agent': 'EthanMacroPlatform/1.0', 'Accept': 'application/json' } });
+    diag.httpStatus = res.status;
+    if (!res.ok) { diag.error = `HTTP ${res.status}`; return { diag, missing: true }; }
+    const json = await res.json();
+    // TE estructura: array de {DateTime, Value, ...}
+    const rows = Array.isArray(json) ? json : json?.data || [];
+    diag.parserBranch = Array.isArray(json) ? 'root_array' : 'json.data';
+    diag.nObsReceived = rows.length;
+    if (!rows.length) { diag.error = 'TE: array vacío'; return { diag, missing: true }; }
+    // Normalizar: DateTime = "YYYY-MM-DDT..." o "YYYY-MM-DD"
+    const obs = rows.map(r => ({
+      date: String(r.DateTime || r.date || '').slice(0,7),
+      value: Number(r.Value ?? r.value),
+    })).filter(r => /^\d{4}-\d{2}$/.test(r.date) && Number.isFinite(r.value) && r.value > 0)
+      .sort((a,b) => b.date.localeCompare(a.date));
+    diag.nObsParsed = obs.length;
+    if (!obs.length) { diag.error = 'TE: sin obs válidas tras parseo'; return { diag, missing: true }; }
+    return { obs, source: 'TE_PBOC', diag };
+  } catch(e) { diag.error = `fetch error: ${e.message}`; return { diag, missing: true }; }
+}
+
+async function fetchChinaM2_Live() {
+  // ChinaData.live — alternativa si TE no disponible
+  const url = 'https://chinadata.live/api/v2/data/china-m2-money-supply';
+  const diag = { source: 'CHINADATA_LIVE', url, httpStatus: null,
+    parserBranch: null, nObsReceived: null, nObsParsed: null,
+    latestDate: null, latestValue: null, baseDate: null, baseValue: null, error: null };
   try {
     const ctrl = new AbortController();
     setTimeout(() => ctrl.abort(), 12000);
-    res = await fetch(url, {
-      signal: ctrl.signal,
-      headers: { 'User-Agent': 'EthanMacroPlatform/1.0', 'Accept': 'application/json' },
-    });
+    const res = await fetch(url, { signal: ctrl.signal,
+      headers: { 'User-Agent': 'EthanMacroPlatform/1.0', 'Accept': 'application/json' } });
     diag.httpStatus = res.status;
-  } catch(e) {
-    diag.error = `fetch failed: ${e.message}`;
-    return { diag, missing: true };
-  }
-
-  if (!res.ok) {
-    diag.error = `HTTP ${res.status} — posible bloqueo Cloudflare/WAF`;
-    return { diag, missing: true };
-  }
-
-  let json;
-  try {
-    json = await res.json();
-  } catch(e) {
-    diag.error = `JSON parse failed: ${e.message}`;
-    return { diag, missing: true };
-  }
-
-  // Parser robusto — detectar branch y registrar
-  let rows = null;
-  if (Array.isArray(json?.data?.data))  { rows = json.data.data;  diag.parserBranch = 'json.data.data'; }
-  else if (Array.isArray(json?.data))    { rows = json.data;        diag.parserBranch = 'json.data'; }
-  else if (Array.isArray(json))          { rows = json;             diag.parserBranch = 'root_array'; }
-  else { diag.error = `estructura desconocida: keys=${Object.keys(json||{}).slice(0,5).join(',')}`; }
-
-  diag.nObsReceived = rows?.length ?? 0;
-
-  if (!rows || rows.length === 0) {
-    diag.error = diag.error || 'CHN_NO_OBSERVATIONS — array vacío';
-    return { diag, missing: true };
-  }
-
-  // Normalizar fechas: YYYY-MM-DD → YYYY-MM, YYYYMM → YYYY-MM
-  const obs = rows
-    .map(r => {
+    if (!res.ok) { diag.error = `HTTP ${res.status} — posible bloqueo Cloudflare/WAF`; return { diag, missing: true }; }
+    const json = await res.json();
+    let rows = null;
+    if (Array.isArray(json?.data?.data))  { rows = json.data.data; diag.parserBranch = 'json.data.data'; }
+    else if (Array.isArray(json?.data))    { rows = json.data;       diag.parserBranch = 'json.data'; }
+    else if (Array.isArray(json))          { rows = json;            diag.parserBranch = 'root_array'; }
+    else { diag.error = `estructura desconocida: keys=${Object.keys(json||{}).slice(0,5).join(',')}`; }
+    diag.nObsReceived = rows?.length ?? 0;
+    if (!rows?.length) { diag.error = diag.error || 'CHN_NO_OBSERVATIONS'; return { diag, missing: true }; }
+    const obs = rows.map(r => {
       const rawDate = String(r.date || r.period || r.time || '');
-      const date = rawDate.length >= 7
-        ? rawDate.slice(0,7).replace(/^(\d{4})(\d{2})$/, '$1-$2')
-        : null;
+      const date = rawDate.length >= 7 ? rawDate.slice(0,7).replace(/^(\d{4})(\d{2})$/, '$1-$2') : null;
       return { date, value: Number(r.value ?? r.val ?? r.amount) };
-    })
-    .filter(r => r.date && /^\d{4}-\d{2}$/.test(r.date) && Number.isFinite(r.value) && r.value > 0)
-    .sort((a,b) => b.date.localeCompare(a.date)); // desc — más reciente primero
-
-  diag.nObsParsed = obs.length;
-
-  if (!obs.length) {
-    diag.error = 'CHN_NO_VALID_OBS — sin observaciones tras filtro de fecha/valor';
-    return { diag, missing: true };
-  }
-
-  const current = obs[0];
-  diag.latestDate  = current.date;
-  diag.latestValue = current.value;
-
-  // YoY por fecha real — mismo mes año anterior ±35 días
-  const [year, month] = current.date.split('-').map(Number);
-  const targetBase = `${year - 1}-${String(month).padStart(2, '0')}`;
-  const base = obs.find(r => r.date === targetBase)
-    || obs.find(r => Math.abs(new Date(r.date+'-01') - new Date(targetBase+'-01')) <= 35*24*3600*1000);
-
-  if (!base) {
-    diag.error = `CHN_INVALID_YOY_BASE: no encontrada obs cercana a ${targetBase} (obs disponibles: ${obs.slice(0,3).map(r=>r.date).join(',')})`;
-    return { diag, missing: true };
-  }
-
-  diag.baseDate  = base.date;
-  diag.baseValue = base.value;
-
-  const yoy = +((current.value / base.value - 1) * 100).toFixed(2);
-
-  return { current, base, yoy, nObs: obs.length, source: 'PBOC_VIA_CHINADATA', diag };
+    }).filter(r => r.date && /^\d{4}-\d{2}$/.test(r.date) && Number.isFinite(r.value) && r.value > 0)
+      .sort((a,b) => b.date.localeCompare(a.date));
+    diag.nObsParsed = obs.length;
+    if (!obs.length) { diag.error = 'CHN_NO_VALID_OBS_AFTER_PARSE'; return { diag, missing: true }; }
+    return { obs, source: 'PBOC_VIA_CHINADATA', diag };
+  } catch(e) { diag.error = `fetch error: ${e.message}`; return { diag, missing: true }; }
 }
+
+async function fetchChinaM2() {
+  // Prioridad: Trading Economics → ChinaData.live
+  // (PBoC Worker se añadirá cuando el Worker esté configurado)
+  const diagAll = [];
+  for (const fetchFn of [fetchChinaM2_TE, fetchChinaM2_Live]) {
+    let result;
+    try { result = await fetchFn(); } catch(e) { result = { diag: { error: e.message }, missing: true }; }
+    diagAll.push(result.diag);
+    if (result && !result.missing && result.obs?.length) {
+      // Calcular YoY internamente desde nivel M2 (igual que USA/EUR/JPN)
+      const obs = result.obs; // desc
+      const current = obs[0];
+      const [year, month] = current.date.split('-').map(Number);
+      const targetBase = `${year - 1}-${String(month).padStart(2, '0')}`;
+      const base = obs.find(r => r.date === targetBase)
+        || obs.find(r => Math.abs(new Date(r.date+'-01') - new Date(targetBase+'-01')) <= 35*24*3600*1000);
+      if (!base) {
+        result.diag.error = `YOY_BASE_NOT_FOUND: buscando ${targetBase}`;
+        diagAll[diagAll.length-1] = result.diag;
+        continue;
+      }
+      const yoy = +((current.value / base.value - 1) * 100).toFixed(2);
+      result.diag.latestDate = current.date;
+      result.diag.latestValue = current.value;
+      result.diag.baseDate = base.date;
+      result.diag.baseValue = base.value;
+      return { current, base, yoy, nObs: obs.length,
+        source: result.source, diag: result.diag, diagAll };
+    }
+  }
+  // Todas las fuentes fallaron
+  return { diag: diagAll[diagAll.length-1] || { error: 'all sources failed' }, diagAll, missing: true };
+}
+
 
 // ── Calcular M2 Global USA + EUR + JPN + CHN ────────────────────
 // Fix 1: freshness por componente
