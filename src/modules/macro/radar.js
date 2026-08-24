@@ -16,6 +16,7 @@ export async function render(container, { actionsSlot }) {
       <button class="btn radar-tab-btn ${activeTab==='radar'?'btn-primary':''}" data-tab="radar">🎛️ Radar</button>
       <button class="btn radar-tab-btn ${activeTab==='block'?'btn-primary':''}" data-tab="block">🔬 Block Validation</button>
       <button class="btn radar-tab-btn ${activeTab==='dive'?'btn-primary':''}" data-tab="dive">📉 Downside Dive</button>
+      <button class="btn radar-tab-btn ${activeTab==='continuous'?'btn-primary':''}" data-tab="continuous">〰️ Continuous</button>
       <button class="btn btn-primary" id="radar-refresh" style="margin-left:6px;">↻</button>
     </div>`;
   container.innerHTML = `<div id="radar-wrap"><div class="empty"><div class="loader-ring"></div></div></div>`;
@@ -598,11 +599,13 @@ export async function render(container, { actionsSlot }) {
     if (activeTab === 'radar') load();
     else if (activeTab === 'block') loadBlockValidation();
     else if (activeTab === 'dive') loadDownsideDive();
+    else if (activeTab === 'continuous') loadContinuousDive();
   });
   document.getElementById('radar-refresh')?.addEventListener('click', () => {
     if (activeTab === 'radar') load(true);
     else if (activeTab === 'block') loadBlockValidation(true);
-    else loadDownsideDive(true);
+    else if (activeTab === 'dive') loadDownsideDive(true);
+    else loadContinuousDive(true);
   });
   await load(false);
   return { destroy() {} };
@@ -961,4 +964,93 @@ export async function render(container, { actionsSlot }) {
       '<div style="font-size:9px;color:var(--amber);margin-top:4px;">⚡ Reservas incluye transformaciones alternativas (YoY, Cambio 6M, Z-score 36M) para evaluar estabilidad temporal.</div>' +
     '</div>' +
     summaryHTML + detailHTML;
+  }
+
+  let continuousData = null;
+  async function loadContinuousDive(force=false) {
+    if (continuousData && !force) { paintContinuousDive(continuousData); return; }
+    document.getElementById('radar-wrap').innerHTML = '<div class="empty"><div class="loader-ring"></div><span style="font-family:var(--mono);font-size:11px;color:var(--text3);margin-left:10px;">Continuous Dive — HY y VIX como variables continuas (5000 sims)...</span></div>';
+    try {
+      continuousData = await fetch('/api/macro-history?type=continuousdive').then(r=>r.ok?r.json():null);
+      paintContinuousDive(continuousData);
+    } catch(e) {
+      document.getElementById('radar-wrap').innerHTML = `<div class="empty"><div class="empty-icon">⚠</div><div class="empty-title">Error</div><div class="empty-desc">${e.message}</div></div>`;
+    }
+  }
+
+  function paintContinuousDive(data) {
+    const el = document.getElementById('radar-wrap');
+    if (!data?.result) { el.innerHTML = '<div class="empty"><div class="empty-icon">⚠</div><div class="empty-title">Sin datos</div></div>'; return; }
+    const f3=v=>v!=null?(v>=0?'+':'')+v.toFixed(3):'—';
+    const f1=v=>v!=null?v.toFixed(1)+'%':'—';
+    const col=v=>v==null?'var(--text3)':v>0?'var(--green)':'var(--red)';
+    const colDD=v=>v==null?'var(--text3)':v<-10?'var(--red)':v<-5?'var(--amber)':'var(--green)';
+    const sigCol=v=>v?.excludes0?'var(--green)':v?.pBoot!=null&&v.pBoot<0.1?'var(--amber)':'var(--text3)';
+    const T_LABELS = {level:'Nivel',pctRank:'Percentil histórico',zscore3y:'Z-score 3Y rolling',change3m:'Cambio 3M'};
+
+    const html = Object.entries(data.result).map(([indKey, ind]) => {
+      const transHTML = Object.entries(ind.transforms).map(([tName, tData]) => {
+        // Tabla resumen por horizonte
+        const horizRows = [3,6,12].map(h => {
+          const d = tData[h]; if(!d) return '';
+          return '<tr style="border-bottom:1px solid var(--border);">' +
+            '<td style="padding:4px 6px;color:var(--text3);font-family:var(--mono);">+'+h+'M</td>' +
+            '<td style="padding:4px 6px;text-align:right;color:var(--text3);">'+(d.nDD||'—')+'</td>' +
+            '<td style="padding:4px 6px;text-align:right;font-weight:700;color:'+col(d.spDD?.rho)+';">'+f3(d.spDD?.rho)+(d.spDD?.p!=null&&d.spDD.p<0.05?'*':'')+'</td>' +
+            '<td style="padding:4px 6px;text-align:right;color:var(--text3);">'+(d.spDD?.p!=null?d.spDD.p.toFixed(4):'—')+'</td>' +
+            '<td style="padding:4px 6px;text-align:right;color:'+col(d.spR?.rho)+';">'+f3(d.spR?.rho)+(d.spR?.p!=null&&d.spR.p<0.05?'*':'')+'</td>' +
+            '<td style="padding:4px 6px;text-align:right;color:'+col(d.spBin?.rho)+';">'+f3(d.spBin?.rho)+(d.spBin?.p!=null&&d.spBin.p<0.05?'*':'')+'</td>' +
+            '<td style="padding:4px 6px;text-align:right;font-size:9px;color:'+sigCol(d.boot)+';">'+(d.boot?'ρ='+d.boot.rhoObs+'<br>['+d.boot.ci95+']<br>p='+d.boot.pBoot:'—')+'</td>' +
+            '<td style="padding:4px 6px;text-align:right;color:'+(d.regDep?'var(--amber)':'var(--green)')+';">'+(d.regDep?'⚡':'✓')+'</td>' +
+          '</tr>';
+        }).join('');
+
+        // Quintiles para horizonte +12M
+        const q12 = tData[12]?.quintiles||[];
+        const quintileHTML = q12.length ? '<div style="margin-top:8px;">' +
+          '<div style="font-size:8px;color:var(--text3);font-family:var(--mono);margin-bottom:4px;">Quintiles +12M MaxDD — ¿monotonicidad en variable continua?</div>' +
+          '<div style="display:flex;gap:4px;">' +
+          q12.map(q=>'<div style="flex:1;background:var(--surface2);border-radius:4px;padding:6px;text-align:center;">' +
+            '<div style="font-size:8px;color:var(--teal);">Q'+q.q+'</div>' +
+            '<div style="font-size:8px;color:var(--text3);">['+q.minV+','+q.maxV+']</div>' +
+            '<div style="font-family:var(--mono);font-size:11px;font-weight:700;color:'+colDD(q.medDD)+';">'+f1(q.medDD)+'</div>' +
+            '<div style="font-size:8px;color:var(--text3);">P(DD>10%): '+(q.pDD10!=null?q.pDD10+'%':'—')+'</div>' +
+            '<div style="font-size:8px;color:var(--text3);">N='+q.n+'</div>' +
+          '</div>').join('') + '</div></div>' : '';
+
+        // Estabilidad temporal para +6M
+        const tempHTML = (tData[6]?.temp||[]).map(t=>
+          '<div style="background:var(--surface2);border-radius:4px;padding:5px 8px;text-align:center;flex:1;">' +
+            '<div style="font-size:8px;color:var(--text3);">'+t.label+'</div>' +
+            '<div style="font-family:var(--mono);font-size:12px;font-weight:700;color:'+col(t.rho)+';">'+f3(t.rho)+(t.p!=null&&t.p<0.05?'*':'')+'</div>' +
+            '<div style="font-size:8px;color:var(--text3);">N='+t.n+'</div>' +
+          '</div>'
+        ).join('');
+
+        return '<div style="background:var(--surface2);border-radius:8px;padding:12px;margin-bottom:8px;">' +
+          '<div style="font-size:9px;font-weight:700;color:var(--text2);margin-bottom:8px;">'+T_LABELS[tName]+'</div>' +
+          '<table style="width:100%;border-collapse:collapse;font-size:9px;font-family:var(--mono);margin-bottom:8px;">' +
+            '<thead><tr style="background:rgba(0,0,0,0.2);">' +
+              '<th style="padding:3px 6px;text-align:left;color:var(--text3);">H</th>' +
+              '<th style="padding:3px 6px;text-align:right;color:var(--text3);">N</th>' +
+              '<th style="padding:3px 6px;text-align:right;color:var(--text3);">ρ MaxDD</th>' +
+              '<th style="padding:3px 6px;text-align:right;color:var(--text3);">p</th>' +
+              '<th style="padding:3px 6px;text-align:right;color:var(--text3);">ρ Ret</th>' +
+              '<th style="padding:3px 6px;text-align:right;color:var(--text3);">ρ Bin</th>' +
+              '<th style="padding:3px 6px;text-align:right;color:var(--text3);">Bootstrap</th>' +
+              '<th style="padding:3px 6px;text-align:right;color:var(--text3);">Temporal</th>' +
+            '</tr></thead><tbody>'+horizRows+'</tbody></table>' +
+          (tempHTML?'<div style="display:flex;gap:4px;margin-bottom:8px;">'+tempHTML+'</div>':'') +
+          quintileHTML + '</div>';
+      }).join('');
+
+      return '<div class="mac-card" style="margin-bottom:14px;">' +
+        '<div style="font-size:11px;font-weight:700;color:var(--text1);margin-bottom:10px;">' + ind.label + ' — 4 transformaciones</div>' +
+        transHTML + '</div>';
+    }).join('');
+
+    el.innerHTML = '<div class="mac-card" style="margin-bottom:10px;background:rgba(64,217,192,0.04);border-color:rgba(64,217,192,0.2);">' +
+      '<div style="font-size:9px;font-family:var(--mono);color:var(--text3);">CONTINUOUS DIVE · ' + (data.updatedAt||'').slice(0,10) + ' · 5000 sims · bloque 12M</div>' +
+      '<div style="font-size:9px;color:var(--text2);margin-top:4px;">Variable continua vs forward MaxDD · 4 transformaciones × 2 indicadores × 3 horizontes. Objetivo: ¿tiene más señal la variable continua que el score -1/0/+1?</div>' +
+    '</div>' + html;
   }

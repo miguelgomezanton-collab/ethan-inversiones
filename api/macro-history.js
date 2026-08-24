@@ -1069,6 +1069,129 @@ export default async function handler(req, res) {
     });
   }
 
+  // ── CONTINUOUS DIVE (type=continuousdive) ─────────────────────
+  // HY Spread y VIX como variables continuas vs forward MaxDD
+  // Objetivo: saber si la señal viene del indicador o de comprimir a -1/0/+1
+  if (type === 'continuousdive') {
+    // Forward maps
+    const cd_fm = {};
+    for (const h of [3,6,12]) {
+      cd_fm[h] = new Map();
+      for (const [ym] of spMap) {
+        const t=new Date(ym+'-01'); t.setMonth(t.getMonth()+h);
+        const ty=t.toISOString().slice(0,7), fr=spMap.get(ym), to=spMap.get(ty);
+        if(fr&&to) cd_fm[h].set(ym,+((to/fr-1)*100).toFixed(3));
+      }
+    }
+    function cd_DD(fromYM,months){const fr=spMap.get(fromYM);if(!fr)return null;let pk=fr,mx=0;for(let i=1;i<=months;i++){const t=new Date(fromYM+'-01');t.setMonth(t.getMonth()+i);const v=spMap.get(t.toISOString().slice(0,7));if(!v)continue;if(v>pk)pk=v;const d=(v-pk)/pk*100;if(d<mx)mx=d;}return+mx.toFixed(3);}
+    function cd_P(xs,ys){if(!xs||xs.length<10)return null;const mx=xs.reduce((a,b)=>a+b,0)/xs.length,my=ys.reduce((a,b)=>a+b,0)/ys.length;let num=0,dx2=0,dy2=0;for(let i=0;i<xs.length;i++){const a=xs[i]-mx,b=ys[i]-my;num+=a*b;dx2+=a*a;dy2+=b*b;}const d=Math.sqrt(dx2*dy2);if(!d)return null;const r=num/d,n=xs.length,t=r*Math.sqrt(n-2)/Math.sqrt(1-r*r+1e-10),z=Math.abs(t),p=n>30?2*(1-(0.5*(1+Math.sign(z)*Math.sqrt(1-Math.exp(-2*z*z/Math.PI))))):null,zr=0.5*Math.log((1+r)/(1-r+1e-10)),se=1/Math.sqrt(n-3);return{rho:+r.toFixed(3),n,p:p!=null?+p.toFixed(4):null,ci95:[+(Math.tanh(zr-1.96*se)).toFixed(3),+(Math.tanh(zr+1.96*se)).toFixed(3)]};}
+    function cd_rk(arr){const s=[...arr].map((v,i)=>({v,i})).sort((a,b)=>a.v-b.v);const r=new Array(arr.length);let i=0;while(i<s.length){let j=i;while(j<s.length&&s[j].v===s[i].v)j++;const avg=(i+j-1)/2;for(let k=i;k<j;k++)r[s[k].i]=avg;i=j;}return r;}
+    function cd_Sp(xs,ys){return cd_P(cd_rk(xs),cd_rk(ys));}
+    function cd_boot(pairs,NSIM=5000,BL=12){const T=pairs.length;if(T<15)return null;function rhoF(a){const n=a.length,rx=cd_rk(a.map(p=>p[0])),ry=cd_rk(a.map(p=>p[1]));const mx=rx.reduce((a,b)=>a+b,0)/n,my=ry.reduce((a,b)=>a+b,0)/n;let num=0,dx2=0,dy2=0;for(let i=0;i<n;i++){const a2=rx[i]-mx,b2=ry[i]-my;num+=a2*b2;dx2+=a2*a2;dy2+=b2*b2;}const d=Math.sqrt(dx2*dy2);return d?num/d:0;}const rO=rhoF(pairs);let sd=20260825;function rnd(){sd=(sd*1664525+1013904223)&0xFFFFFFFF;return(sd>>>0)/4294967296;}const bt=[];for(let s=0;s<NSIM;s++){const sm=[];while(sm.length<T){const st=Math.floor(rnd()*(T-BL+1));for(let k=0;k<BL&&sm.length<T;k++)sm.push(pairs[(st+k)%T]);}bt.push(rhoF(sm.slice(0,T)));}bt.sort((a,b)=>a-b);const ci025=bt[Math.floor(NSIM*0.025)],ci975=bt[Math.floor(NSIM*0.975)],pB=(rO<0?bt.filter(r=>r>=0).length:bt.filter(r=>r<=0).length)/NSIM;return{rhoObs:+rO.toFixed(3),ci95:[+ci025.toFixed(3),+ci975.toFixed(3)],pBoot:+pB.toFixed(4),excludes0:(rO<0&&ci975<0)||(rO>0&&ci025>0),T,NSIM};}
+    function cd_temp(pairs){const chrono=[...pairs].sort((a,b)=>a[0].localeCompare(b[0]));const bSz=Math.floor(chrono.length/3);return['Early','Mid','Recent'].map((label,i)=>{const bl=chrono.slice(i*bSz,i===2?chrono.length:(i+1)*bSz);const res=cd_Sp(bl.map(p=>p[1]),bl.map(p=>p[2]));return{label,n:bl.length,first:bl[0]?.[0],last:bl[bl.length-1]?.[0],rho:res?.rho??null,p:res?.p??null,ci95:res?.ci95??null};});}
+    function cd_pctRank(vals,v){const n=vals.filter(x=>x<v).length;return+(n/vals.length*100).toFixed(1);}
+
+    // Construir series continuas de HY y VIX desde histMacroV1
+    const cdResult = {};
+
+    // ── HY Spread — transformaciones continuas ──────────────────
+    {
+      const hyVals=[], vixVals=[];
+      for(const m of histMacroV1){if(m.components?.hy?.value!=null) hyVals.push(m.components.hy.value);}
+      for(const m of histMacroV1){if(m.components?.vix?.value!=null) vixVals.push(m.components.vix.value);}
+
+      const hyTransforms = {
+        level:    m=>m.components?.hy?.value??null,
+        pctRank:  m=>{const v=m.components?.hy?.value;return v!=null?cd_pctRank(hyVals,v):null;},
+        zscore3y: (m,i,arr)=>{
+          const prev=arr.slice(Math.max(0,i-36),i).map(x=>x.components?.hy?.value).filter(v=>v!=null);
+          if(prev.length<12) return null;
+          const mu=prev.reduce((a,b)=>a+b,0)/prev.length;
+          const sigma=Math.sqrt(prev.reduce((a,v)=>{const d=v-mu;return a+d*d;},0)/prev.length);
+          const v=m.components?.hy?.value;
+          return sigma>0&&v!=null?+((v-mu)/sigma).toFixed(3):null;
+        },
+        change3m: (m,i,arr)=>{
+          const v=m.components?.hy?.value; if(v==null) return null;
+          const t3=arr.find(x=>x.month>=addMonths(m.month,-3)&&x.month<m.month&&x.components?.hy?.value!=null);
+          return t3?+(v-t3.components.hy.value).toFixed(3):null;
+        },
+      };
+      const vixTransforms = {
+        level:    m=>m.components?.vix?.value??null,
+        pctRank:  m=>{const v=m.components?.vix?.value;return v!=null?cd_pctRank(vixVals,v):null;},
+        zscore3y: (m,i,arr)=>{
+          const prev=arr.slice(Math.max(0,i-36),i).map(x=>x.components?.vix?.value).filter(v=>v!=null);
+          if(prev.length<12) return null;
+          const mu=prev.reduce((a,b)=>a+b,0)/prev.length;
+          const sigma=Math.sqrt(prev.reduce((a,v)=>{const d=v-mu;return a+d*d;},0)/prev.length);
+          const v=m.components?.vix?.value;
+          return sigma>0&&v!=null?+((v-mu)/sigma).toFixed(3):null;
+        },
+        change3m: (m,i,arr)=>{
+          const v=m.components?.vix?.value; if(v==null) return null;
+          const t3=arr.slice(Math.max(0,i-3)).find(x=>x.components?.vix?.value!=null&&x.month<m.month);
+          return t3?+(v-t3.components.vix.value).toFixed(3):null;
+        },
+      };
+
+      const validMonths = histMacroV1.filter(m=>m.valid);
+
+      for (const [indKey, transforms, label] of [['hy',hyTransforms,'HY Spread'],['vix',vixTransforms,'VIX']]) {
+        const transResults = {};
+        for (const [tName, tfn] of Object.entries(transforms)) {
+          const pairs = {};
+          for (const h of [3,6,12]) pairs[h] = {dd:[],r:[],bin:[]};
+          const pairsYM = {};
+          for (const h of [3,6,12]) pairsYM[h] = [];
+
+          validMonths.forEach((m,i,arr) => {
+            const v = tfn(m,i,arr); if(v==null) return;
+            for (const h of [3,6,12]) {
+              const dd=cd_DD(m.month,h), ret=cd_fm[h].get(m.month);
+              if(dd!=null){ pairs[h].dd.push([v,dd]); pairsYM[h].push([m.month,v,dd]); }
+              if(ret!=null){ pairs[h].r.push([v,ret]); pairs[h].bin.push([v,ret>0?1:0]); }
+            }
+          });
+
+          const res = {};
+          for (const h of [3,6,12]) {
+            const spDD=cd_Sp(pairs[h].dd.map(p=>p[0]),pairs[h].dd.map(p=>p[1]));
+            const spR =cd_Sp(pairs[h].r.map(p=>p[0]),pairs[h].r.map(p=>p[1]));
+            const spBin=cd_Sp(pairs[h].bin.map(p=>p[0]),pairs[h].bin.map(p=>p[1]));
+            const boot=cd_boot(pairs[h].dd);
+            const temp=cd_temp(pairsYM[h]);
+            const signs=temp.filter(b=>b.rho!=null).map(b=>Math.sign(b.rho));
+            const regDep=signs.length>=2&&signs.some(s=>s!==signs[0]);
+
+            // Quintiles de la variable continua vs métricas de downside
+            const sorted=[...pairs[h].dd].sort((a,b)=>a[0]-b[0]);
+            const Nq=sorted.length, qSz=Math.ceil(Nq/5);
+            const quintiles=[0,1,2,3,4].map(qi=>{
+              const sl=sorted.slice(qi*qSz,(qi+1)*qSz);
+              const dds=sl.map(p=>p[1]);
+              const med=arr=>{const s=[...arr].sort((a,b)=>a-b);return s.length?+s[Math.floor(s.length/2)].toFixed(2):null;};
+              return{q:qi+1,n:sl.length,minV:+sl[0]?.[0].toFixed(2),maxV:+sl[sl.length-1]?.[0].toFixed(2),medDD:med(dds),pDD10:dds.length?+(dds.filter(d=>d<-10).length/dds.length*100).toFixed(1):null};
+            });
+
+            res[h]={nDD:pairs[h].dd.length,spDD,spR,spBin,boot,temp,regDep,quintiles};
+          }
+          transResults[tName]=res;
+        }
+        cdResult[indKey]={label,transforms:transResults};
+      }
+    }
+
+    return res.status(200).json({
+      updatedAt: new Date().toISOString(),
+      title: 'RISK_RADAR_V1 — CONTINUOUS DIVE: HY y VIX como variables continuas',
+      frozen: 'RISK_RADAR_V1 FROZEN. Análisis diagnóstico exclusivamente.',
+      nSim: 5000, blockSize: 12,
+      result: cdResult,
+      errors: errs.length?errs:undefined,
+    });
+  }
+
   function spReturn(fromYM, monthsForward) {
     const from = spMap.get(fromYM);
     if (from == null || from === 0) return null;
