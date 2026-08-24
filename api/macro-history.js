@@ -120,8 +120,8 @@ export default async function handler(req, res) {
       fred('GDP',        key, 0, 'asc', '', '1947-01-01'),
       fred('USALOLITOAASTSAM', key, 0, 'asc', '', '1959-01-01'),
       fred('M2SL',       key, 0, 'asc', '', '1959-01-01'),
-      fred('BAMLH0A0HYM2', key, 0, 'asc', '', '1997-01-01'),  // HY OAS para Sentimiento
-      fred('VIXCLS',     key, 0, 'asc', '', '1990-01-01'),     // VIX diario para Sentimiento
+      fred('BAMLH0A0HYM2', key, 0, 'asc', 'm', '1997-01-01'),  // HY OAS mensual (media FRED)
+      fred('VIXCLS',     key, 0, 'asc', 'm', '1990-01-01'),     // VIX mensual (evita 9k obs diarias)
     ]);
 
   // ── Procesar series ───────────────────────────
@@ -174,35 +174,27 @@ export default async function handler(req, res) {
   // Series del selector — media mensual, unidad natural
   const dgs10Monthly = toMonthly(dgs10);  // Treasury 10Y %
   const dffMonthly   = toMonthly(dff);    // Fed Funds %
-  const hy   = rHy.status  === 'fulfilled' ? rHy.value  : null;
-  const vixRaw = rVix.status === 'fulfilled' ? rVix.value : null;
+  const hy    = rHy.status  === 'fulfilled' ? rHy.value  : null;
+  const vixMon = rVix.status === 'fulfilled' ? rVix.value : null; // ya mensual via FRED frequency=m
 
-  // VIX → mensual (último valor del mes) + SMA200 diaria → score mensual
-  // SMA200 sobre valores diarios, luego agregar a mensual
-  const vixMonMap = new Map(); // ym → { value, aboveSMA200, score }
-  if (vixRaw && vixRaw.length >= 200) {
-    for (let i = 200; i < vixRaw.length; i++) {
-      const sma200 = vixRaw.slice(i-200, i).reduce((s,p)=>s+p.value,0)/200;
-      const above  = vixRaw[i].value > sma200;
-      const ym     = vixRaw[i].date.slice(0,7);
-      // Último valor del mes (sobreescribe hasta el último día)
-      vixMonMap.set(ym, { value: +vixRaw[i].value.toFixed(2), aboveSMA200: above, score: above ? -1 : 1 });
+  // VIX mensual → SMA200 sobre medias mensuales, score: por encima=−1, por debajo=+1
+  const vixMonMap = new Map();
+  if (vixMon && vixMon.length >= 200) {
+    for (let i = 200; i < vixMon.length; i++) {
+      const sma200 = vixMon.slice(i-200, i).reduce((s,p)=>s+p.value,0)/200;
+      const above  = vixMon[i].value > sma200;
+      const ym     = vixMon[i].date.slice(0,7);
+      vixMonMap.set(ym, { value: +vixMon[i].value.toFixed(2), aboveSMA200: above, score: above ? -1 : 1 });
     }
   }
-  // HY → mensual (media del mes)
+  // HY mensual (FRED ya entrega media mensual con frequency=m)
   const hyMonMap = new Map();
   if (hy) {
-    const byMonth = {};
     hy.forEach(p => {
       const ym = p.date.slice(0,7);
-      if (!byMonth[ym]) byMonth[ym] = [];
-      byMonth[ym].push(p.value);
+      const score = p.value < 3.5 ? 1 : p.value < 5 ? 0 : -1;
+      hyMonMap.set(ym, { value: +p.value.toFixed(3), score });
     });
-    for (const [ym, vals] of Object.entries(byMonth)) {
-      const avg = vals.reduce((a,b)=>a+b,0)/vals.length;
-      const score = avg < 3.5 ? 1 : avg < 5 ? 0 : -1;
-      hyMonMap.set(ym, { value: +avg.toFixed(3), score });
-    }
   }
   // CPI Core → mensual map para Inflación (CPI Headline ya existe como cpiYoYMap)
   const cpiCoreAscFull = cpiCore ? [...cpiCore].reverse() : null;
