@@ -848,11 +848,11 @@ export default async function handler(req, res) {
       cmpV[id] = { block: IND_BLOCK[id]||'—', note: IND_NOTES[id]||undefined, n: monthly.length, nWith12m: p12.length, byScore, corr, boot, bootBin, noOvDD, noOvBin, temp, regDep, signCoherent, classification, proposalV2 };
     }
 
-    // Matriz final: Indicador | Bloque actual | Return signal | Downside signal | Temporal stability | Bootstrap | Classification | Propuesta V2
+    // Matriz final: Indicador | Bloque | N | Return signal | Downside signal | Temporal stability | Bootstrap | Classification | Propuesta V2
     let componentMatrix = [];
     if (type === 'componentvalidation-recompute') {
       componentMatrix = Object.entries(cmpV).map(([id,v]) => ({
-        id, block: v.block,
+        id, block: v.block, n: v.nWith12m,
         returnSignal:    v.corr.spR12?.p!=null   ? (v.corr.spR12.p<0.05?'SIG':v.corr.spR12.p<0.15?'WEAK':'NONE')   : '—',
         downsideSignal:  v.corr.spDD12?.p!=null  ? (v.corr.spDD12.p<0.05?'SIG':v.corr.spDD12.p<0.15?'WEAK':'NONE') : '—',
         temporalStability: v.regDep ? 'UNSTABLE' : 'STABLE',

@@ -804,7 +804,8 @@ export async function render(container, { actionsSlot }) {
       '<table style="width:100%;border-collapse:collapse;font-size:9px;font-family:var(--mono);">' +
         '<thead><tr style="background:var(--surface2);">' +
           '<th style="padding:4px 6px;text-align:left;color:var(--text3);">Indicador</th>' +
-          '<th style="padding:4px 6px;text-align:left;color:var(--text3);">Bloque actual</th>' +
+          '<th style="padding:4px 6px;text-align:left;color:var(--text3);">Bloque</th>' +
+          '<th style="padding:4px 6px;text-align:center;color:var(--text3);">N</th>' +
           '<th style="padding:4px 6px;text-align:center;color:var(--text3);">Return signal</th>' +
           '<th style="padding:4px 6px;text-align:center;color:var(--text3);">Downside signal</th>' +
           '<th style="padding:4px 6px;text-align:center;color:var(--text3);">Temporal stability</th>' +
@@ -815,6 +816,7 @@ export async function render(container, { actionsSlot }) {
       data.componentMatrix.map(r => '<tr style="border-bottom:1px solid var(--border);">' +
           '<td style="padding:4px 6px;color:var(--text2);">' + (IND_LABELS_CV[r.id]||r.id) + '</td>' +
           '<td style="padding:4px 6px;color:var(--text3);">' + r.block + '</td>' +
+          '<td style="padding:4px 6px;text-align:center;color:var(--text3);">' + (r.n??'—') + '</td>' +
           '<td style="padding:4px 6px;text-align:center;color:var(--text3);">' + r.returnSignal + '</td>' +
           '<td style="padding:4px 6px;text-align:center;color:var(--text3);">' + r.downsideSignal + '</td>' +
           '<td style="padding:4px 6px;text-align:center;color:var(--text3);">' + r.temporalStability + '</td>' +
