@@ -766,6 +766,22 @@ export default async function handler(req, res) {
     for (const [bN, bD] of Object.entries(BV_BL)) for (const id of bD.inds) IND_BLOCK[id] = bN;
 
     const cmpV = {};
+    const IND_NOTES = {
+      hy: 'Fuente y metodología separadas de BBB (BAMLH0A0HYM2, mensual).',
+      bbb: 'Fuente y metodología separadas de HY (BAMLC0A4CBBB).',
+      vix: 'Histórico desde 1990 (VIXCLS). Fear & Greed queda LIVE_ONLY, sin serie histórica — no incluido aquí.',
+      cpiHeadline: 'YoY por fecha real (misma transformación que módulo Inflación, CPIAUCSL).',
+      cpiCore: 'YoY por fecha real (misma transformación que módulo Inflación, CPILFESL).',
+      reservas: 'STRUCTURAL_REVIEW — nivel nominal no estacionario entre regímenes QE/QT.',
+    };
+    // Categoría base para "Propuesta V2" (solo informativo — no se implementa V2 aquí)
+    const V2_BASE = {
+      curvaUSD:'MACRO REGIME', lei:'MACRO REGIME', m2usa:'MACRO REGIME', impulso:'MACRO REGIME',
+      velM2:'MACRO REGIME', creditoVsPib:'MACRO REGIME', tipoReal:'MACRO REGIME', reservas:'MACRO REGIME',
+      cpiHeadline:'MACRO REGIME', cpiCore:'MACRO REGIME',
+      bbb:'MARKET RISK', hy:'MARKET RISK', vix:'MARKET RISK',
+    };
+
     if (type === 'componentvalidation-recompute')
     for (const id of Object.keys(IND_G)) {
       const monthly = [];
@@ -787,6 +803,13 @@ export default async function handler(req, res) {
       const bootBin = bvBoot(pBin.map(p=>[p[1],p[2]]));
       const noOvDD  = bvNO(pDD12), noOvBin = bvNO(pBin);
 
+      // Distribución por score real del indicador — Score|N|Med+6M|Med+12M|%Pos+12M|MedDD+6M|MedDD+12M|P(DD>10%)|P(DD>15%)|VaR95|CVaR95
+      // N<10 → LOW N (bvSt ya lo marca vía .lowN), no se clasifica como señal robusta.
+      const byScore = {};
+      const byScoreGroups = {};
+      for (const d of monthly) { const k = d.sc>=0?'+'+d.sc:String(d.sc); (byScoreGroups[k] ||= []).push(d.ym); }
+      for (const [k, ms] of Object.entries(byScoreGroups)) byScore[k] = bvSt(ms);
+
       // Estabilidad temporal Early/Mid/Recent (sobre retorno +6M, igual que en Block Validation)
       const chrono = [...p6].sort((a,b)=>a[0].localeCompare(b[0]));
       const bSzT = Math.floor(chrono.length/3);
@@ -798,20 +821,34 @@ export default async function handler(req, res) {
       const signs  = temp.filter(b=>b.rho!=null).map(b=>Math.sign(b.rho));
       const regDep = signs.length>=2 && signs.some(s=>s!==signs[0]);
 
+      // Coherencia de signo económico: por convención RISK_RADAR_V1, score alto = estado
+      // más favorable → se espera ρ>0 con retorno y con DD (DD menos negativo = mayor valor),
+      // y ρ>0 con binario positivo. Exigimos esto además de significancia para ROBUST/INDICATIVE
+      // — así no se clasifica por p-value solo, tal como pide el spec.
+      const dirVotes = [corr.spR12, corr.spDD12, corr.spBin12]
+        .filter(c => c?.p != null && c.p < 0.3)
+        .map(c => Math.sign(c.rho));
+      const signCoherent = dirVotes.length > 0 && dirVotes.filter(s=>s>0).length >= dirVotes.filter(s=>s<0).length;
+
       const mainN     = Math.max(p12.length, pDD12.length);
-      const hasRobust = (boot?.excludes0) || (noOvDD?.rho!=null && noOvDD?.ci95 && ((noOvDD.rho<0 && noOvDD.ci95[1]<0)||(noOvDD.rho>0 && noOvDD.ci95[0]>0)));
-      const indicative = (boot?.pBoot!=null && boot.pBoot<0.1) || (corr.spDD12?.p!=null && corr.spDD12.p<0.1) || (corr.spBin12?.p!=null && corr.spBin12.p<0.1);
-      // Clasificación pedida: ROBUST / INDICATIVE / REGIME DEPENDENT / NO SIGNAL / INSUFFICIENT DATA
+      const hasRobust = signCoherent && ((boot?.excludes0) || (noOvDD?.rho!=null && noOvDD?.ci95 && ((noOvDD.rho<0 && noOvDD.ci95[1]<0)||(noOvDD.rho>0 && noOvDD.ci95[0]>0))));
+      const indicative = signCoherent && ((boot?.pBoot!=null && boot.pBoot<0.1) || (corr.spDD12?.p!=null && corr.spDD12.p<0.1) || (corr.spBin12?.p!=null && corr.spBin12.p<0.1));
+      // Clasificación: N + estabilidad temporal + bootstrap + magnitud/signo económico — no solo p<0.05
       const classification = mainN<15 ? 'INSUFFICIENT DATA'
         : regDep ? 'REGIME DEPENDENT'
         : hasRobust ? 'ROBUST'
         : indicative ? 'INDICATIVE'
         : 'NO SIGNAL';
 
-      cmpV[id] = { block: IND_BLOCK[id]||'—', n: monthly.length, nWith12m: p12.length, corr, boot, bootBin, noOvDD, noOvBin, temp, regDep, classification };
+      // Propuesta V2 — solo informativo, no se implementa aquí
+      const proposalV2 = (classification==='INSUFFICIENT DATA' || classification==='NO SIGNAL') ? 'DROP CANDIDATE'
+        : classification==='REGIME DEPENDENT' ? 'REVIEW'
+        : (V2_BASE[id] || 'REVIEW');
+
+      cmpV[id] = { block: IND_BLOCK[id]||'—', note: IND_NOTES[id]||undefined, n: monthly.length, nWith12m: p12.length, byScore, corr, boot, bootBin, noOvDD, noOvBin, temp, regDep, signCoherent, classification, proposalV2 };
     }
 
-    // Matriz final: Indicador | Bloque actual | Return signal | Downside signal | Temporal stability | Bootstrap | Classification
+    // Matriz final: Indicador | Bloque actual | Return signal | Downside signal | Temporal stability | Bootstrap | Classification | Propuesta V2
     let componentMatrix = [];
     if (type === 'componentvalidation-recompute') {
       componentMatrix = Object.entries(cmpV).map(([id,v]) => ({
@@ -821,6 +858,7 @@ export default async function handler(req, res) {
         temporalStability: v.regDep ? 'UNSTABLE' : 'STABLE',
         bootstrap: v.boot?.excludes0 ? 'EXCLUDES 0' : v.boot?.pBoot!=null ? `p=${v.boot.pBoot}` : '—',
         classification: v.classification,
+        proposalV2: v.proposalV2,
       }));
     }
 
@@ -828,6 +866,8 @@ export default async function handler(req, res) {
       // dataThrough = último mes con dato válido en histMacroV1
       const lastValidMonth = [...histMacroV1].reverse().find(m => m.valid)?.month || null;
       const snapshot = {
+        title: 'RISK_RADAR_V1 — COMPONENT VALIDATION REPORT',
+        frozen: 'RISK_RADAR_V1 permanece FROZEN — no se han modificado thresholds, signos, pesos ni agregaciones.',
         updatedAt: new Date().toISOString(),
         calculatedAt: new Date().toISOString(),
         dataThrough: lastValidMonth,
