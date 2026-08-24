@@ -250,7 +250,8 @@ async function fetchChinaM2() {
 // ── Calcular M2 Global USA + EUR + JPN + CHN ────────────────────
 // Fix 1: freshness por componente
 // Fix 2: YoY por fecha real (no obs[12] a ciegas)
-const M2_STALE_DAYS = 90; // mensual con lag ~6 semanas → tolerancia 90d
+const M2_STALE_DAYS     = 90;  // USA/EUR/JPN: mensual con lag ~4-6 semanas
+const M2_STALE_DAYS_CHN = 120; // CHN: PBoC publica con lag ~45-60 días + descarga
 
 function findYoYBase(obs, currentDate) {
   // Buscar observación cuya fecha sea ~12 meses antes, ±10 días
@@ -379,7 +380,10 @@ async function calcGlobalM2(fredKey, manualChinaM2pct) {
   const chnDiag   = chnRaw?.diag || { error: rChnM2.reason?.message || 'promise rejected' };
 
   if (chnRaw && !chnRaw.missing && chnRaw.current && chnRaw.yoy != null) {
-    const { ageDays, freshness } = m2Freshness(chnRaw.current.date);
+    const dateStr = chnRaw.current.date;
+    const d = new Date(dateStr.length === 7 ? dateStr + '-01' : dateStr);
+    const ageDays = Math.round((Date.now() - d.getTime()) / (1000*60*60*24));
+    const freshness = ageDays <= M2_STALE_DAYS_CHN ? 'ok' : 'stale';
     components.chn = {
       valid:        freshness !== 'stale',
       source:       chnRaw.source || 'PBOC_VIA_CHINADATA',
