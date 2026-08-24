@@ -15,6 +15,7 @@ export async function render(container, { actionsSlot }) {
     <div style="display:flex;gap:4px;align-items:center;">
       <button class="btn radar-tab-btn ${activeTab==='radar'?'btn-primary':''}" data-tab="radar">🎛️ Radar</button>
       <button class="btn radar-tab-btn ${activeTab==='block'?'btn-primary':''}" data-tab="block">🔬 Block Validation</button>
+      <button class="btn radar-tab-btn ${activeTab==='dive'?'btn-primary':''}" data-tab="dive">📉 Downside Dive</button>
       <button class="btn btn-primary" id="radar-refresh" style="margin-left:6px;">↻</button>
     </div>`;
   container.innerHTML = `<div id="radar-wrap"><div class="empty"><div class="loader-ring"></div></div></div>`;
@@ -595,11 +596,13 @@ export async function render(container, { actionsSlot }) {
     document.querySelectorAll('.radar-tab-btn').forEach(b => b.classList.remove('btn-primary'));
     btn.classList.add('btn-primary');
     if (activeTab === 'radar') load();
-    else loadBlockValidation();
+    else if (activeTab === 'block') loadBlockValidation();
+    else if (activeTab === 'dive') loadDownsideDive();
   });
   document.getElementById('radar-refresh')?.addEventListener('click', () => {
     if (activeTab === 'radar') load(true);
-    else loadBlockValidation(true);
+    else if (activeTab === 'block') loadBlockValidation(true);
+    else loadDownsideDive(true);
   });
   await load(false);
   return { destroy() {} };
@@ -841,4 +844,121 @@ export async function render(container, { actionsSlot }) {
     el.innerHTML = summaryHTML + detailHTML + compHTML + matrixHTML +
       '<div class="co-footer" style="margin-top:14px;">RISK_RADAR_V1 Block + Component Validation · ' + (data.updatedAt||'').slice(0,10) + ' · FROZEN — no modificar thresholds hasta completar análisis' +
       (data.partialBlock?' · ⚠ Block Validation no disponible' + (data.blockErrorDetail?' ('+String(data.blockErrorDetail).replace(/</g,'&lt;')+')':''):'') + '</div>';
+  }
+
+  let diveData = null;
+  async function loadDownsideDive(force=false) {
+    if (diveData && !force) { paintDownsideDive(diveData); return; }
+    document.getElementById('radar-wrap').innerHTML = '<div class="empty"><div class="loader-ring"></div><span style="font-family:var(--mono);font-size:11px;color:var(--text3);margin-left:10px;">Ejecutando Downside Deep Dive (5000 sims)...</span></div>';
+    try {
+      diveData = await fetch('/api/macro-history?type=downsidedive').then(r=>r.ok?r.json():null);
+      paintDownsideDive(diveData);
+    } catch(e) {
+      document.getElementById('radar-wrap').innerHTML = `<div class="empty"><div class="empty-icon">⚠</div><div class="empty-title">Error</div><div class="empty-desc">${e.message}</div></div>`;
+    }
+  }
+
+  function paintDownsideDive(data) {
+    const el = document.getElementById('radar-wrap');
+    if (!data?.indicators) { el.innerHTML = '<div class="empty"><div class="empty-icon">⚠</div><div class="empty-title">Sin datos</div></div>'; return; }
+    const f1=v=>v!=null?(v>=0?'+':'')+v.toFixed(1)+'%':'—';
+    const f2=v=>v!=null?v.toFixed(1)+'%':'—';
+    const f3=v=>v!=null?(v>=0?'+':'')+v.toFixed(3):'—';
+    const col=v=>v==null?'var(--text3)':v>0?'var(--green)':'var(--red)';
+    const colDD=v=>v==null?'var(--text3)':v<-10?'var(--red)':v<-5?'var(--amber)':'var(--green)';
+    const colPct=v=>v==null?'var(--text3)':v>30?'var(--red)':v>15?'var(--amber)':'var(--green)';
+    const IND_ORDER = ['hy','cpiHeadline','cpiCore','vix','reservas'];
+
+    // Tabla resumen horizonte × DD threshold
+    const summaryHTML = '<div class="mac-card" style="margin-bottom:14px;">' +
+      '<div style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:10px;">' +
+        'DOWNSIDE DEEP DIVE — P(MaxDD < umbral) por indicador y horizonte' +
+      '</div>' +
+      '<table style="width:100%;border-collapse:collapse;font-size:9px;font-family:var(--mono);">' +
+        '<thead><tr style="background:var(--surface2);">' +
+          '<th style="padding:4px 6px;color:var(--text3);">Indicador</th>' +
+          '<th style="padding:4px 6px;text-align:center;color:var(--text3);">H</th>' +
+          '<th style="padding:4px 6px;text-align:right;color:var(--text3);">N</th>' +
+          '<th style="padding:4px 6px;text-align:right;color:var(--text3);">MedDD</th>' +
+          '<th style="padding:4px 6px;text-align:right;color:var(--text3);">P(DD>5%)</th>' +
+          '<th style="padding:4px 6px;text-align:right;color:var(--text3);">P(DD>10%)</th>' +
+          '<th style="padding:4px 6px;text-align:right;color:var(--text3);">P(DD>15%)</th>' +
+          '<th style="padding:4px 6px;text-align:right;color:var(--text3);">P(DD>20%)</th>' +
+          '<th style="padding:4px 6px;text-align:right;color:var(--text3);">ρ DD</th>' +
+          '<th style="padding:4px 6px;text-align:right;color:var(--text3);">Boot p</th>' +
+          '<th style="padding:4px 6px;text-align:right;color:var(--text3);">Temporal</th>' +
+        '</tr></thead><tbody>' +
+        IND_ORDER.map(id => {
+          const d = data.indicators[id]; if (!d) return '';
+          return [3,6,12].map((h,hi) => {
+            const dh = d.ddHorizons?.[h]||{};
+            const sp = h===3?d.corr?.spDD3:h===6?d.corr?.spDD6:d.corr?.spDD12;
+            return '<tr style="border-bottom:1px solid var(--border);' + (hi===0?'':'border-top:none;') + '">' +
+              (hi===0?'<td style="padding:4px 6px;color:var(--text2);font-weight:700;" rowspan="3">'+d.label+'</td>':'') +
+              '<td style="padding:4px 6px;text-align:center;color:var(--text3);">+'+h+'M</td>' +
+              '<td style="padding:4px 6px;text-align:right;color:var(--text3);">'+(dh.n||'—')+'</td>' +
+              '<td style="padding:4px 6px;text-align:right;color:'+colDD(dh.medDD)+';">'+f2(dh.medDD)+'</td>' +
+              '<td style="padding:4px 6px;text-align:right;color:'+colPct(dh.pDD5)+';">'+(dh.pDD5!=null?dh.pDD5+'%':'—')+'</td>' +
+              '<td style="padding:4px 6px;text-align:right;color:'+colPct(dh.pDD10)+';">'+(dh.pDD10!=null?dh.pDD10+'%':'—')+'</td>' +
+              '<td style="padding:4px 6px;text-align:right;color:'+colPct(dh.pDD15)+';">'+(dh.pDD15!=null?dh.pDD15+'%':'—')+'</td>' +
+              '<td style="padding:4px 6px;text-align:right;color:'+colPct(dh.pDD20)+';">'+(dh.pDD20!=null?dh.pDD20+'%':'—')+'</td>' +
+              (hi===0?'<td style="padding:4px 6px;text-align:right;font-weight:700;color:'+col(sp?.rho)+';" rowspan="3">'+f3(sp?.rho)+(sp?.p!=null&&sp.p<0.05?'*':'')+'<br><span style="font-size:8px;opacity:0.7;">p='+(sp?.p!=null?sp.p.toFixed(3):'—')+'</span></td>':'') +
+              (hi===0?'<td style="padding:4px 6px;text-align:right;font-size:9px;color:'+(d.boot?.excludes0?'var(--green)':d.boot?.pBoot<0.1?'var(--amber)':'var(--text3)')+'" rowspan="3">'+(d.boot?'p='+d.boot.pBoot+'<br>'+(d.boot.excludes0?'✓excl0':''):'—')+'</td>':'') +
+              (hi===0?'<td style="padding:4px 6px;text-align:right;color:'+(d.regDep?'var(--amber)':'var(--green)')+'" rowspan="3">'+(d.regDep?'⚡REGIME':'STABLE')+'</td>':'') +
+            '</tr>';
+          }).join('');
+        }).join('') +
+      '</tbody></table></div>';
+
+    // Detalle por indicador con distribución por score y reservas alt
+    const detailHTML = IND_ORDER.map(id => {
+      const d = data.indicators[id]; if (!d) return '';
+      const scores = Object.keys(d.byScore||{}).sort((a,b)=>+a-+b);
+      const altHTML = !d.altReservas ? '' :
+        '<div style="margin-top:10px;">' +
+        '<div style="font-size:9px;font-weight:700;color:var(--text3);margin-bottom:6px;">Transformaciones alternativas — Reservas Fed</div>' +
+        '<table style="width:100%;border-collapse:collapse;font-size:9px;font-family:var(--mono);">' +
+          '<thead><tr style="background:var(--surface2);"><th style="padding:3px 6px;color:var(--text3);">Transform</th><th style="padding:3px 6px;text-align:right;color:var(--text3);">N</th><th style="padding:3px 6px;text-align:right;color:var(--text3);">ρ DD+12M</th><th style="padding:3px 6px;text-align:right;color:var(--text3);">Boot p</th><th style="padding:3px 6px;text-align:center;color:var(--text3);">Early ρ</th><th style="padding:3px 6px;text-align:center;color:var(--text3);">Mid ρ</th><th style="padding:3px 6px;text-align:center;color:var(--text3);">Recent ρ</th><th style="padding:3px 6px;color:var(--text3);">Regime?</th></tr></thead><tbody>' +
+          Object.entries(d.altReservas).map(([k,v]) =>
+            '<tr style="border-bottom:1px solid var(--border);">' +
+              '<td style="padding:3px 6px;color:var(--text2);">' + {yoy:'YoY %',ch6m:'Cambio 6M',zscore:'Z-score rolling 36M'}[k] + '</td>' +
+              '<td style="padding:3px 6px;text-align:right;color:var(--text3);">' + (v.n||'—') + '</td>' +
+              '<td style="padding:3px 6px;text-align:right;color:'+col(v.spDD12?.rho)+';">' + f3(v.spDD12?.rho) + (v.spDD12?.p!=null&&v.spDD12.p<0.05?'*':'') + '</td>' +
+              '<td style="padding:3px 6px;text-align:right;color:'+(v.boot?.excludes0?'var(--green)':v.boot?.pBoot<0.1?'var(--amber)':'var(--text3)')+';">' + (v.boot?'p='+v.boot.pBoot:'—') + '</td>' +
+              v.temp.map(t=>'<td style="padding:3px 6px;text-align:center;color:'+col(t.rho)+';">'+(t.rho!=null?(t.rho>=0?'+':'')+t.rho.toFixed(2)+(t.p!=null&&t.p<0.05?'*':''):'—')+'</td>').join('') +
+              '<td style="padding:3px 6px;color:'+(v.regDep?'var(--amber)':'var(--green)')+';">' + (v.regDep?'⚡SÍ':'No') + '</td>' +
+            '</tr>'
+          ).join('') +
+        '</tbody></table></div>';
+
+      return '<div class="mac-card" style="margin-bottom:12px;">' +
+        '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;">' +
+          '<span style="font-size:11px;font-weight:700;color:var(--text1);">' + d.label + '</span>' +
+          '<span style="font-size:9px;font-family:var(--mono);color:var(--text3);">N hist=' + d.n + ' · N DD+12M=' + d.nDD12 + ' · ' + (d.regDep?'⚡REGIME DEPENDENT':'STABLE') + '</span>' +
+        '</div>' +
+        '<table style="width:100%;border-collapse:collapse;font-size:9px;font-family:var(--mono);">' +
+          '<thead><tr style="background:var(--surface2);"><th style="padding:3px 5px;text-align:left;color:var(--text3);">Score</th><th style="padding:3px 5px;text-align:right;color:var(--text3);">N</th><th style="padding:3px 5px;text-align:right;color:var(--text3);">MedRet6M</th><th style="padding:3px 5px;text-align:right;color:var(--text3);">MedRet12M</th><th style="padding:3px 5px;text-align:right;color:var(--text3);">MedDD6M</th><th style="padding:3px 5px;text-align:right;color:var(--text3);">MedDD12M</th><th style="padding:3px 5px;text-align:right;color:var(--text3);">P(DD>5%)</th><th style="padding:3px 5px;text-align:right;color:var(--text3);">P(DD>10%)</th><th style="padding:3px 5px;text-align:right;color:var(--text3);">P(DD>15%)</th><th style="padding:3px 5px;text-align:right;color:var(--text3);">P(DD>20%)</th></tr></thead><tbody>' +
+          scores.map(k => {
+            const s=d.byScore[k];
+            return '<tr style="border-bottom:1px solid var(--border);' + (s.lowN?'opacity:0.55;':'') + '">' +
+              '<td style="padding:3px 5px;font-weight:700;color:' + (+k>0?'var(--green)':+k<0?'var(--red)':'var(--amber)') + ';">' + k + (s.lowN?' LOW N':'') + '</td>' +
+              '<td style="padding:3px 5px;text-align:right;color:var(--text3);">' + s.n + '</td>' +
+              '<td style="padding:3px 5px;text-align:right;color:'+col(s.retMed6)+';">' + f1(s.retMed6) + '</td>' +
+              '<td style="padding:3px 5px;text-align:right;color:'+col(s.retMed12)+';">' + f1(s.retMed12) + '</td>' +
+              '<td style="padding:3px 5px;text-align:right;color:'+colDD(s.medDD6)+';">' + f2(s.medDD6) + '</td>' +
+              '<td style="padding:3px 5px;text-align:right;color:'+colDD(s.medDD12)+';">' + f2(s.medDD12) + '</td>' +
+              '<td style="padding:3px 5px;text-align:right;color:'+colPct(s.pDD5_12)+';">'+(s.pDD5_12!=null?s.pDD5_12+'%':'—')+'</td>' +
+              '<td style="padding:3px 5px;text-align:right;color:'+colPct(s.pDD10_12)+';">'+(s.pDD10_12!=null?s.pDD10_12+'%':'—')+'</td>' +
+              '<td style="padding:3px 5px;text-align:right;color:'+colPct(s.pDD15_12)+';">'+(s.pDD15_12!=null?s.pDD15_12+'%':'—')+'</td>' +
+              '<td style="padding:3px 5px;text-align:right;color:'+colPct(s.pDD20_12)+';">'+(s.pDD20_12!=null?s.pDD20_12+'%':'—')+'</td>' +
+            '</tr>';
+          }).join('') +
+        '</tbody></table>' + altHTML + '</div>';
+    }).join('');
+
+    el.innerHTML = '<div class="mac-card" style="margin-bottom:10px;background:rgba(244,113,116,0.04);border-color:rgba(244,113,116,0.2);">' +
+      '<div style="font-size:9px;font-family:var(--mono);color:var(--text3);">RISK_RADAR_V1 FROZEN · Downside Deep Dive · 5000 sims · bloque 12M · ' + (data.updatedAt||'').slice(0,10) + '</div>' +
+      '<div style="font-size:9px;color:var(--amber);margin-top:4px;">⚡ Reservas incluye transformaciones alternativas (YoY, Cambio 6M, Z-score 36M) para evaluar estabilidad temporal.</div>' +
+    '</div>' +
+    summaryHTML + detailHTML;
   }
