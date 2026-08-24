@@ -261,16 +261,14 @@ async function calcGlobalM2(fredKey, manualChinaM2pct) {
       }
     }
   } else if (jpResult?.officialYoY) {
-    // Solo YoY oficial disponible (sin nivel)
+    // Solo YoY oficial disponible (sin nivel de stock)
     const oy = jpResult.officialYoY;
     const { ageDays, freshness } = m2Freshness(oy.date);
     components.jp = {
       yoy: oy.value, currentDate: oy.date, isOfficialYoY: true,
       ageDays, freshness, weight: 10, valid: freshness === 'ok', source: jpSource2,
     };
-    const errMsg = rJpM2.reason?.message || jpResult?.fallbackReason || `sin obs (${jpObs?.length ?? 'N/A'})`;
-    errors.push('JPN M2: ' + errMsg);
-    components.jp = { yoy: null, error: errMsg, ageDays: null, freshness: 'missing', weight: 10, valid: false };
+    // Nota: no sobreescribir con error si el YoY oficial es válido
   }
 
   // ── CHN M2 — ChinaData.live (PBoC) + override manual como fallback ──────────
@@ -776,6 +774,39 @@ export default async function handler(req, res) {
       date: null,
       score: (g.globalYoY != null && g.coverageOk) ? scM2(g.globalYoY) : null,
       weight: 3, auto: true,
+      // Audit trail — FIX 02: M2 Global traceability
+      audit: {
+        methodology: 'Weighted average YoY of regional M2s. Weights: USA=35, EUR=25, JPN=10, CHN=30. Min coverage=60/100 for valid score.',
+        historicalProxy: 'HIST_MACRO_V1 uses M2SL (USA) as HISTORICAL_PROXY for M2 Global. China/EUR/JPN not available for pre-2016 history.',
+        series: {
+          usa: { seriesId: 'M2SL', source: 'FRED', frequency: 'monthly', weight: 35,
+            value: g.components.us?.currentValue, date: g.components.us?.currentDate,
+            yoy: g.components.us?.yoy, ageDays: g.components.us?.ageDays,
+            freshness: g.components.us?.freshness, status: g.components.us?.valid ? 'OK' : (g.components.us?.freshness || 'MISSING'),
+            nObs: null, error: g.components.us?.error || null },
+          eur: { seriesId: 'ECB_BSI_M3/M2', source: 'ECB', frequency: 'monthly', weight: 25,
+            value: g.components.eur?.currentValue, date: g.components.eur?.currentDate,
+            yoy: g.components.eur?.yoy, ageDays: g.components.eur?.ageDays,
+            freshness: g.components.eur?.freshness, status: g.components.eur?.valid ? 'OK' : (g.components.eur?.freshness || 'MISSING'),
+            nObs: null, error: g.components.eur?.error || null },
+          jpn: { seriesId: 'BOJ_M2', source: g.components.jp?.source || 'BOJ_via_CloudflareWorker', frequency: 'monthly', weight: 10,
+            value: g.components.jp?.currentValue, date: g.components.jp?.currentDate,
+            yoy: g.components.jp?.yoy, ageDays: g.components.jp?.ageDays,
+            freshness: g.components.jp?.freshness, status: g.components.jp?.valid ? 'OK' : (g.components.jp?.freshness || 'MISSING'),
+            isOfficialYoY: g.components.jp?.isOfficialYoY || false,
+            validation: g.components.jp?.validation || null,
+            error: g.components.jp?.error || null },
+          chn: { seriesId: 'PBOC_M2', source: g.components.chn?.source || 'PBOC_VIA_CHINADATA', frequency: 'monthly', weight: 30,
+            value: g.components.chn?.currentValue, date: g.components.chn?.currentDate,
+            yoy: g.components.chn?.yoy, ageDays: g.components.chn?.ageDays,
+            freshness: g.components.chn?.freshness,
+            status: g.components.chn?.valid ? 'OK' : (g.components.chn?.freshness === 'missing' ? 'MISSING' : 'STALE'),
+            error: g.components.chn?.error || null,
+            note: g.components.chn?.valid ? null : 'CHN MISSING → no substituido silenciosamente. Score basado solo en cobertura disponible.' },
+        },
+        coverageActive: Object.entries(g.components).filter(([,c])=>c.valid).map(([k,c])=>({region:k,weight:c.weight,yoy:c.yoy})),
+        errors: g.errors,
+      },
     };
   } else {
     errs.push('M2 Global: ' + rGlobalM2.reason?.message);

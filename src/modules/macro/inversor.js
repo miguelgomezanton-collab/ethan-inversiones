@@ -371,7 +371,7 @@ export async function render(container, { actionsSlot }) {
           <div class="inv-pills">
             ${ind.curvaUS != null ? `<span class="inv-pill ${ind.curvaUS>0?'pos':'neg'}">📈 Curva ${fmtN(ind.curvaUS)}%</span>` : ''}
             ${ind.m2Global != null ? `<span class="inv-pill ${ind.m2Global>0?'pos':'neg'}">💧 M2 ${fmtN(ind.m2Global,1)}%</span>` : ''}
-            ${ind.fearGreed != null ? `<span class="inv-pill ${ind.fearGreed>50?'pos':ind.fearGreed>30?'neu':'neg'}">😰 F&G ${Math.round(ind.fearGreed)}</span>` : ''}
+            ${ind.fearGreed?.value != null ? `<span class="inv-pill ${ind.fearGreed.value>50?'pos':ind.fearGreed.value>30?'neu':'neg'}">😰 F&G ${Math.round(ind.fearGreed.value)}</span>` : ''}
             ${ind.vix != null ? `<span class="inv-pill ${ind.vix<15?'pos':ind.vix<25?'neu':'neg'}">⚡ VIX ${fmtN(ind.vix,1)}</span>` : ''}
           </div>
         </div>
