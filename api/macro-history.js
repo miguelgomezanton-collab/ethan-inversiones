@@ -120,8 +120,12 @@ export default async function handler(req, res) {
   // vía type=componentvalidation-recompute (cron mensual, ver vercel.json).
   // No necesita FRED_API_KEY ni el fetch histórico: por eso vive antes de todo eso.
   if (type === 'componentvalidation') {
-    // Sin Firestore disponible → calcular en vivo igual que blockvalidation
+    // Sin Firestore disponible: calcular en vivo con bootstrap reducido (500 sims)
+    // para caber en el timeout de Vercel. El recompute completo (5000 sims) sigue
+    // disponible via cron cuando Firestore esté configurado.
     res.setHeader('Cache-Control', 'no-store');
+    // Fall-through al bloque blockvalidation/componentvalidation-recompute de abajo
+    // El bloque detecta type==='componentvalidation' y calcula sin persistir.
   }
 
   res.setHeader('Cache-Control', 's-maxage=3600,stale-while-revalidate=7200');
@@ -773,7 +777,9 @@ export default async function handler(req, res) {
       bbb:'MARKET RISK', hy:'MARKET RISK', vix:'MARKET RISK',
     };
 
-    if (type === 'componentvalidation-recompute')
+    const isCV = type === 'componentvalidation' || type === 'componentvalidation-recompute';
+    const CV_NSIM_LIVE = type === 'componentvalidation' ? 500 : CV_NSIM; // reducido en vivo
+    if (isCV)
     for (const id of Object.keys(IND_G)) {
       const monthly = [];
       for (const m of histMacroV1) { if (!m.valid) continue; const sc = IND_G[id]?.(m); if (sc != null) monthly.push({ ym: m.month, sc }); }
@@ -790,8 +796,8 @@ export default async function handler(req, res) {
       const corr = { spR6: sp(p6), spR12: sp(p12), spDD6: sp(pDD6), spDD12: sp(pDD12), spBin12: sp(pBin), spDD10: sp(pDD10), spDD15: sp(pDD15) };
 
       const btTarget = pDD12.length >= 15 ? pDD12 : pBin;
-      const boot    = bvBoot(btTarget.map(p=>[p[1],p[2]]));
-      const bootBin = bvBoot(pBin.map(p=>[p[1],p[2]]));
+      const boot    = bvBoot(btTarget.map(p=>[p[1],p[2]]), CV_NSIM_LIVE);
+      const bootBin = bvBoot(pBin.map(p=>[p[1],p[2]]), CV_NSIM_LIVE);
       const noOvDD  = bvNO(pDD12), noOvBin = bvNO(pBin);
 
       // Distribución por score real del indicador — Score|N|Med+6M|Med+12M|%Pos+12M|MedDD+6M|MedDD+12M|P(DD>10%)|P(DD>15%)|VaR95|CVaR95
@@ -841,6 +847,29 @@ export default async function handler(req, res) {
 
     // Matriz final: Indicador | Bloque | N | Return signal | Downside signal | Temporal stability | Bootstrap | Classification | Propuesta V2
     let componentMatrix = [];
+    // componentvalidation en vivo (sin Firestore)
+    if (type === 'componentvalidation') {
+      const lastValidMonth = [...histMacroV1].reverse().find(m => m.valid)?.month || null;
+      componentMatrix = Object.entries(cmpV).map(([id,v]) => ({
+        id, block: v.block, n: v.nWith12m,
+        returnSignal:      v.corr.spR12?.p!=null  ? (v.corr.spR12.p<0.05?'SIG':v.corr.spR12.p<0.15?'WEAK':'NONE')   : '—',
+        downsideSignal:    v.corr.spDD12?.p!=null ? (v.corr.spDD12.p<0.05?'SIG':v.corr.spDD12.p<0.15?'WEAK':'NONE') : '—',
+        temporalStability: v.regDep ? 'UNSTABLE' : 'STABLE',
+        bootstrap: v.boot?.excludes0 ? 'EXCLUDES 0' : v.boot?.pBoot!=null ? `p=${v.boot.pBoot}` : '—',
+        classification: v.classification,
+      }));
+      return res.status(200).json({
+        title: 'RISK_RADAR_V1 — COMPONENT VALIDATION REPORT',
+        frozen: 'RISK_RADAR_V1 permanece FROZEN.',
+        calculatedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        dataThrough: lastValidMonth,
+        nSim: CV_NSIM_LIVE, blockSize: CV_BLOCKSIZE,
+        note: `Calculado en vivo · ${CV_NSIM_LIVE} sims (reducido vs 5000 del cron completo)`,
+        componentValidation: cmpV, componentMatrix,
+        errors: errs.length ? errs : undefined,
+      });
+    }
     if (type === 'componentvalidation-recompute') {
       componentMatrix = Object.entries(cmpV).map(([id,v]) => ({
         id, block: v.block, n: v.nWith12m,
