@@ -494,6 +494,15 @@ export default async function handler(req, res) {
       {id:'tipoReal', block:'Política', source:'HIST_MACRO_V1', getter:m=>m.components?.tipoReal,  scoreFrom:c=>c?.score??null},
       {id:'reservas', block:'Política', source:'HIST_MACRO_V1', getter:m=>m.components?.reservas,  scoreFrom:c=>c?.score??null, structuralNote:'STRUCTURAL_REVIEW — nivel nominal no estacionario entre regímenes QE/QT'},
     ];
+    // Ampliar RADAR_IND con Sentimiento e Inflación para el stress test
+    // (declarado aquí, antes de su primer uso — antes vivía más abajo y rompía con TDZ ReferenceError)
+    const RADAR_IND_EXTENDED = [...RADAR_IND,
+      {id:'hy',          block:'Sentimiento', source:'RISK_RADAR_V1', getter:m=>m.components?.hy,          scoreFrom:c=>c?.score??null},
+      {id:'vix',         block:'Sentimiento', source:'RISK_RADAR_V1', getter:m=>m.components?.vix,         scoreFrom:c=>c?.score??null},
+      {id:'cpiHeadline', block:'Inflación',   source:'RISK_RADAR_V1', getter:m=>m.components?.cpiHeadline, scoreFrom:c=>c?.score??null},
+      {id:'cpiCore',     block:'Inflación',   source:'RISK_RADAR_V1', getter:m=>m.components?.cpiCore,     scoreFrom:c=>c?.score??null},
+    ];
+
     const rst = {};
     for (const ind of RADAR_IND_EXTENDED) {
       const byScore={},xs=[],ys6=[],ybin=[];
@@ -526,13 +535,6 @@ export default async function handler(req, res) {
       Política: {inds:['tipoReal','reservas']},
       Inflación:{inds:['cpiHeadline','cpiCore'], note:'CPI/Core son RISK_RADAR_V1, maxScore=0 en HIST_MACRO_V1. Input de tipoReal pero score propio.'},
     };
-    // Ampliar RADAR_IND con Sentimiento e Inflación para el stress test
-    const RADAR_IND_EXTENDED = [...RADAR_IND,
-      {id:'hy',          block:'Sentimiento', source:'RISK_RADAR_V1', getter:m=>m.components?.hy,          scoreFrom:c=>c?.score??null},
-      {id:'vix',         block:'Sentimiento', source:'RISK_RADAR_V1', getter:m=>m.components?.vix,         scoreFrom:c=>c?.score??null},
-      {id:'cpiHeadline', block:'Inflación',   source:'RISK_RADAR_V1', getter:m=>m.components?.cpiHeadline, scoreFrom:c=>c?.score??null},
-      {id:'cpiCore',     block:'Inflación',   source:'RISK_RADAR_V1', getter:m=>m.components?.cpiCore,     scoreFrom:c=>c?.score??null},
-    ];
     const blockResults={};
     for(const[bName,bDef] of Object.entries(BLOCK_DEFS)){
       if(bDef.inds && !bDef.inds.length){
@@ -1403,6 +1405,35 @@ export default async function handler(req, res) {
 
   let radarStressTest = {};
   try {
+    // rankArray/pearsonRanks viven como function-declarations dentro de OTRO try{} anterior
+    // (bloque de Spearman ScoreNorm) — en ESM estricto eso las deja block-scoped a ese try,
+    // así que aquí quedaban fuera de alcance (ReferenceError, capturado silenciosamente
+    // por el catch de abajo). Copia local para que este bloque sea autosuficiente.
+    function rankArray(arr) {
+      const sorted = [...arr].map((v,i)=>({v,i})).sort((a,b)=>a.v-b.v);
+      const ranks = new Array(arr.length);
+      let i=0;
+      while (i < sorted.length) {
+        let j=i;
+        while (j<sorted.length && sorted[j].v===sorted[i].v) j++;
+        const avg = (i+j-1)/2;
+        for (let k=i;k<j;k++) ranks[sorted[k].i]=avg;
+        i=j;
+      }
+      return ranks;
+    }
+    function pearsonRanks(xs,ys) {
+      if (!xs?.length||xs.length<10) return null;
+      const mx=xs.reduce((a,b)=>a+b,0)/xs.length, my=ys.reduce((a,b)=>a+b,0)/ys.length;
+      let num=0,dx2=0,dy2=0;
+      for(let i=0;i<xs.length;i++){const a=xs[i]-mx,b=ys[i]-my;num+=a*b;dx2+=a*a;dy2+=b*b;}
+      const d=Math.sqrt(dx2*dy2); if(d===0) return null;
+      const r=num/d, n=xs.length;
+      const t=r*Math.sqrt(n-2)/Math.sqrt(1-r*r+1e-10);
+      const z=Math.abs(t), p=n>30?2*(1-(0.5*(1+Math.sign(z)*Math.sqrt(1-Math.exp(-2*z*z/Math.PI))))):null;
+      const zr=0.5*Math.log((1+r)/(1-r+1e-10)), se=1/Math.sqrt(n-3);
+      return { rho:+r.toFixed(3), n, p:p!=null?+p.toFixed(4):null, ci95:[+(Math.tanh(zr-1.96*se)).toFixed(3),+(Math.tanh(zr+1.96*se)).toFixed(3)] };
+    }
     const fwdMap3  = buildForwardMap(spMap, 3);
     const fwdMap6  = buildForwardMap(spMap, 6);
     const fwdMap12 = buildForwardMap(spMap, 12);
