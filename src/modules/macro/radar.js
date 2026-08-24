@@ -621,7 +621,7 @@ export async function render(container, { actionsSlot }) {
       '<table style="width:100%;border-collapse:collapse;font-size:10px;">' +
         '<thead><tr style="background:var(--surface2);">' +
           '<th style="padding:6px 8px;text-align:left;font-size:9px;color:var(--text3);">Bloque</th>' +
-          '<th style="padding:6px 8px;text-align:center;font-size:9px;color:var(--text3);">N</th>' +
+          '<th style="padding:6px 8px;text-align:center;font-size:9px;color:var(--text3);">N hist / fwd</th>' +
           '<th style="padding:6px 8px;text-align:center;font-size:9px;color:var(--text3);">ρ DD+12M</th>' +
           '<th style="padding:6px 8px;text-align:center;font-size:9px;color:var(--text3);">ρ Bin+12M</th>' +
           '<th style="padding:6px 8px;text-align:center;font-size:9px;color:var(--text3);">Bootstrap</th>' +
@@ -631,7 +631,7 @@ export async function render(container, { actionsSlot }) {
       Object.entries(data.blockValidation||{}).map(([bName,bv]) =>
         '<tr style="border-bottom:1px solid var(--border);">' +
           '<td style="padding:6px 8px;color:var(--text1);font-weight:600;">' + bName + '</td>' +
-          '<td style="padding:6px 8px;text-align:center;font-family:var(--mono);color:var(--text3);">' + (bv.nWith12m||bv.n) + '</td>' +
+          '<td style="padding:6px 8px;text-align:center;font-family:var(--mono);color:var(--text3);font-size:9px;">' + (bv.nHistorico||bv.n||'—') + '<br><span style="color:var(--text3);opacity:0.7;">fwd:' + (bv.nFwd12m||bv.nWith12m||'—') + '</span></td>' +
           '<td style="padding:6px 8px;text-align:center;font-family:var(--mono);color:' + col(bv.corr?.spDD12?.rho) + ';">' + f3(bv.corr?.spDD12?.rho) + (bv.corr?.spDD12?.p!=null&&bv.corr.spDD12.p<0.05?'*':'') + '</td>' +
           '<td style="padding:6px 8px;text-align:center;font-family:var(--mono);color:' + col(bv.corr?.spBin12?.rho) + ';">' + f3(bv.corr?.spBin12?.rho) + (bv.corr?.spBin12?.p!=null&&bv.corr.spBin12.p<0.05?'*':'') + '</td>' +
           '<td style="padding:6px 8px;text-align:center;font-family:var(--mono);font-size:9px;color:' + (bv.boot?.excludes0?'var(--green)':bv.boot?.pBoot!=null&&bv.boot.pBoot<0.1?'var(--amber)':'var(--text3)') + ';">' + (bv.boot?'ρ='+bv.boot.rhoObs+' ['+bv.boot.ci95+'] p='+bv.boot.pBoot:'—') + '</td>' +
@@ -826,7 +826,7 @@ export async function render(container, { actionsSlot }) {
       data.componentMatrix.map(r => '<tr style="border-bottom:1px solid var(--border);">' +
           '<td style="padding:4px 6px;color:var(--text2);">' + (IND_LABELS_CV[r.id]||r.id) + '</td>' +
           '<td style="padding:4px 6px;color:var(--text3);">' + r.block + '</td>' +
-          '<td style="padding:4px 6px;text-align:center;color:var(--text3);">' + (r.n??'—') + '</td>' +
+          '<td style="padding:4px 6px;text-align:center;color:var(--text3);font-size:9px;">' + (r.nHistorico||r.n||'—') + '<br><span style="opacity:0.7;">fwd:' + (r.nFwd12m||'—') + '</span></td>' +
           '<td style="padding:4px 6px;text-align:center;color:var(--text3);">' + r.returnSignal + '</td>' +
           '<td style="padding:4px 6px;text-align:center;color:var(--text3);">' + r.downsideSignal + '</td>' +
           '<td style="padding:4px 6px;text-align:center;color:var(--text3);">' + r.temporalStability + '</td>' +

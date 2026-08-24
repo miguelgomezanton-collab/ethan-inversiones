@@ -778,7 +778,7 @@ export default async function handler(req, res) {
     };
 
     const isCV = type === 'componentvalidation' || type === 'componentvalidation-recompute';
-    const CV_NSIM_LIVE = type === 'componentvalidation' ? 500 : CV_NSIM; // reducido en vivo
+    const CV_NSIM_LIVE = CV_NSIM; // siempre 5000 sims — spec requiere 5000; no reducir por timeout
     if (isCV)
     for (const id of Object.keys(IND_G)) {
       const monthly = [];
@@ -842,7 +842,12 @@ export default async function handler(req, res) {
         : classification==='REGIME DEPENDENT' ? 'REVIEW'
         : (V2_BASE[id] || 'REVIEW');
 
-      cmpV[id] = { block: IND_BLOCK[id]||'—', note: IND_NOTES[id]||undefined, n: monthly.length, nWith12m: p12.length, byScore, corr, boot, bootBin, noOvDD, noOvBin, temp, regDep, signCoherent, classification, proposalV2 };
+      cmpV[id] = { block: IND_BLOCK[id]||'—', note: IND_NOTES[id]||undefined,
+        nHistorico: monthly.length,   // N total de meses con score válido
+        nFwd12m: p12.length,          // N meses con forward return +12M disponible (base de clasificación)
+        // legacy alias mantenido para compatibilidad UI
+        n: monthly.length, nWith12m: p12.length,
+        byScore, corr, boot, bootBin, noOvDD, noOvBin, temp, regDep, signCoherent, classification, proposalV2 };
     }
 
     // Matriz final: Indicador | Bloque | N | Return signal | Downside signal | Temporal stability | Bootstrap | Classification | Propuesta V2
@@ -851,7 +856,7 @@ export default async function handler(req, res) {
     if (type === 'componentvalidation') {
       const lastValidMonth = [...histMacroV1].reverse().find(m => m.valid)?.month || null;
       componentMatrix = Object.entries(cmpV).map(([id,v]) => ({
-        id, block: v.block, n: v.nWith12m,
+        id, block: v.block, nHistorico: v.nHistorico, nFwd12m: v.nFwd12m,
         returnSignal:      v.corr.spR12?.p!=null  ? (v.corr.spR12.p<0.05?'SIG':v.corr.spR12.p<0.15?'WEAK':'NONE')   : '—',
         downsideSignal:    v.corr.spDD12?.p!=null ? (v.corr.spDD12.p<0.05?'SIG':v.corr.spDD12.p<0.15?'WEAK':'NONE') : '—',
         temporalStability: v.regDep ? 'UNSTABLE' : 'STABLE',
@@ -865,14 +870,14 @@ export default async function handler(req, res) {
         updatedAt: new Date().toISOString(),
         dataThrough: lastValidMonth,
         nSim: CV_NSIM_LIVE, blockSize: CV_BLOCKSIZE,
-        note: `Calculado en vivo · ${CV_NSIM_LIVE} sims (reducido vs 5000 del cron completo)`,
+        note: `Calculado en vivo · ${CV_NSIM_LIVE} sims · Block=${CV_BLOCKSIZE}M`,
         componentValidation: cmpV, componentMatrix,
         errors: errs.length ? errs : undefined,
       });
     }
     if (type === 'componentvalidation-recompute') {
       componentMatrix = Object.entries(cmpV).map(([id,v]) => ({
-        id, block: v.block, n: v.nWith12m,
+        id, block: v.block, nHistorico: v.nHistorico, nFwd12m: v.nFwd12m,
         returnSignal:    v.corr.spR12?.p!=null   ? (v.corr.spR12.p<0.05?'SIG':v.corr.spR12.p<0.15?'WEAK':'NONE')   : '—',
         downsideSignal:  v.corr.spDD12?.p!=null  ? (v.corr.spDD12.p<0.05?'SIG':v.corr.spDD12.p<0.15?'WEAK':'NONE') : '—',
         temporalStability: v.regDep ? 'UNSTABLE' : 'STABLE',
