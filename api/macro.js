@@ -112,37 +112,106 @@ async function fetchBOJm2() {
   return { obs: levelObs, officialYoY, source: 'BOJ_PROXY', url: proxyUrl };
 }
 
-// ── CHN M2 — ChinaData.live (PBoC via agregador) ──────────────────
-// Estructura: json.data.data = array histórico mensual [{date,value}]
-// source: PBOC_VIA_CHINADATA
+// ── CHN M2 — ChinaData.live (fuente primaria, PBoC via agregador) ──
+// FRED MYAGM2CNM189N y MABMM301CNM189S discontinuadas en 2019/2018 — no usar.
+// Si ChinaData falla, devolver MISSING con diagnóstico. NO fallback a FRED.
+// Arquitectura preparada para Cloudflare Worker proxy si ChinaData bloquea.
 async function fetchChinaM2() {
   const url = 'https://chinadata.live/api/v2/data/china-m2-money-supply';
-  const ctrl = new AbortController();
-  setTimeout(() => ctrl.abort(), 12000);
-  const res = await fetch(url, {
-    signal: ctrl.signal,
-    headers: { 'User-Agent': 'EthanMacroPlatform/1.0', 'Accept': 'application/json' },
-  });
-  if (!res.ok) throw new Error(`ChinaData HTTP ${res.status}`);
+  const diag = {
+    url,
+    httpStatus: null,
+    parserBranch: null,
+    nObsReceived: null,
+    nObsParsed: null,
+    latestDate: null,
+    latestValue: null,
+    baseDate: null,
+    baseValue: null,
+    error: null,
+  };
 
-  const json = await res.json();
-  const rows = json?.data?.data;
-  if (!Array.isArray(rows) || rows.length === 0) throw new Error('CHN_NO_OBSERVATIONS');
+  let res;
+  try {
+    const ctrl = new AbortController();
+    setTimeout(() => ctrl.abort(), 12000);
+    res = await fetch(url, {
+      signal: ctrl.signal,
+      headers: { 'User-Agent': 'EthanMacroPlatform/1.0', 'Accept': 'application/json' },
+    });
+    diag.httpStatus = res.status;
+  } catch(e) {
+    diag.error = `fetch failed: ${e.message}`;
+    return { diag, missing: true };
+  }
 
+  if (!res.ok) {
+    diag.error = `HTTP ${res.status} — posible bloqueo Cloudflare/WAF`;
+    return { diag, missing: true };
+  }
+
+  let json;
+  try {
+    json = await res.json();
+  } catch(e) {
+    diag.error = `JSON parse failed: ${e.message}`;
+    return { diag, missing: true };
+  }
+
+  // Parser robusto — detectar branch y registrar
+  let rows = null;
+  if (Array.isArray(json?.data?.data))  { rows = json.data.data;  diag.parserBranch = 'json.data.data'; }
+  else if (Array.isArray(json?.data))    { rows = json.data;        diag.parserBranch = 'json.data'; }
+  else if (Array.isArray(json))          { rows = json;             diag.parserBranch = 'root_array'; }
+  else { diag.error = `estructura desconocida: keys=${Object.keys(json||{}).slice(0,5).join(',')}`; }
+
+  diag.nObsReceived = rows?.length ?? 0;
+
+  if (!rows || rows.length === 0) {
+    diag.error = diag.error || 'CHN_NO_OBSERVATIONS — array vacío';
+    return { diag, missing: true };
+  }
+
+  // Normalizar fechas: YYYY-MM-DD → YYYY-MM, YYYYMM → YYYY-MM
   const obs = rows
-    .map(r => ({ date: String(r.date), value: Number(r.value) }))
-    .filter(r => /^\d{4}-\d{2}$/.test(r.date) && Number.isFinite(r.value))
-    .sort((a, b) => a.date.localeCompare(b.date));
+    .map(r => {
+      const rawDate = String(r.date || r.period || r.time || '');
+      const date = rawDate.length >= 7
+        ? rawDate.slice(0,7).replace(/^(\d{4})(\d{2})$/, '$1-$2')
+        : null;
+      return { date, value: Number(r.value ?? r.val ?? r.amount) };
+    })
+    .filter(r => r.date && /^\d{4}-\d{2}$/.test(r.date) && Number.isFinite(r.value) && r.value > 0)
+    .sort((a,b) => b.date.localeCompare(a.date)); // desc — más reciente primero
 
-  const current = obs.at(-1);
+  diag.nObsParsed = obs.length;
+
+  if (!obs.length) {
+    diag.error = 'CHN_NO_VALID_OBS — sin observaciones tras filtro de fecha/valor';
+    return { diag, missing: true };
+  }
+
+  const current = obs[0];
+  diag.latestDate  = current.date;
+  diag.latestValue = current.value;
+
+  // YoY por fecha real — mismo mes año anterior ±35 días
   const [year, month] = current.date.split('-').map(Number);
-  const baseDate = `${year - 1}-${String(month).padStart(2, '0')}`;
-  const base = obs.find(r => r.date === baseDate);
-  if (!base) throw new Error('CHN_INVALID_YOY_BASE');
+  const targetBase = `${year - 1}-${String(month).padStart(2, '0')}`;
+  const base = obs.find(r => r.date === targetBase)
+    || obs.find(r => Math.abs(new Date(r.date+'-01') - new Date(targetBase+'-01')) <= 35*24*3600*1000);
 
-  const yoy = (current.value / base.value - 1) * 100;
-  // Devolver datos crudos — freshness se calcula en calcGlobalM2 donde m2Freshness ya está definida
-  return { current, base, yoy, source: 'PBOC_VIA_CHINADATA' };
+  if (!base) {
+    diag.error = `CHN_INVALID_YOY_BASE: no encontrada obs cercana a ${targetBase} (obs disponibles: ${obs.slice(0,3).map(r=>r.date).join(',')})`;
+    return { diag, missing: true };
+  }
+
+  diag.baseDate  = base.date;
+  diag.baseValue = base.value;
+
+  const yoy = +((current.value / base.value - 1) * 100).toFixed(2);
+
+  return { current, base, yoy, nObs: obs.length, source: 'PBOC_VIA_CHINADATA', diag };
 }
 
 // ── Calcular M2 Global USA + EUR + JPN + CHN ────────────────────
@@ -174,7 +243,7 @@ async function calcGlobalM2(fredKey, manualChinaM2pct) {
     fred('M2SL', fredKey, 14),
     fetchECBm2(),
     fetchBOJm2(),
-    fetchChinaM2(),
+    fetchChinaM2(fredKey),
     yahoo('EURUSD%3DX'),
     yahoo('USDJPY%3DX'),
   ]);
@@ -271,33 +340,39 @@ async function calcGlobalM2(fredKey, manualChinaM2pct) {
     // Nota: no sobreescribir con error si el YoY oficial es válido
   }
 
-  // ── CHN M2 — ChinaData.live (PBoC) + override manual como fallback ──────────
-  const chnResult = rChnM2.status === 'fulfilled' ? rChnM2.value : null;
+  // ── CHN M2 — ChinaData.live (fuente primaria). Sin fallback a FRED (series discontinuadas).
+  // fetchChinaM2() devuelve { diag, missing:true } si falla, o { current, base, yoy, diag } si OK.
+  const chnRaw    = rChnM2.status === 'fulfilled' ? rChnM2.value : null;
+  const chnDiag   = chnRaw?.diag || { error: rChnM2.reason?.message || 'promise rejected' };
 
-  if (chnResult?.current && chnResult?.yoy != null) {
-    const { ageDays, freshness } = m2Freshness(chnResult.current.date);
+  if (chnRaw && !chnRaw.missing && chnRaw.current && chnRaw.yoy != null) {
+    const { ageDays, freshness } = m2Freshness(chnRaw.current.date);
     components.chn = {
       valid:        freshness !== 'stale',
-      source:       chnResult.source || 'PBOC_VIA_CHINADATA',
-      currentDate:  chnResult.current.date,
-      currentValue: chnResult.current.value,
-      baseDate:     chnResult.base.date,
-      baseValue:    chnResult.base.value,
-      yoy:          +chnResult.yoy.toFixed(2),
-      ageDays,
-      freshness,
-      weight: 30,
+      source:       chnRaw.source || 'PBOC_VIA_CHINADATA',
+      currentDate:  chnRaw.current.date,
+      currentValue: chnRaw.current.value,
+      baseDate:     chnRaw.base.date,
+      baseValue:    chnRaw.base.value,
+      yoy:          +chnRaw.yoy.toFixed(2),
+      ageDays, freshness, weight: 30,
+      nObs:         chnRaw.nObs || null,
+      diag:         chnDiag,
     };
   } else if (manualChinaM2pct != null) {
     components.chn = {
       yoy: manualChinaM2pct, currentDate: null, freshness: 'manual',
       weight: 30, valid: true, source: 'manual override',
+      diag: chnDiag,
     };
-    if (rChnM2.reason) errors.push('CHN M2 auto falló: ' + rChnM2.reason?.message);
   } else {
-    const errMsg = rChnM2.reason?.message || 'sin datos';
+    // MISSING — diagnostico completo expuesto, no sustituido silenciosamente
+    const errMsg = chnDiag?.error || rChnM2.reason?.message || 'sin datos';
     errors.push('CHN M2: ' + errMsg);
-    components.chn = { yoy: null, freshness: 'missing', weight: 30, valid: false, error: errMsg };
+    components.chn = {
+      yoy: null, freshness: 'missing', weight: 30, valid: false,
+      error: errMsg, diag: chnDiag,
+    };
   }
 
   // ── Agregación con cobertura dinámica y renormalización explícita ──
@@ -812,11 +887,15 @@ export default async function handler(req, res) {
             isOfficialYoY: g.components.jp?.isOfficialYoY || false,
             validation: g.components.jp?.validation || null,
             error: g.components.jp?.error || null },
-          chn: { seriesId: 'PBOC_M2', source: g.components.chn?.source || 'PBOC_VIA_CHINADATA', frequency: 'monthly', weight: 30,
+          chn: { seriesId: 'MYAGM2CNM189N (FRED, primario) / china-m2-money-supply (ChinaData, fallback)',
+            source: g.components.chn?.source || 'PBOC_VIA_CHINADATA', frequency: 'monthly', weight: 30,
             value: g.components.chn?.currentValue, date: g.components.chn?.currentDate,
             yoy: g.components.chn?.yoy, ageDays: g.components.chn?.ageDays,
             freshness: g.components.chn?.freshness,
             status: g.components.chn?.valid ? 'OK' : (g.components.chn?.freshness === 'missing' ? 'MISSING' : 'STALE'),
+            nObs: g.components.chn?.nObs || null,
+            yoyControl: g.components.chn?.yoyControl || null,
+            fredError: g.components.chn?.fredError || null,
             error: g.components.chn?.error || null,
             note: g.components.chn?.valid ? null : 'CHN MISSING → no substituido silenciosamente. Score basado solo en cobertura disponible.' },
         },

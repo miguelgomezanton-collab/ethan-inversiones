@@ -165,7 +165,9 @@ export async function render(container, { actionsSlot }) {
                   `CHN: ${c.chn?.valid
                     ? (c.chn.source === 'manual override'
                       ? `${f2(c.chn.yoy)}% (manual override)`
-                      : `${c.chn.currentDate||'—'} | YoY ${c.chn.yoy!=null?(c.chn.yoy>=0?'+':'')+f2(c.chn.yoy)+'%':'—'} | base ${c.chn.baseDate||'—'} | ${c.chn.ageDays!=null?c.chn.ageDays+'d':'-'} · ${fsn(c.chn.freshness)} [${c.chn.source||'—'}]`)
+                      : `${c.chn.currentDate||'—'} | YoY calc. ${c.chn.yoy!=null?(c.chn.yoy>=0?'+':'')+f2(c.chn.yoy)+'%':'—'} | base ${c.chn.baseDate||'—'} | N=${c.chn.nObs||'—'} | ${c.chn.ageDays!=null?c.chn.ageDays+'d':'-'} · ✓ OK [${c.chn.source||'—'}]` +
+                        (c.chn.yoyControl ? ` · cross-check YoY directa: ${c.chn.yoyControl.value>=0?'+':''}${f2(c.chn.yoyControl.value)}% (diff ${f2(c.chn.yoyControl.diff)}pp) ${c.chn.yoyControl.status==='OK'?'✓':'⚠ VALIDATION_WARN'}` : '') +
+                        (c.chn.fredError ? ` · FRED falló: ${c.chn.fredError}` : ''))
                     : `<span style="color:var(--red)">⚠ MISSING — ${c.chn?.error||'sin datos'} · score no sustituido silenciosamente</span>`}`,
                   `Cobertura: ${liq.m2.coverageWeight||'—'}/100 (mín. 60) · Global YoY: ${liq.m2.value!=null?(liq.m2.value>=0?'+':'')+f2(liq.m2.value)+'%':'bloqueado'} · Estado: <strong style="color:${liq.m2.audit?.aggregateStatus==='OK'?'var(--green)':liq.m2.audit?.aggregateStatus==='PARTIAL'?'var(--amber)':'var(--red)'};">${liq.m2.audit?.aggregateStatus||'—'}</strong>${liq.m2.audit?.renormalized?' · Pesos renormalizados (missing: '+liq.m2.audit?.missingRegions?.join(', ')?.toUpperCase()+')':''}`,
                   `<span style="color:var(--text3);font-size:9px;">Metodología: media ponderada YoY | Pesos USA=35 EUR=25 JPN=10 CHN=30 | ${liq.m2.audit?.historicalProxy?'HIST_MACRO_V1 usa M2SL USA como HISTORICAL_PROXY para pre-2016':''}</span>`,
