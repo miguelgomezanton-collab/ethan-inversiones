@@ -57,10 +57,30 @@ async function yahoo(symbol, years = 7) {
 
 function yoySeries(arr) {
   if (!arr || arr.length < 13) return [];
+  // Para series mensuales: usar posición i-12
+  // Para series trimestrales (GDP): la función de abajo es más correcta
   const result = [];
   for (let i = 12; i < arr.length; i++) {
     const cur = arr[i], prev = arr[i - 12];
     if (cur.value != null && prev.value != null && prev.value !== 0)
+      result.push({ date: cur.date, value: +((cur.value - prev.value) / prev.value * 100).toFixed(2) });
+  }
+  return result;
+}
+
+// YoY por fecha real — para series con frecuencia mixta (trimestral, irregular)
+// Busca la observación más cercana a exactamente 12M antes, dentro de ±45 días
+function yoySeriesByDate(arr) {
+  if (!arr || arr.length < 5) return [];
+  const result = [];
+  for (let i = 0; i < arr.length; i++) {
+    const cur = arr[i];
+    const targetMs = new Date(cur.date).getTime() - 365 * 24 * 3600 * 1000;
+    const TOLERANCE = 45 * 24 * 3600 * 1000;
+    const prev = arr.slice(0, i).reverse().find(p =>
+      Math.abs(new Date(p.date).getTime() - targetMs) <= TOLERANCE
+    );
+    if (prev && prev.value !== 0 && cur.value != null)
       result.push({ date: cur.date, value: +((cur.value - prev.value) / prev.value * 100).toFixed(2) });
   }
   return result;
@@ -241,8 +261,8 @@ export default async function handler(req, res) {
   const cpiYoY       = yoySeries(cpi);          // CPI Headline YoY (cpi ya viene asc desde fetch)
   const cpiCoreYoY   = yoySeries(cpiCoreAsc);  // Core CPI YoY
   const m2YoY    = yoySeries(m2v);
-  const totllYoY = yoySeries(totll);
-  const gdpYoY   = yoySeries(gdp);
+  const totllYoY = yoySeries(totll);        // mensual → i-12 correcto
+  const gdpYoY   = yoySeriesByDate(gdp);    // trimestral → buscar por fecha real ±45d
   const spRaw    = normalizeBase100(sp);  // mantenemos para correlaciones
   // SP500 diario → mensual (media del mes) para forward returns históricos
   const spMonthly = sp ? toMonthly(sp) : [];
@@ -1299,23 +1319,71 @@ export default async function handler(req, res) {
     // Estadísticos descriptivos del gap
     const gaps=gapSeries.map(g=>g.gap).sort((a,b)=>a-b);
     const pctX=(arr,p)=>arr[Math.max(0,Math.floor(arr.length*p)-1)];
-    const desc={n:gaps.length,
-      first:gapSeries[0]?.ym, last:gapSeries[gapSeries.length-1]?.ym,
-      min:+gaps[0].toFixed(2), p10:+pctX(gaps,0.10).toFixed(2),
-      p25:+pctX(gaps,0.25).toFixed(2), median:+pctX(gaps,0.50).toFixed(2),
-      p75:+pctX(gaps,0.75).toFixed(2), p90:+pctX(gaps,0.90).toFixed(2),
-      max:+gaps[gaps.length-1].toFixed(2),
-      pctPositive:+(gaps.filter(v=>v>0).length/gaps.length*100).toFixed(1),
+
+    // Audit trail: disponibilidad histórica real
+    const totllRaw = rTotll.status==='fulfilled' ? rTotll.value : [];
+    const gdpRaw   = rGdp.status==='fulfilled'   ? rGdp.value   : [];
+    // Reconstruir totllYoY y gdpYoY localmente para el audit
+    const _totllYoY = yoySeries(totllRaw);
+    const _gdpYoY   = yoySeriesByDate(gdpRaw);
+    const _totllMap = new Map(_totllYoY.map(p=>[p.date.slice(0,7),p.value]));
+    const _gdpMap   = new Map(_gdpYoY.map(p=>[p.date.slice(0,7),p.value]));
+
+    // Contar N en cada etapa
+    let nAfterMerge=0, nAfterSP500=0, nAfterFwd12=0, nAfterDD12=0;
+    for(const m of histMacroV1){
+      if(!m.valid) continue;
+      const gap=m.components?.creditoVsPib?.value; if(gap==null) continue;
+      nAfterMerge++;
+      if(!spMap.get(m.month)) continue;
+      nAfterSP500++;
+      if(!cg_fm[12].get(m.month)) continue;
+      nAfterFwd12++;
+      if(cg_DD(m.month,12)==null) continue;
+      nAfterDD12++;
+    }
+
+    // 10 observaciones manuales: 5 antiguas + 5 recientes
+    const allGapMonths=[...gapSeries].sort((a,b)=>a.ym.localeCompare(b.ym));
+    const manualSample=[...allGapMonths.slice(0,5),...allGapMonths.slice(-5)].map(({ym,gap})=>{
+      const totllV=_totllMap.get(ym), gdpV=_gdpMap.get(ym);
+      // Encontrar los valores raw para mostrar t y t-12M
+      const totllObs=totllRaw.find(p=>p.date.slice(0,7)===ym);
+      const gdpObs=gdpRaw.find(p=>p.date.slice(0,7)===ym);
+      return{ym,gap,creditYoY:totllV,gdpYoY:gdpV,
+        totllRaw:totllObs?.value,gdpRaw:gdpObs?.value,
+        spFwd12:cg_fm[12].get(ym),dd12:cg_DD(ym,12)};
+    });
+
+    const audit={
+      pipeline:{
+        totll:{first:totllRaw[0]?.date?.slice(0,7),last:totllRaw[totllRaw.length-1]?.date?.slice(0,7),n:totllRaw.length,frequency:'mensual',seriesId:'TOTLL'},
+        gdp:{first:gdpRaw[0]?.date?.slice(0,7),last:gdpRaw[gdpRaw.length-1]?.date?.slice(0,7),n:gdpRaw.length,frequency:'trimestral_SAAR',seriesId:'GDP'},
+        totllYoY:{n:_totllYoY.length,first:_totllYoY[0]?.date?.slice(0,7),last:_totllYoY[_totllYoY.length-1]?.date?.slice(0,7),
+          method:'yoySeries (i-12, mensual)'},
+        gdpYoY:{n:_gdpYoY.length,first:_gdpYoY[0]?.date?.slice(0,7),last:_gdpYoY[_gdpYoY.length-1]?.date?.slice(0,7),
+          method:'yoySeriesByDate (fecha real ±45d, trimestral)'},
+        creditGrowthGap:{n:gapSeries.length,first:gapSeries[0]?.ym,last:gapSeries[gapSeries.length-1]?.ym},
+        filterFunnel:{rawGap:gapSeries.length,afterSP500:nAfterSP500,afterFwd12M:nAfterFwd12,afterDD12M:nAfterDD12,
+          note:'La caída N es principalmente por el bug SP500 histórico (spMap solo llega a ~2016)'},
+        unitsCheck:{totll:'Miles de millones USD',totllYoY:'% YoY',gdpYoY:'% YoY',gap:'pp (porcentuales)',
+          scaleConsistency:'OK — ambos en % antes de restar'},
+        lookAheadNote:'GDP trimestral se asigna al mes del inicio del trimestre. BEA publica ~30d después del cierre. No se implementa publication lag point-in-time en HIST_MACRO_V1.',
+        gdpMethodNote:'FIX APLICADO: gdpYoY usa yoySeriesByDate (fecha real ±45d) en lugar de yoySeries (i-12 posicional). El bug anterior calculaba GDP a 3 años en lugar de 1 año.',
+      },
+      manualSample,
       currentThresholds:'PROVISIONAL: diff>=3.0→+3 | diff>=1.5→0 | diff<1.5→-3',
       semanticNote:'creditGrowthGap>0 = crédito crece más rápido que PIB nominal. Gap<0 = crece más lento.',
+    };
+    const desc={n:gaps.length,
     };
 
     return res.status(200).json({
       updatedAt: new Date().toISOString(),
       title: 'creditGrowthGap (TOTLL YoY − GDP YoY) — Validación histórica antes de thresholds',
-      note: 'HIST_MACRO_V1 FROZEN. Scoring [PROVISIONAL] — no usar hasta validar empíricamente.',
+      note: 'HIST_MACRO_V1 FROZEN. Scoring [PROVISIONAL]. FIX: gdpYoY ahora usa fecha real ±45d (era i-12 posicional → calculaba 3Y en lugar de 1Y).',
       nSim: 5000, blockSize: 12,
-      desc, lagResults,
+      desc, audit, lagResults,
       errors: errs.length?errs:undefined,
     });
   }

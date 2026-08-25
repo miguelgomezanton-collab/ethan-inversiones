@@ -1084,11 +1084,49 @@ export async function render(container, { actionsSlot }) {
     // Header descriptivo
     const descHTML=`<div class="mac-card" style="margin-bottom:12px;">
       <div style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:8px;">creditGrowthGap = TOTLL YoY − Nominal GDP YoY · Validación antes de thresholds</div>
-      <div style="font-size:9px;color:var(--amber);font-family:var(--mono);margin-bottom:8px;">⚠ Scoring PROVISIONAL — no usar hasta completar validación empírica. HIST_MACRO_V1 FROZEN.</div>
+      <div style="font-size:9px;color:var(--amber);font-family:var(--mono);margin-bottom:8px;">⚠ Scoring PROVISIONAL. FIX: gdpYoY ahora usa fecha real ±45d (bug anterior calculaba GDP a 3Y en lugar de 1Y)</div>
       <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;font-family:var(--mono);font-size:9px;">
-        ${[['N obs',d.n],['Rango',d.first+'→'+d.last],['Mediana',f2(d.median)+'pp'],['% positivo',d.pctPositive+'%'],['p10/p90',f2(d.p10)+'/'+f2(d.p90)]].map(([l,v])=>`<div style="background:var(--surface2);border-radius:4px;padding:6px;"><div style="color:var(--text3);margin-bottom:3px;">${l}</div><div style="color:var(--text1);font-weight:700;">${v}</div></div>`).join('')}
+        ${[['N obs',d.n],['Rango',d.first+'→'+d.last],['Mediana',f2(d.median)+'pp'],['% positivo',d.pctPositive+'%'],['p10/p90',f2(d.p10)+'/'+f2(d.p90)]].map(([l,v])=>`<div style="background:var(--surface2);border-radius:4px;padding:6px;"><div style="color:var(--text3);margin-bottom:3px;">${l}</div><div style="color:var(--text1);font-weight:700;">${v||'—'}</div></div>`).join('')}
       </div>
-      <div style="font-size:9px;color:var(--text3);margin-top:8px;">${d.semanticNote}</div>
+      <div style="font-size:9px;color:var(--text3);margin-top:8px;">${d.semanticNote||''}</div>
+    </div>`;
+
+    // Audit trail
+    const au=data.audit||{};
+    const ppl=au.pipeline||{};
+    const auditHTML=`<div class="mac-card" style="margin-bottom:12px;background:rgba(64,217,192,0.03);">
+      <div style="font-size:9px;font-weight:700;color:var(--text3);margin-bottom:8px;">AUDIT TRAIL — Disponibilidad histórica y pipeline N</div>
+      <table style="width:100%;border-collapse:collapse;font-size:9px;font-family:var(--mono);">
+        <thead><tr style="background:var(--surface2);"><th style="padding:3px 6px;text-align:left;color:var(--text3);">Serie</th><th style="padding:3px 6px;text-align:right;color:var(--text3);">N</th><th style="padding:3px 6px;text-align:right;color:var(--text3);">Desde</th><th style="padding:3px 6px;text-align:right;color:var(--text3);">Hasta</th><th style="padding:3px 6px;color:var(--text3);">Método</th></tr></thead>
+        <tbody>
+          ${[['TOTLL raw',ppl.totll,''],['GDP raw',ppl.gdp,''],['TOTLL YoY',ppl.totllYoY,ppl.totllYoY?.method],['GDP YoY',ppl.gdpYoY,ppl.gdpYoY?.method],['creditGrowthGap',ppl.creditGrowthGap,'']].map(([l,s,m])=>`
+            <tr style="border-bottom:1px solid var(--border);">
+              <td style="padding:3px 6px;color:var(--text2);">${l}</td>
+              <td style="padding:3px 6px;text-align:right;color:var(--text1);font-weight:700;">${s?.n||'—'}</td>
+              <td style="padding:3px 6px;text-align:right;color:var(--text3);">${s?.first||'—'}</td>
+              <td style="padding:3px 6px;text-align:right;color:var(--text3);">${s?.last||'—'}</td>
+              <td style="padding:3px 6px;color:var(--text3);font-size:8px;">${m||''}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+      <div style="margin-top:8px;font-size:9px;font-family:var(--mono);">
+        <div style="color:var(--text3);margin-bottom:4px;">Funnel N: gap bruto → SP500 → fwd+12M → DD+12M</div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          ${[['Gap bruto',ppl.filterFunnel?.rawGap,'var(--text1)'],['SP500',ppl.filterFunnel?.afterSP500,'var(--amber)'],['Fwd+12M',ppl.filterFunnel?.afterFwd12M,'var(--amber)'],['DD+12M',ppl.filterFunnel?.afterDD12M,'var(--red)']].map(([l,v,c])=>`<div style="background:var(--surface2);border-radius:4px;padding:5px 8px;text-align:center;"><div style="font-size:8px;color:var(--text3);">${l}</div><div style="font-size:13px;font-weight:700;color:${c};">${v||'—'}</div></div>`).join('<div style="color:var(--text3);">→</div>')}
+        </div>
+        <div style="font-size:8px;color:var(--amber);margin-top:4px;">${ppl.filterFunnel?.note||''}</div>
+      </div>
+      <div style="margin-top:8px;font-size:9px;font-family:var(--mono);">
+        <div style="color:var(--text3);">Unidades: ${ppl.unitsCheck?.scaleConsistency||'—'} — ${ppl.unitsCheck?.totll||''} → ${ppl.unitsCheck?.totllYoY||''} / ${ppl.unitsCheck?.gdpYoY||''} / gap en ${ppl.unitsCheck?.gap||''}</div>
+        <div style="color:var(--amber);margin-top:3px;">${ppl.lookAheadNote||''}</div>
+      </div>
+      ${au.manualSample?.length?`<div style="margin-top:10px;">
+        <div style="font-size:9px;font-weight:700;color:var(--text3);margin-bottom:6px;">10 obs manuales (5 antiguas + 5 recientes)</div>
+        <table style="width:100%;border-collapse:collapse;font-size:8px;font-family:var(--mono);">
+          <thead><tr style="background:var(--surface2);"><th style="padding:2px 4px;color:var(--text3);">Mes</th><th style="padding:2px 4px;text-align:right;color:var(--text3);">creditYoY</th><th style="padding:2px 4px;text-align:right;color:var(--text3);">gdpYoY</th><th style="padding:2px 4px;text-align:right;color:var(--text3);">gap</th><th style="padding:2px 4px;text-align:right;color:var(--text3);">fwd+12M</th><th style="padding:2px 4px;text-align:right;color:var(--text3);">DD+12M</th></tr></thead>
+          <tbody>${au.manualSample.map(r=>`<tr style="border-bottom:1px solid var(--border);"><td style="padding:2px 4px;color:var(--text2);">${r.ym}</td><td style="padding:2px 4px;text-align:right;color:${(r.creditYoY??0)>=0?'var(--green)':'var(--red)'};">${r.creditYoY!=null?(r.creditYoY>=0?'+':'')+r.creditYoY.toFixed(2)+'%':'—'}</td><td style="padding:2px 4px;text-align:right;">${r.gdpYoY!=null?(r.gdpYoY>=0?'+':'')+r.gdpYoY.toFixed(2)+'%':'—'}</td><td style="padding:2px 4px;text-align:right;font-weight:700;color:${(r.gap??0)>=0?'var(--green)':'var(--red)'};">${r.gap!=null?(r.gap>=0?'+':'')+r.gap.toFixed(2)+'pp':'—'}</td><td style="padding:2px 4px;text-align:right;">${r.spFwd12!=null?(r.spFwd12>=0?'+':'')+r.spFwd12.toFixed(1)+'%':'—'}</td><td style="padding:2px 4px;text-align:right;">${r.dd12!=null?r.dd12.toFixed(1)+'%':'—'}</td></tr>`).join('')}</tbody>
+        </table>
+      </div>`:''}
     </div>`;
 
     // Tabla resumen × lag × horizonte
@@ -1151,5 +1189,5 @@ export async function render(container, { actionsSlot }) {
     el.innerHTML=`<div class="mac-card" style="margin-bottom:10px;background:rgba(251,191,36,0.04);border-color:rgba(251,191,36,0.2);">
       <div style="font-size:9px;font-family:var(--mono);color:var(--text3);">Credit Gap Validation · ${(data.updatedAt||'').slice(0,10)} · 5000 sims · 4 lags (0/3/6/12M)</div>
       <div style="font-size:9px;color:var(--amber);margin-top:3px;">Scoring PROVISIONAL — datos→transformación→evidencia→semántica→scoring (no al revés)</div>
-    </div>`+descHTML+summaryHTML+quintilesHTML;
+    </div>`+descHTML+auditHTML+summaryHTML+quintilesHTML;
   }
