@@ -1084,10 +1084,17 @@ export async function render(container, { actionsSlot }) {
     // Header descriptivo
     const descHTML=`<div class="mac-card" style="margin-bottom:12px;">
       <div style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:8px;">creditGrowthGap = TOTLL YoY − Nominal GDP YoY · Validación antes de thresholds</div>
-      <div style="font-size:9px;color:var(--amber);font-family:var(--mono);margin-bottom:8px;">⚠ Scoring PROVISIONAL. FIX: gdpYoY ahora usa fecha real ±45d (bug anterior calculaba GDP a 3Y en lugar de 1Y)</div>
-      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;font-family:var(--mono);font-size:9px;">
-        ${[['N obs',d.n],['Rango',d.first+'→'+d.last],['Mediana',f2(d.median)+'pp'],['% positivo',d.pctPositive+'%'],['p10/p90',f2(d.p10)+'/'+f2(d.p90)]].map(([l,v])=>`<div style="background:var(--surface2);border-radius:4px;padding:6px;"><div style="color:var(--text3);margin-bottom:3px;">${l}</div><div style="color:var(--text1);font-weight:700;">${v||'—'}</div></div>`).join('')}
+      <div style="font-size:9px;color:var(--amber);font-family:var(--mono);margin-bottom:8px;">⚠ Scoring PROVISIONAL. FIX APLICADO: gdpYoY usa fecha real ±45d (antes i-12 posicional = 3Y en GDP trimestral)</div>
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;font-family:var(--mono);font-size:9px;margin-bottom:8px;">
+        ${[['N obs',d.n??'—'],['Rango',(d.first||'—')+'→'+(d.last||'—')],['Mediana',d.median!=null?f2(d.median)+'pp':'—'],['% positivo',d.pctPositive!=null?d.pctPositive+'%':'—'],['p10/p90',(d.p10!=null?f2(d.p10):'—')+'/'+(d.p90!=null?f2(d.p90):'—')]].map(([l,v])=>`<div style="background:var(--surface2);border-radius:4px;padding:6px;"><div style="color:var(--text3);margin-bottom:3px;">${l}</div><div style="color:var(--text1);font-weight:700;">${v}</div></div>`).join('')}
       </div>
+      ${d.inputStats?`<div style="font-size:9px;font-family:var(--mono);">
+        <div style="color:var(--text3);margin-bottom:4px;">Estadísticos de inputs (tras corrección GDP YoY):</div>
+        <table style="border-collapse:collapse;width:100%;font-size:8px;">
+          <thead><tr style="background:var(--surface2);"><th style="padding:2px 6px;text-align:left;color:var(--text3);">Serie</th><th style="padding:2px 6px;text-align:right;color:var(--text3);">N</th><th style="padding:2px 6px;text-align:right;color:var(--text3);">Desde→Hasta</th><th style="padding:2px 6px;text-align:right;color:var(--text3);">p10</th><th style="padding:2px 6px;text-align:right;color:var(--text3);">Median</th><th style="padding:2px 6px;text-align:right;color:var(--text3);">p90</th><th style="padding:2px 6px;text-align:right;color:var(--text3);">Min</th><th style="padding:2px 6px;text-align:right;color:var(--text3);">Max</th></tr></thead>
+          <tbody>${Object.entries(d.inputStats).map(([k,s])=>`<tr style="border-bottom:1px solid var(--border);"><td style="padding:2px 6px;color:var(--text2);">${k}</td><td style="padding:2px 6px;text-align:right;">${s.n}</td><td style="padding:2px 6px;text-align:right;color:var(--text3);font-size:7px;">${s.first||'—'}→${s.last||'—'}</td><td style="padding:2px 6px;text-align:right;">${s.p10??'—'}</td><td style="padding:2px 6px;text-align:right;font-weight:700;">${s.median??'—'}</td><td style="padding:2px 6px;text-align:right;">${s.p90??'—'}</td><td style="padding:2px 6px;text-align:right;color:var(--red);">${s.min??'—'}</td><td style="padding:2px 6px;text-align:right;color:var(--green);">${s.max??'—'}</td></tr>`).join('')}</tbody>
+        </table>
+      </div>`:''}
       <div style="font-size:9px;color:var(--text3);margin-top:8px;">${d.semanticNote||''}</div>
     </div>`;
 

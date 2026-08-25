@@ -1375,7 +1375,35 @@ export default async function handler(req, res) {
       currentThresholds:'PROVISIONAL: diff>=3.0→+3 | diff>=1.5→0 | diff<1.5→-3',
       semanticNote:'creditGrowthGap>0 = crédito crece más rápido que PIB nominal. Gap<0 = crece más lento.',
     };
-    const desc={n:gaps.length,
+    // Estadísticos descriptivos del gap y de los inputs
+    const statsSummary = arr => {
+      if (!arr || !arr.length) return { n:0 };
+      const s = [...arr].sort((a,b)=>a-b);
+      const pctX = (p) => s[Math.max(0,Math.floor(s.length*p)-1)];
+      return { n:s.length, min:+s[0].toFixed(2), p10:+pctX(0.10).toFixed(2),
+        p25:+pctX(0.25).toFixed(2), median:+pctX(0.50).toFixed(2),
+        p75:+pctX(0.75).toFixed(2), p90:+pctX(0.90).toFixed(2), max:+s[s.length-1].toFixed(2) };
+    };
+
+    const totllYoYVals = _totllYoY.map(p=>p.value);
+    const gdpYoYVals   = _gdpYoY.map(p=>p.value);
+
+    const desc = {
+      n:    gapSeries.length,
+      first: gapSeries[0]?.ym,
+      last:  gapSeries[gapSeries.length-1]?.ym,
+      ...statsSummary(gaps),
+      pctPositive: gaps.length ? +(gaps.filter(v=>v>0).length/gaps.length*100).toFixed(1) : null,
+      currentThresholds: 'PROVISIONAL: diff>=3.0→+3 | diff>=1.5→0 | diff<1.5→-3',
+      semanticNote: 'creditGrowthGap>0 = crédito crece más rápido que PIB nominal. Gap<0 = crece más lento.',
+      inputStats: {
+        totllYoY: { ...statsSummary(totllYoYVals),
+          first: _totllYoY[0]?.date?.slice(0,7), last: _totllYoY[_totllYoY.length-1]?.date?.slice(0,7) },
+        gdpYoY:   { ...statsSummary(gdpYoYVals),
+          first: _gdpYoY[0]?.date?.slice(0,7),   last: _gdpYoY[_gdpYoY.length-1]?.date?.slice(0,7) },
+        gap:      { ...statsSummary(gaps),
+          first: gapSeries[0]?.ym, last: gapSeries[gapSeries.length-1]?.ym },
+      },
     };
 
     return res.status(200).json({
