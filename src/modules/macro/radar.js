@@ -1092,10 +1092,19 @@ export async function render(container, { actionsSlot }) {
         if (d.canonicalAudit) {
           const ok = d.acceptanceTest?.filter(t=>t.ok).length||0;
           const total = d.acceptanceTest?.length||0;
+          // Si Firestore no disponible, cachear en localStorage
+          if (d.spData && Object.keys(d.spData).length > 100) {
+            try {
+              localStorage.setItem('ethan_sp500_v1', JSON.stringify({
+                data: d.spData, updatedAt: d.updatedAt,
+                n: d.canonicalAudit.n, first: d.canonicalAudit.firstDate, last: d.canonicalAudit.lastDate
+              }));
+            } catch(_) {}
+          }
           statusEl.innerHTML = `<span style="color:var(--green);">✓ Backfill completado</span><br>
             N=${d.canonicalAudit.n} · ${d.canonicalAudit.firstDate}→${d.canonicalAudit.lastDate}<br>
-            Acceptance test: ${ok}/${total} fechas OK<br>
-            ${d.errors?.length?'<span style="color:var(--amber);">Errores: '+d.errors.join(', ')+'</span>':''}`;
+            Acceptance test: ${ok}/${total} fechas OK · ${d.firestoreStatus||''}<br>
+            ${d.errors?.length?'<span style="color:var(--amber);">Errores: '+d.errors.join('; ')+'</span>':'<span style="color:var(--green);">Sin errores</span>'}`;
           setTimeout(() => { creditGapData = null; loadCreditGap(true); }, 2000);
         } else {
           statusEl.innerHTML = `<span style="color:var(--red);">Error: ${d.error||JSON.stringify(d).slice(0,100)}</span>`;
@@ -1108,11 +1117,35 @@ export async function render(container, { actionsSlot }) {
     });
 
     document.getElementById('skip-backfill-btn')?.addEventListener('click', () => {
-      document.getElementById('radar-wrap').innerHTML = '<div class="empty"><div class="loader-ring"></div><span style="font-family:var(--mono);font-size:11px;color:var(--text3);margin-left:10px;">Credit Gap Validation (5000 sims × 4 lags)...</span></div>';
-      fetch('/api/macro-history?type=creditgap').then(r=>r.ok?r.json():null).then(d=>{
-        creditGapData = d; paintCreditGap(d);
-      }).catch(e=>{ document.getElementById('radar-wrap').innerHTML=`<div class="empty"><div class="empty-icon">⚠</div><div class="empty-title">Error</div><div class="empty-desc">${e.message}</div></div>`; });
+      _runCreditGap();
     });
+  }
+
+  async function _runCreditGap() {
+    document.getElementById('radar-wrap').innerHTML = '<div class="empty"><div class="loader-ring"></div><span style="font-family:var(--mono);font-size:11px;color:var(--text3);margin-left:10px;">Credit Gap Validation (5000 sims × 4 lags)...</span></div>';
+    // Intentar pasar SP500 desde localStorage si está disponible
+    let spCache = null;
+    try {
+      const cached = localStorage.getItem('ethan_sp500_v1');
+      if (cached) { const p = JSON.parse(cached); if (p?.data && Object.keys(p.data).length > 100) spCache = p.data; }
+    } catch(_) {}
+    try {
+      let d;
+      if (spCache) {
+        // POST con SP500 para que el endpoint lo use directamente
+        const r = await fetch('/api/macro-history?type=creditgap', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ spData: spCache }),
+        });
+        d = r.ok ? await r.json() : null;
+      } else {
+        d = await fetch('/api/macro-history?type=creditgap').then(r=>r.ok?r.json():null);
+      }
+      creditGapData = d; paintCreditGap(d);
+    } catch(e) {
+      document.getElementById('radar-wrap').innerHTML=`<div class="empty"><div class="empty-icon">⚠</div><div class="empty-title">Error</div><div class="empty-desc">${e.message}</div></div>`;
+    }
   }
 
   function paintCreditGap(data) {

@@ -185,27 +185,24 @@ export default async function handler(req, res) {
     ]);
 
   // ── Procesar series ───────────────────────────
-  // SP500: intentar snapshot Firestore primero (sin timeout), luego chunks FRED como fallback
+  // SP500: intentar snapshot Firestore primero, luego construir desde tramos FRED
   let spFirestore = null;
   try {
     const db = getDB();
     const snap = await db.collection('ethan_market_data').doc('sp500_monthly_v1').get();
     if (snap.exists && snap.data()?.data) {
       const d = snap.data().data;
-      // Convertir a array ordenado ascendente
       spFirestore = Object.entries(d)
         .map(([date, value]) => ({ date: date+'-01', value }))
         .sort((a,b) => a.date.localeCompare(b.date));
-      errs.push && null; // no error
     }
-  } catch(e) { errs.push('SP500 Firestore read: ' + e.message); }
+  } catch(_) { /* Firestore no disponible — usar fallback FRED */ }
 
   const spChunkA = rSp.status === 'fulfilled' && rSp.value?.length > 0 ? rSp.value : null;
   const spChunkB = rNq.status === 'fulfilled' && rNq.value?.length > 0 ? rNq.value : null;
   const spChunkC = rRu.status === 'fulfilled' && rRu.value?.length > 0 ? rRu.value : null;
-  // Prioridad: Firestore snapshot (cobertura completa) → chunks FRED
   const sp = spFirestore && spFirestore.length > 500
-    ? spFirestore  // Firestore tiene histórico completo
+    ? spFirestore
     : [spChunkA, spChunkB, spChunkC]
         .filter(Boolean)
         .reduce((best, arr) => (!best || arr[0]?.date < best[0]?.date) ? arr : best, null);
@@ -1041,8 +1038,9 @@ export default async function handler(req, res) {
       ok: !!newData[ym],
     }));
 
-    // Persistir en Firestore
+    // Persistir en Firestore si está disponible; si no, devolver los datos directamente
     let persistOk = false;
+    let firestoreError = null;
     if (totalN > 0) {
       try {
         const db = getDB();
@@ -1056,7 +1054,11 @@ export default async function handler(req, res) {
           method: 'month-end close via FRED API, parallel fetch by decade',
         });
         persistOk = true;
-      } catch(e) { errs.push('Firestore write SP500: ' + e.message); }
+      } catch(e) {
+        firestoreError = e.message;
+        // Sin Firestore: los datos están en newData y se devuelven en la respuesta
+        // El frontend los puede cachear en localStorage para el Credit Gap
+      }
     }
 
     // Audit canónico
@@ -1090,6 +1092,9 @@ export default async function handler(req, res) {
       canonicalAudit,
       fetchLog: fetchLog.sort((a,b)=>a.range.localeCompare(b.range)),
       acceptanceTest,
+      // Devolver datos para localStorage cuando Firestore no está disponible
+      spData: !persistOk ? newData : undefined,
+      firestoreStatus: persistOk ? 'OK' : `NO_FIRESTORE: ${firestoreError}`,
       errors: errs.length ? errs : undefined,
     });
   }
@@ -1102,16 +1107,32 @@ export default async function handler(req, res) {
     }
 
   if (type === 'creditgap') {
+    // Aceptar SP500 desde POST body (cliente lo tiene en localStorage si Firestore no disponible)
+    let spMapLocal = spMap;
+    try {
+      if (req.method === 'POST') {
+        const chunks = [];
+        await new Promise(resolve => { req.on('data', c => chunks.push(c)); req.on('end', resolve); });
+        const parsed = JSON.parse(Buffer.concat(chunks).toString());
+        if (parsed?.spData && Object.keys(parsed.spData).length > 100) {
+          const arr = Object.entries(parsed.spData)
+            .map(([ym, v]) => ({ date: ym+'-01', value: Number(v) }))
+            .sort((a,b) => a.date.localeCompare(b.date));
+          const mon = toMonthly(arr);
+          spMapLocal = new Map(mon.map(p=>[p.date.slice(0,7), p.value]));
+        }
+      }
+    } catch(_) {}
     const cg_fm = {};
     for (const h of [3,6,12]) {
       cg_fm[h] = new Map();
-      for (const [ym] of spMap) {
+      for (const [ym] of spMapLocal) {
         const t=new Date(ym+'-01'); t.setMonth(t.getMonth()+h);
         const ty=t.toISOString().slice(0,7), fr=spMap.get(ym), to=spMap.get(ty);
         if(fr&&to) cg_fm[h].set(ym,+((to/fr-1)*100).toFixed(3));
       }
     }
-    function cg_DD(fromYM,months){const fr=spMap.get(fromYM);if(!fr)return null;let pk=fr,mx=0;for(let i=1;i<=months;i++){const t=new Date(fromYM+'-01');t.setMonth(t.getMonth()+i);const v=spMap.get(t.toISOString().slice(0,7));if(!v)continue;if(v>pk)pk=v;const d=(v-pk)/pk*100;if(d<mx)mx=d;}return+mx.toFixed(3);}
+    function cg_DD(fromYM,months){const fr=spMapLocal.get(fromYM);if(!fr)return null;let pk=fr,mx=0;for(let i=1;i<=months;i++){const t=new Date(fromYM+'-01');t.setMonth(t.getMonth()+i);const v=spMapLocal.get(t.toISOString().slice(0,7));if(!v)continue;if(v>pk)pk=v;const d=(v-pk)/pk*100;if(d<mx)mx=d;}return+mx.toFixed(3);}
     function cg_P(xs,ys){if(!xs||xs.length<10)return null;const mx=xs.reduce((a,b)=>a+b,0)/xs.length,my=ys.reduce((a,b)=>a+b,0)/ys.length;let num=0,dx2=0,dy2=0;for(let i=0;i<xs.length;i++){const a=xs[i]-mx,b=ys[i]-my;num+=a*b;dx2+=a*a;dy2+=b*b;}const d=Math.sqrt(dx2*dy2);if(!d)return null;const r=num/d,n=xs.length,t=r*Math.sqrt(n-2)/Math.sqrt(1-r*r+1e-10),z=Math.abs(t),p=n>30?2*(1-(0.5*(1+Math.sign(z)*Math.sqrt(1-Math.exp(-2*z*z/Math.PI))))):null,zr=0.5*Math.log((1+r)/(1-r+1e-10)),se=1/Math.sqrt(n-3);return{rho:+r.toFixed(3),n,p:p!=null?+p.toFixed(4):null,ci95:[+(Math.tanh(zr-1.96*se)).toFixed(3),+(Math.tanh(zr+1.96*se)).toFixed(3)]};}
     function cg_rk(arr){const s=[...arr].map((v,i)=>({v,i})).sort((a,b)=>a.v-b.v);const r=new Array(arr.length);let i=0;while(i<s.length){let j=i;while(j<s.length&&s[j].v===s[i].v)j++;const avg=(i+j-1)/2;for(let k=i;k<j;k++)r[s[k].i]=avg;i=j;}return r;}
     function cg_Sp(xs,ys){return cg_P(cg_rk(xs),cg_rk(ys));}
