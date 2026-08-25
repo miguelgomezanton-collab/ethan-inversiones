@@ -63,7 +63,7 @@ export async function render(container,{actionsSlot}){
             <text x="120" y="139" text-anchor="middle" font-family="IBM Plex Mono" font-size="8"  fill="${covColor}">${cicloAvail}/${cicloMax} ind.</text>
           </svg>
           <div style="font-family:var(--mono);font-size:9px;text-align:center;margin-top:4px;color:var(--text3);">Score Ciclo · Curva USD ${cicloUSD!=null?(cicloUSD>=0?'+':'')+cicloUSD:'—'} + Curva EUR ${cicloEUR!=null?(cicloEUR>=0?'+':'')+cicloEUR:'—'} + LEI ${cicloLEI!=null?(cicloLEI>=0?'+':'')+cicloLEI:'—'} = ${cicloScore>=0?'+':''}${cicloScore}</div>
-          <div style="font-family:var(--mono);font-size:8px;text-align:center;margin-top:2px;color:var(--text3);">${covLabel} · Score global ETHAN: ${s>=0?'+':''}${s}/17</div>
+          <div style="font-family:var(--mono);font-size:8px;text-align:center;margin-top:2px;color:var(--text3);">Cobertura Ciclo: ${cicloAvail}/${cicloMax} indicadores · Score global ETHAN: ${s>=0?'+':''}${s}/17</div>
         </div>
 
         <!-- Indicadores adelantados -->
