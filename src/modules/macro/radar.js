@@ -1178,10 +1178,14 @@ export async function render(container, { actionsSlot }) {
           ${(lr.quintiles||[]).map(q=>`<div style="flex:1;background:var(--surface2);border-radius:4px;padding:8px;text-align:center;">
             <div style="font-size:8px;color:var(--teal);">Q${q.q}</div>
             <div style="font-size:8px;color:var(--text3);">[${q.gapMin},${q.gapMax}]pp</div>
-            <div style="font-family:var(--mono);font-size:12px;font-weight:700;color:${colDD(q.medDD12)};">${f1(q.medDD12)}</div>
-            <div style="font-size:8px;color:var(--text3);">DD>10%: ${q.pDD10!=null?q.pDD10+'%':'—'}</div>
-            <div style="font-size:8px;color:${col(q.medRet12)};">Ret: ${f1(q.medRet12)}</div>
-            <div style="font-size:8px;color:var(--text3);">N=${q.n}</div>
+            <div style="font-size:7px;color:var(--text3);margin-top:3px;">MedMaxDD+12M</div>
+            <div style="font-family:var(--mono);font-size:11px;font-weight:700;color:${colDD(q.medDD12)};">${f1(q.medDD12)}</div>
+            <div style="font-size:7px;color:var(--text3);">P(DD>10%): ${q.pDD10!=null?q.pDD10+'%':'—'}</div>
+            <div style="font-size:7px;color:var(--text3);margin-top:3px;">MedRetFwd+12M</div>
+            <div style="font-family:var(--mono);font-size:11px;font-weight:700;color:${col(q.medRet12)};">${q.medRet12!=null?f1(q.medRet12):'—'}</div>
+            <div style="font-size:7px;color:var(--text3);">P(Pos): ${q.pPos12!=null?q.pPos12+'%':'—'}</div>
+            <div style="font-size:7px;color:var(--text3);">VaR95: ${q.var95Ret12!=null?q.var95Ret12.toFixed(1)+'%':'—'}</div>
+            <div style="font-size:7px;color:var(--text3);">N=${q.n}</div>
           </div>`).join('')}
         </div>
         <div style="display:flex;gap:4px;margin-top:8px;">

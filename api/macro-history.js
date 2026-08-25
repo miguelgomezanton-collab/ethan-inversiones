@@ -955,7 +955,7 @@ export default async function handler(req, res) {
         if(r6!=null)p6.push([gap,r6]);
         if(r12!=null){p12.push([gap,r12]);pBin.push([gap,r12>0?1:0]);}
         if(dd6!=null)pDD6.push([gap,dd6]);
-        if(dd12!=null){pDD12.push([gap,dd12]);pDD10.push([gap,dd12<-10?1:0]);pDD15.push([gap,dd12<-15?1:0]);}
+        if(dd12!=null){pDD12.push([gap,dd12,r12??null]);pDD10.push([gap,dd12<-10?1:0]);pDD15.push([gap,dd12<-15?1:0]);}
       }
       const sp=p=>cg_Sp(p.map(q=>q[0]),p.map(q=>q[1]));
       const corr={spR6:sp(p6),spR12:sp(p12),spDD6:sp(pDD6),spDD12:sp(pDD12),spBin12:sp(pBin),spDD10:sp(pDD10),spDD15:sp(pDD15)};
@@ -972,11 +972,17 @@ export default async function handler(req, res) {
       const sorted=[...pDD12].sort((a,b)=>a[0]-b[0]);
       const Nq=sorted.length,qSz=Math.ceil(Nq/5);
       const quintiles=[0,1,2,3,4].map(qi=>{
-        const sl=sorted.slice(qi*qSz,(qi+1)*qSz),dds=sl.map(p=>p[1]);
-        const rs=pDD12.slice(qi*qSz,(qi+1)*qSz).map(p=>p[1]);
+        const sl=sorted.slice(qi*qSz,(qi+1)*qSz);
+        const dds=sl.map(p=>p[1]);
+        // Obtener r12 real para los mismos meses (sl[i] = [gap, dd12, ym])
+        const rets=sl.map(p=>p[2]).filter(v=>v!=null);
         const med=a=>{const s=[...a].sort((x,y)=>x-y);return s.length?+s[Math.floor(s.length/2)].toFixed(2):null;};
+        const var95=rets.length?+([...rets].sort((x,y)=>x-y)[Math.max(0,Math.floor(rets.length*0.05)-1)]).toFixed(2):null;
+        const pPos12=rets.length?+(rets.filter(r=>r>0).length/rets.length*100).toFixed(1):null;
         return{q:qi+1,n:sl.length,gapMin:+sl[0]?.[0].toFixed(2),gapMax:+sl[sl.length-1]?.[0].toFixed(2),
-          medDD12:med(dds),pDD10:dds.length?+(dds.filter(d=>d<-10).length/dds.length*100).toFixed(1):null,medRet12:med(rs)};
+          medDD12:med(dds),pDD10:dds.length?+(dds.filter(d=>d<-10).length/dds.length*100).toFixed(1):null,
+          medRet12:med(rets),var95Ret12:var95,pPos12,
+          nRet:rets.length};
       });
       const ddByQ=quintiles.map(q=>q.medDD12).filter(v=>v!=null);
       const isMonotonic=ddByQ.length>=3&&(ddByQ.every((v,i)=>i===0||v<=ddByQ[i-1])||ddByQ.every((v,i)=>i===0||v>=ddByQ[i-1]));
