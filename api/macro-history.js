@@ -67,14 +67,14 @@ function yoySeries(arr) {
 }
 
 // YoY por fecha real — para series trimestrales o irregulares (GDP, etc.)
-// Busca obs exactamente 12M antes, tolerancia ±45 días
-function yoySeriesByDate(arr) {
+// Busca obs exactamente 12M antes, tolerancia ±tolDays días
+function yoySeriesByDate(arr, tolDays=45) {
   if (!arr || arr.length < 5) return [];
   const result = [];
+  const TOL = tolDays * 24 * 3600 * 1000;
   for (let i = 0; i < arr.length; i++) {
     const cur = arr[i];
     const targetMs = new Date(cur.date).getTime() - 365 * 24 * 3600 * 1000;
-    const TOL = 45 * 24 * 3600 * 1000;
     const prev = arr.slice(0, i).reverse().find(p =>
       Math.abs(new Date(p.date).getTime() - targetMs) <= TOL
     );
@@ -264,8 +264,8 @@ export default async function handler(req, res) {
   const cpiYoY       = yoySeries(cpi);          // CPI Headline YoY (cpi ya viene asc desde fetch)
   const cpiCoreYoY   = yoySeries(cpiCoreAsc);  // Core CPI YoY
   const m2YoY    = yoySeries(m2v);
-  const totllYoY = yoySeries(totll);        // mensual → i-12 correcto
-  const gdpYoY   = yoySeriesByDate(gdp);    // trimestral → buscar por fecha real ±45d
+  const totllYoY = yoySeriesByDate(totll, 7);   // semanal → tolerancia ±7d (i-12 = ~3M → incorrecto)
+  const gdpYoY   = yoySeriesByDate(gdp, 45);    // trimestral → tolerancia ±45d
   const spRaw    = normalizeBase100(sp);  // mantenemos para correlaciones
   // SP500 diario → mensual (media del mes) para forward returns históricos
   const spMonthly = sp ? toMonthly(sp) : [];
@@ -992,7 +992,8 @@ export default async function handler(req, res) {
     // Estadísticos y audit
     const totllRaw=rTotll.status==='fulfilled'?rTotll.value:[];
     const gdpRaw=rGdp.status==='fulfilled'?rGdp.value:[];
-    const _totllYoY=yoySeries(totllRaw),_gdpYoY=yoySeriesByDate(gdpRaw);
+    const _totllYoY=yoySeriesByDate(totllRaw, 7);   // semanal ±7d
+    const _gdpYoY=yoySeriesByDate(gdpRaw, 45);      // trimestral ±45d
     const _totllMap=new Map(_totllYoY.map(p=>[p.date.slice(0,7),p.value]));
     const _gdpMap=new Map(_gdpYoY.map(p=>[p.date.slice(0,7),p.value]));
 
@@ -1002,30 +1003,50 @@ export default async function handler(req, res) {
     let nAfterSP500=0,nAfterFwd12=0,nAfterDD12=0;
     for(const m of histMacroV1){if(!m.valid||m.components?.creditoVsPib?.value==null)continue;if(!spMap.get(m.month))continue;nAfterSP500++;if(!cg_fm[12].get(m.month))continue;nAfterFwd12++;if(cg_DD(m.month,12)==null)continue;nAfterDD12++;}
 
-    const manualSample=[...gapSeries.slice(0,5),...gapSeries.slice(-5)].map(({ym,gap})=>({ym,gap,
-      creditYoY:_totllMap.get(ym),gdpYoY:_gdpMap.get(ym),spFwd12:cg_fm[12].get(ym),dd12:cg_DD(ym,12)}));
+    // Acceptance test manual: 6 fechas de referencia requeridas + 5 más recientes
+    const TARGET_DATES=['2026-04','2025-04','2020-04','2018-12','2008-09','2000-01'];
+    const manualTargets=TARGET_DATES.map(ym=>{
+      // TOTLL: buscar obs en esa semana
+      const tCands=totllRaw.filter(p=>p.date.slice(0,7)===ym||p.date.startsWith(ym));
+      const tCur=tCands.length?tCands[tCands.length-1]:null;
+      const targetBaseMs=tCur?new Date(tCur.date).getTime()-365*24*3600*1000:null;
+      const tBase=targetBaseMs?totllRaw.filter(p=>Math.abs(new Date(p.date).getTime()-targetBaseMs)<=7*24*3600*1000)
+        .sort((a,b)=>Math.abs(new Date(a.date).getTime()-targetBaseMs)-Math.abs(new Date(b.date).getTime()-targetBaseMs))[0]:null;
+      const creditYoY=tCur&&tBase&&tBase.value?+((tCur.value/tBase.value-1)*100).toFixed(2):null;
+      const gdpV=_gdpMap.get(ym);
+      return{ym,totllCurrent:tCur?.value,totllCurrentDate:tCur?.date?.slice(0,10),
+        totllBase:tBase?.value,totllBaseDate:tBase?.date?.slice(0,10),
+        creditYoY,gdpYoY:gdpV??null,
+        gap:creditYoY!=null&&gdpV!=null?+(creditYoY-gdpV).toFixed(2):null,
+        spFwd12:cg_fm[12].get(ym),dd12:cg_DD(ym,12)};
+    });
+    const manualSample=[...manualTargets,...gapSeries.slice(-5).map(({ym,gap})=>({ym,gap,
+      creditYoY:_totllMap.get(ym),gdpYoY:_gdpMap.get(ym),spFwd12:cg_fm[12].get(ym),dd12:cg_DD(ym,12)}))];
+
+    const audit={pipeline:{
+      totll:{first:totllRaw[0]?.date?.slice(0,7),last:totllRaw[totllRaw.length-1]?.date?.slice(0,7),n:totllRaw.length,seriesId:'TOTLL',frequency:'semanal (N≈52/año)'},
+      gdp:{first:gdpRaw[0]?.date?.slice(0,7),last:gdpRaw[gdpRaw.length-1]?.date?.slice(0,7),n:gdpRaw.length,seriesId:'GDP',frequency:'trimestral_SAAR'},
+      totllYoY:{n:_totllYoY.length,first:_totllYoY[0]?.date?.slice(0,7),last:_totllYoY[_totllYoY.length-1]?.date?.slice(0,7),
+        method:'yoySeriesByDate ±7d (FIX B: TOTLL semanal — i-12=~3M era incorrecto)'},
+      gdpYoY:{n:_gdpYoY.length,first:_gdpYoY[0]?.date?.slice(0,7),last:_gdpYoY[_gdpYoY.length-1]?.date?.slice(0,7),
+        method:'yoySeriesByDate ±45d (FIX A: GDP trimestral)'},
+      creditGrowthGap:{n:gapSeries.length,first:gapSeries[0]?.ym,last:gapSeries[gapSeries.length-1]?.ym},
+      filterFunnel:{rawGap:gapSeries.length,afterSP500:nAfterSP500,afterFwd12M:nAfterFwd12,afterDD12M:nAfterDD12,
+        note:'La caída N es principalmente por el bug SP500 histórico (spMap solo llega a ~2016)'},
+      unitsCheck:{totll:'Miles de millones USD',totllYoY:'% YoY',gdpYoY:'% YoY',gap:'pp (porcentuales)',scaleConsistency:'OK — ambos en % antes de restar'},
+      totllMethodNote:'FIX B: yoySeriesByDate ±7d. Bug anterior yoySeries(i-12) sobre serie semanal = variación ~3M, no 12M.',
+      gdpMethodNote:'FIX A: yoySeriesByDate ±45d. Bug anterior yoySeries(i-12) sobre serie trimestral = variación ~3Y, no 12M.',
+    },manualSample};
 
     const desc={...statSumm(gaps),n:gapSeries.length,first:gapSeries[0]?.ym,last:gapSeries[gapSeries.length-1]?.ym,
       pctPositive:gaps.length?+(gaps.filter(v=>v>0).length/gaps.length*100).toFixed(1):null,
       currentThresholds:'PROVISIONAL: diff>=3.0→+3 | diff>=1.5→0 | diff<1.5→-3',
       semanticNote:'creditGrowthGap>0 = crédito crece más rápido que PIB nominal. Gap<0 = crece más lento.',
-      inputStats:{totllYoY:{...statSumm(_totllYoY.map(p=>p.value)),first:_totllYoY[0]?.date?.slice(0,7),last:_totllYoY[_totllYoY.length-1]?.date?.slice(0,7)},
-        gdpYoY:{...statSumm(_gdpYoY.map(p=>p.value)),first:_gdpYoY[0]?.date?.slice(0,7),last:_gdpYoY[_gdpYoY.length-1]?.date?.slice(0,7)},
+      inputStats:{
+        totllYoY:{...statSumm(_totllYoY.map(p=>p.value)),first:_totllYoY[0]?.date?.slice(0,7),last:_totllYoY[_totllYoY.length-1]?.date?.slice(0,7),method:'yoySeriesByDate ±7d'},
+        gdpYoY:{...statSumm(_gdpYoY.map(p=>p.value)),first:_gdpYoY[0]?.date?.slice(0,7),last:_gdpYoY[_gdpYoY.length-1]?.date?.slice(0,7),method:'yoySeriesByDate ±45d'},
         gap:{...statSumm(gaps),first:gapSeries[0]?.ym,last:gapSeries[gapSeries.length-1]?.ym}},
     };
-    const audit={pipeline:{
-      totll:{first:totllRaw[0]?.date?.slice(0,7),last:totllRaw[totllRaw.length-1]?.date?.slice(0,7),n:totllRaw.length,seriesId:'TOTLL',frequency:'mensual'},
-      gdp:{first:gdpRaw[0]?.date?.slice(0,7),last:gdpRaw[gdpRaw.length-1]?.date?.slice(0,7),n:gdpRaw.length,seriesId:'GDP',frequency:'trimestral_SAAR'},
-      totllYoY:{n:_totllYoY.length,first:_totllYoY[0]?.date?.slice(0,7),last:_totllYoY[_totllYoY.length-1]?.date?.slice(0,7),method:'yoySeries (i-12, mensual)'},
-      gdpYoY:{n:_gdpYoY.length,first:_gdpYoY[0]?.date?.slice(0,7),last:_gdpYoY[_gdpYoY.length-1]?.date?.slice(0,7),method:'yoySeriesByDate (fecha real ±45d, trimestral)'},
-      creditGrowthGap:{n:gapSeries.length,first:gapSeries[0]?.ym,last:gapSeries[gapSeries.length-1]?.ym},
-      filterFunnel:{rawGap:gapSeries.length,afterSP500:nAfterSP500,afterFwd12M:nAfterFwd12,afterDD12M:nAfterDD12,
-        note:'La caída N es principalmente por el bug SP500 histórico (spMap solo llega a ~2016)'},
-      unitsCheck:{totll:'Miles de millones USD',totllYoY:'% YoY',gdpYoY:'% YoY',gap:'pp (porcentuales)',scaleConsistency:'OK — ambos en % antes de restar'},
-      gdpMethodNote:'FIX APLICADO: gdpYoY usa yoySeriesByDate (fecha real ±45d). El bug anterior calculaba GDP a 3Y en lugar de 1Y.',
-    },manualSample};
-
-    // Walk-Forward Calibration OOS (expanding window)
     const MIN_HIST=36;
     const wfObs=[];
     const sortedByDate=[...gapSeries].sort((a,b)=>a.ym.localeCompare(b.ym));
