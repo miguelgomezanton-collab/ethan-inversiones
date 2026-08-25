@@ -1198,3 +1198,94 @@ export async function render(container, { actionsSlot }) {
       <div style="font-size:9px;color:var(--amber);margin-top:3px;">Scoring PROVISIONAL — datos→transformación→evidencia→semántica→scoring (no al revés)</div>
     </div>`+descHTML+auditHTML+summaryHTML+quintilesHTML;
   }
+
+  // Añadir sección walk-forward al render de Credit Gap
+  const _origPaintCreditGap = paintCreditGap;
+  paintCreditGap = function(data) {
+    _origPaintCreditGap(data);
+    if (!data?.wfResults) return;
+    const el = document.getElementById('radar-wrap');
+    const wf = data.wfResults;
+    const f3=v=>v!=null?(v>=0?'+':'')+v.toFixed(3):'—';
+    const f2=v=>v!=null?v.toFixed(2):'—';
+    const col=v=>v==null?'var(--text3)':v>0?'var(--green)':'var(--red)';
+    const sigCol=v=>v?.excludes0?'var(--green)':v?.pBoot!=null&&v.pBoot<0.1?'var(--amber)':'var(--text3)';
+
+    const SCHEMES=[
+      ['percentiles_p33p67','Percentiles p33/p67','−3 / 0 / +3'],
+      ['quintiles_p20p40p60p80','Quintiles p20/p40/p60/p80','−3/−1/0/+1/+3'],
+    ];
+
+    const wfHTML=`<div class="mac-card" style="margin-top:12px;">
+      <div style="font-size:9px;font-weight:700;color:var(--text3);margin-bottom:8px;">WALK-FORWARD CALIBRATION OOS · Expanding window · min ${wf.minHist} obs hist · ${wf.wfFirst||'—'} → ${wf.wfLast||'—'} · N=${wf.wfN}</div>
+      <div style="font-size:8px;color:var(--teal);font-family:var(--mono);margin-bottom:10px;">Thresholds calculados exclusivamente con datos anteriores a cada observación. Sin look-ahead.</div>
+
+      <table style="width:100%;border-collapse:collapse;font-size:9px;font-family:var(--mono);margin-bottom:14px;">
+        <thead><tr style="background:var(--surface2);">
+          <th style="padding:4px 6px;text-align:left;color:var(--text3);">Esquema</th>
+          <th style="padding:4px 6px;text-align:right;color:var(--text3);">N</th>
+          <th style="padding:4px 6px;text-align:right;color:var(--text3);">ρ DD+12M</th>
+          <th style="padding:4px 6px;text-align:right;color:var(--text3);">ρ Ret+12M</th>
+          <th style="padding:4px 6px;text-align:right;color:var(--text3);">Boot DD12</th>
+          <th style="padding:4px 6px;text-align:right;color:var(--text3);">Temporal</th>
+          <th style="padding:4px 6px;text-align:right;color:var(--text3);">Turnover</th>
+        </tr></thead><tbody>
+        ${SCHEMES.map(([k,label])=>{
+          const r=wf[k]; if(!r||r.insufficient) return `<tr><td colspan="7" style="padding:4px 6px;color:var(--text3);">${label}: N insuficiente</td></tr>`;
+          return `<tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:4px 6px;color:var(--text2);">${label}</td>
+            <td style="padding:4px 6px;text-align:right;color:var(--text3);">${r.n}</td>
+            <td style="padding:4px 6px;text-align:right;font-weight:700;color:${col(r.spDD?.rho)};">${f3(r.spDD?.rho)}${r.spDD?.p!=null&&r.spDD.p<0.05?'*':''}</td>
+            <td style="padding:4px 6px;text-align:right;color:${col(r.spR?.rho)};">${f3(r.spR?.rho)}${r.spR?.p!=null&&r.spR.p<0.05?'*':''}</td>
+            <td style="padding:4px 6px;text-align:right;font-size:9px;color:${sigCol(r.bootDD)};">${r.bootDD?'p='+r.bootDD.pBoot+(r.bootDD.excludes0?' ✓':''):'—'}</td>
+            <td style="padding:4px 6px;text-align:right;color:${r.regDep?'var(--amber)':'var(--green)'};">${r.regDep?'⚡REGIME':'STABLE'}</td>
+            <td style="padding:4px 6px;text-align:right;color:var(--text3);">${r.turnoverRate!=null?(r.turnoverRate*100).toFixed(1)+'%':'—'}</td>
+          </tr>`;
+        }).join('')}
+        ${(()=>{const r=wf.zscore_continuous;if(!r||r.insufficient) return '<tr><td colspan="7" style="padding:4px 6px;color:var(--text3);">Z-score continuo: N insuficiente</td></tr>';
+          return `<tr style="border-bottom:1px solid var(--border);background:rgba(64,217,192,0.04);">
+            <td style="padding:4px 6px;color:var(--teal);font-weight:700;">Z-score continuo (OOS)</td>
+            <td style="padding:4px 6px;text-align:right;color:var(--text3);">${r.n}</td>
+            <td style="padding:4px 6px;text-align:right;font-weight:700;color:${col(r.spDD?.rho)};">${f3(r.spDD?.rho)}${r.spDD?.p!=null&&r.spDD.p<0.05?'*':''}</td>
+            <td style="padding:4px 6px;text-align:right;color:${col(r.spR?.rho)};">${f3(r.spR?.rho)}${r.spR?.p!=null&&r.spR.p<0.05?'*':''}</td>
+            <td style="padding:4px 6px;text-align:right;font-size:9px;color:${sigCol(r.bootDD)};">${r.bootDD?'p='+r.bootDD.pBoot+(r.bootDD.excludes0?' ✓':''):'—'}</td>
+            <td style="padding:4px 6px;text-align:right;color:${r.regDep?'var(--amber)':'var(--green)'};">${r.regDep?'⚡REGIME':'STABLE'}</td>
+            <td style="padding:4px 6px;text-align:right;color:var(--text3);">continuo</td>
+          </tr>`;})()}
+        </tbody>
+      </table>
+
+      ${SCHEMES.map(([k,label,scores])=>{
+        const r=wf[k]; if(!r||r.insufficient||!r.scoreStats) return '';
+        const entries=Object.entries(r.scoreStats).sort((a,b)=>+a[0]-+b[0]);
+        return `<div style="margin-bottom:12px;">
+          <div style="font-size:9px;font-weight:700;color:var(--text3);margin-bottom:5px;">${label} · scores [${scores}] · distribución OOS por estado</div>
+          <div style="display:flex;gap:5px;">
+          ${entries.map(([sc,s])=>`<div style="flex:1;background:var(--surface2);border-radius:5px;padding:7px;text-align:center;">
+            <div style="font-size:9px;font-weight:700;color:${+sc>0?'var(--green)':+sc<0?'var(--red)':'var(--amber)'};">${sc>=0?'+':''}${sc}</div>
+            <div style="font-size:8px;color:var(--text3);">N=${s.n}</div>
+            <div style="font-family:var(--mono);font-size:10px;font-weight:700;color:${s.medDD12<-5?'var(--red)':s.medDD12<-2?'var(--amber)':'var(--green)'};">${s.medDD12!=null?s.medDD12.toFixed(1)+'%':'—'}</div>
+            <div style="font-size:8px;color:var(--text3);">P(DD>10%):${s.pDD10??'—'}%</div>
+            <div style="font-size:8px;color:var(--text3);">Pos:${s.pPos12??'—'}%</div>
+          </div>`).join('')}
+          </div>
+        </div>`;
+      }).join('')}
+
+      ${(()=>{const r=wf.zscore_continuous;if(!r?.quintiles?.length) return '';
+        return `<div style="margin-bottom:8px;">
+          <div style="font-size:9px;font-weight:700;color:var(--teal);margin-bottom:5px;">Z-score OOS — quintiles (monotonicidad en variable continua)</div>
+          <div style="display:flex;gap:5px;">
+          ${r.quintiles.map(q=>`<div style="flex:1;background:var(--surface2);border-radius:5px;padding:7px;text-align:center;">
+            <div style="font-size:9px;color:var(--teal);">Q${q.q}</div>
+            <div style="font-size:8px;color:var(--text3);">[${q.zMin},${q.zMax}]σ</div>
+            <div style="font-family:var(--mono);font-size:10px;font-weight:700;color:${q.medDD12<-5?'var(--red)':q.medDD12<-2?'var(--amber)':'var(--green)'};">${q.medDD12!=null?q.medDD12.toFixed(1)+'%':'—'}</div>
+            <div style="font-size:8px;color:var(--text3);">DD>10%:${q.pDD10??'—'}%</div>
+            <div style="font-size:8px;color:var(--text3);">N=${q.n}</div>
+          </div>`).join('')}
+          </div>
+        </div>`;})()}
+    </div>`;
+
+    el.innerHTML += wfHTML;
+  };
