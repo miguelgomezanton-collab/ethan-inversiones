@@ -1192,6 +1192,134 @@ export default async function handler(req, res) {
     });
   }
 
+  // ── CREDIT GAP VALIDATION (type=creditgap) ───────────────────────
+  // creditGrowthGap = TOTLL YoY − Nominal GDP YoY
+  // Objetivo: validar empíricamente la variable continua antes de definir thresholds.
+  // Lags testados: t (contemporáneo), t-3M, t-6M, t-12M
+  if (type === 'creditgap') {
+    // Forward maps
+    const cg_fm = {};
+    for (const h of [3,6,12]) {
+      cg_fm[h] = new Map();
+      for (const [ym] of spMap) {
+        const t=new Date(ym+'-01'); t.setMonth(t.getMonth()+h);
+        const ty=t.toISOString().slice(0,7), fr=spMap.get(ym), to=spMap.get(ty);
+        if(fr&&to) cg_fm[h].set(ym,+((to/fr-1)*100).toFixed(3));
+      }
+    }
+    function cg_DD(fromYM,months){const fr=spMap.get(fromYM);if(!fr)return null;let pk=fr,mx=0;for(let i=1;i<=months;i++){const t=new Date(fromYM+'-01');t.setMonth(t.getMonth()+i);const v=spMap.get(t.toISOString().slice(0,7));if(!v)continue;if(v>pk)pk=v;const d=(v-pk)/pk*100;if(d<mx)mx=d;}return+mx.toFixed(3);}
+    function cg_P(xs,ys){if(!xs||xs.length<10)return null;const mx=xs.reduce((a,b)=>a+b,0)/xs.length,my=ys.reduce((a,b)=>a+b,0)/ys.length;let num=0,dx2=0,dy2=0;for(let i=0;i<xs.length;i++){const a=xs[i]-mx,b=ys[i]-my;num+=a*b;dx2+=a*a;dy2+=b*b;}const d=Math.sqrt(dx2*dy2);if(!d)return null;const r=num/d,n=xs.length,t=r*Math.sqrt(n-2)/Math.sqrt(1-r*r+1e-10),z=Math.abs(t),p=n>30?2*(1-(0.5*(1+Math.sign(z)*Math.sqrt(1-Math.exp(-2*z*z/Math.PI))))):null,zr=0.5*Math.log((1+r)/(1-r+1e-10)),se=1/Math.sqrt(n-3);return{rho:+r.toFixed(3),n,p:p!=null?+p.toFixed(4):null,ci95:[+(Math.tanh(zr-1.96*se)).toFixed(3),+(Math.tanh(zr+1.96*se)).toFixed(3)]};}
+    function cg_rk(arr){const s=[...arr].map((v,i)=>({v,i})).sort((a,b)=>a.v-b.v);const r=new Array(arr.length);let i=0;while(i<s.length){let j=i;while(j<s.length&&s[j].v===s[i].v)j++;const avg=(i+j-1)/2;for(let k=i;k<j;k++)r[s[k].i]=avg;i=j;}return r;}
+    function cg_Sp(xs,ys){return cg_P(cg_rk(xs),cg_rk(ys));}
+    function cg_boot(pairs,NSIM=5000,BL=12){const T=pairs.length;if(T<15)return null;function rhoF(a){const n=a.length,rx=cg_rk(a.map(p=>p[0])),ry=cg_rk(a.map(p=>p[1]));const mx=rx.reduce((a,b)=>a+b,0)/n,my=ry.reduce((a,b)=>a+b,0)/n;let num=0,dx2=0,dy2=0;for(let i=0;i<n;i++){const a2=rx[i]-mx,b2=ry[i]-my;num+=a2*b2;dx2+=a2*a2;dy2+=b2*b2;}const d=Math.sqrt(dx2*dy2);return d?num/d:0;}const rO=rhoF(pairs);let sd=20260825;function rnd(){sd=(sd*1664525+1013904223)&0xFFFFFFFF;return(sd>>>0)/4294967296;}const bt=[];for(let s=0;s<NSIM;s++){const sm=[];while(sm.length<T){const st=Math.floor(rnd()*(T-BL+1));for(let k=0;k<BL&&sm.length<T;k++)sm.push(pairs[(st+k)%T]);}bt.push(rhoF(sm.slice(0,T)));}bt.sort((a,b)=>a-b);const ci025=bt[Math.floor(NSIM*0.025)],ci975=bt[Math.floor(NSIM*0.975)],pB=(rO<0?bt.filter(r=>r>=0).length:bt.filter(r=>r<=0).length)/NSIM;return{rhoObs:+rO.toFixed(3),ci95:[+ci025.toFixed(3),+ci975.toFixed(3)],pBoot:+pB.toFixed(4),excludes0:(rO<0&&ci975<0)||(rO>0&&ci025>0),T,NSIM};}
+
+    // Extraer serie creditGrowthGap de histMacroV1
+    // Disponible como ind.creditoVsPib.value en cada mes
+    const gapSeries = [];
+    for (const m of histMacroV1) {
+      if (!m.valid) continue;
+      const gap = m.components?.creditoVsPib?.value;
+      if (gap == null) continue;
+      gapSeries.push({ ym: m.month, gap });
+    }
+    gapSeries.sort((a,b) => a.ym.localeCompare(b.ym));
+
+    // Lags: t=0, t-3M, t-6M, t-12M
+    // Para lag L: el gap de mes (t-L) se compara contra los retornos forward desde t
+    const LAGS = [0, 3, 6, 12];
+    // Construir mapa ym→gap para lookback
+    const gapMap = new Map(gapSeries.map(g=>[g.ym, g.gap]));
+
+    function addMonthsYM(ym, n) {
+      const d = new Date(ym+'-01'); d.setMonth(d.getMonth()+n);
+      return d.toISOString().slice(0,7);
+    }
+
+    const lagResults = {};
+    for (const lag of LAGS) {
+      // Para cada mes t, usar gap de (t - lag)
+      const pairs = { r3:[], r6:[], r12:[], dd3:[], dd6:[], dd12:[], bin12:[], dd10:[], dd15:[] };
+      for (const { ym } of gapSeries) {
+        const lagYM = lag === 0 ? ym : addMonthsYM(ym, -lag);
+        const gap = gapMap.get(lagYM); if (gap == null) continue;
+        const r3=cg_fm[3].get(ym), r6=cg_fm[6].get(ym), r12=cg_fm[12].get(ym);
+        const dd3=cg_DD(ym,3), dd6=cg_DD(ym,6), dd12=cg_DD(ym,12);
+        if(r3!=null)   pairs.r3.push([gap,r3]);
+        if(r6!=null)   pairs.r6.push([gap,r6]);
+        if(r12!=null){ pairs.r12.push([gap,r12]); pairs.bin12.push([gap,r12>0?1:0]); }
+        if(dd3!=null)  pairs.dd3.push([gap,dd3]);
+        if(dd6!=null)  pairs.dd6.push([gap,dd6]);
+        if(dd12!=null){ pairs.dd12.push([gap,dd12]); pairs.dd10.push([gap,dd12<-10?1:0]); pairs.dd15.push([gap,dd12<-15?1:0]); }
+      }
+      const sp=p=>cg_Sp(p.map(q=>q[0]),p.map(q=>q[1]));
+      const corr={ spR3:sp(pairs.r3), spR6:sp(pairs.r6), spR12:sp(pairs.r12),
+        spDD3:sp(pairs.dd3), spDD6:sp(pairs.dd6), spDD12:sp(pairs.dd12),
+        spBin12:sp(pairs.bin12), spDD10:sp(pairs.dd10), spDD15:sp(pairs.dd15) };
+      const boot=cg_boot(pairs.dd12);
+      const bootR=cg_boot(pairs.r12);
+
+      // Estabilidad temporal (por dd6)
+      const chrono=[...pairs.dd6].sort((a,b)=>a[0]-b[0]);
+      // Ordenar por ym para estabilidad temporal real
+      const chronoByDate=[...pairs.dd6.map((p,i)=>({gap:p[0],dd:p[1],ym:gapSeries[i]?.ym||''}))].sort((a,b)=>a.ym.localeCompare(b.ym));
+      const bSz=Math.floor(chronoByDate.length/3);
+      const temp=['Early','Mid','Recent'].map((label,i)=>{
+        const bl=chronoByDate.slice(i*bSz,i===2?chronoByDate.length:(i+1)*bSz);
+        const res=cg_Sp(bl.map(p=>p.gap),bl.map(p=>p.dd));
+        return{label,n:bl.length,first:bl[0]?.ym,last:bl[bl.length-1]?.ym,rho:res?.rho??null,p:res?.p??null};
+      });
+      const signs=temp.filter(b=>b.rho!=null).map(b=>Math.sign(b.rho));
+      const regDep=signs.length>=2&&signs.some(s=>s!==signs[0]);
+
+      // Quintiles por valor continuo del gap (vs DD+12M y Ret+12M)
+      const sorted=[...pairs.dd12].sort((a,b)=>a[0]-b[0]);
+      const Nq=sorted.length, qSz=Math.ceil(Nq/5);
+      const quintiles=[0,1,2,3,4].map(qi=>{
+        const sl=sorted.slice(qi*qSz,(qi+1)*qSz);
+        const dds=sl.map(p=>p[1]);
+        const med=arr=>{const s=[...arr].sort((a,b)=>a-b);return s.length?+s[Math.floor(s.length/2)].toFixed(2):null;};
+        const rs=pairs.r12.slice(qi*qSz,(qi+1)*qSz).map(p=>p[1]);
+        return{q:qi+1,n:sl.length,
+          gapMin:+sl[0]?.[0].toFixed(2), gapMax:+sl[sl.length-1]?.[0].toFixed(2),
+          medDD12:med(dds), pDD10:dds.length?+(dds.filter(d=>d<-10).length/dds.length*100).toFixed(1):null,
+          pDD15:dds.length?+(dds.filter(d=>d<-15).length/dds.length*100).toFixed(1):null,
+          medRet12:med(rs)};
+      });
+
+      // Monotonicidad (¿los quintiles ordenan monótonamente el riesgo?)
+      const ddByQ=quintiles.map(q=>q.medDD12).filter(v=>v!=null);
+      const isMonotonic=ddByQ.length>=3&&(
+        ddByQ.every((v,i)=>i===0||v<=ddByQ[i-1]) ||
+        ddByQ.every((v,i)=>i===0||v>=ddByQ[i-1])
+      );
+
+      lagResults[`lag${lag}M`]={lag,n:pairs.dd12.length,corr,boot,bootR,temp,regDep,quintiles,isMonotonic};
+    }
+
+    // Estadísticos descriptivos del gap
+    const gaps=gapSeries.map(g=>g.gap).sort((a,b)=>a-b);
+    const pctX=(arr,p)=>arr[Math.max(0,Math.floor(arr.length*p)-1)];
+    const desc={n:gaps.length,
+      first:gapSeries[0]?.ym, last:gapSeries[gapSeries.length-1]?.ym,
+      min:+gaps[0].toFixed(2), p10:+pctX(gaps,0.10).toFixed(2),
+      p25:+pctX(gaps,0.25).toFixed(2), median:+pctX(gaps,0.50).toFixed(2),
+      p75:+pctX(gaps,0.75).toFixed(2), p90:+pctX(gaps,0.90).toFixed(2),
+      max:+gaps[gaps.length-1].toFixed(2),
+      pctPositive:+(gaps.filter(v=>v>0).length/gaps.length*100).toFixed(1),
+      currentThresholds:'PROVISIONAL: diff>=3.0→+3 | diff>=1.5→0 | diff<1.5→-3',
+      semanticNote:'creditGrowthGap>0 = crédito crece más rápido que PIB nominal. Gap<0 = crece más lento.',
+    };
+
+    return res.status(200).json({
+      updatedAt: new Date().toISOString(),
+      title: 'creditGrowthGap (TOTLL YoY − GDP YoY) — Validación histórica antes de thresholds',
+      note: 'HIST_MACRO_V1 FROZEN. Scoring [PROVISIONAL] — no usar hasta validar empíricamente.',
+      nSim: 5000, blockSize: 12,
+      desc, lagResults,
+      errors: errs.length?errs:undefined,
+    });
+  }
+
   function spReturn(fromYM, monthsForward) {
     const from = spMap.get(fromYM);
     if (from == null || from === 0) return null;

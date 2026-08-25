@@ -17,6 +17,7 @@ export async function render(container, { actionsSlot }) {
       <button class="btn radar-tab-btn ${activeTab==='block'?'btn-primary':''}" data-tab="block">🔬 Block Validation</button>
       <button class="btn radar-tab-btn ${activeTab==='dive'?'btn-primary':''}" data-tab="dive">📉 Downside Dive</button>
       <button class="btn radar-tab-btn ${activeTab==='continuous'?'btn-primary':''}" data-tab="continuous">〰️ Continuous</button>
+      <button class="btn radar-tab-btn ${activeTab==='creditgap'?'btn-primary':''}" data-tab="creditgap">📊 Credit Gap</button>
       <button class="btn btn-primary" id="radar-refresh" style="margin-left:6px;">↻</button>
     </div>`;
   container.innerHTML = `<div id="radar-wrap"><div class="empty"><div class="loader-ring"></div></div></div>`;
@@ -600,12 +601,14 @@ export async function render(container, { actionsSlot }) {
     else if (activeTab === 'block') loadBlockValidation();
     else if (activeTab === 'dive') loadDownsideDive();
     else if (activeTab === 'continuous') loadContinuousDive();
+    else if (activeTab === 'creditgap') loadCreditGap();
   });
   document.getElementById('radar-refresh')?.addEventListener('click', () => {
     if (activeTab === 'radar') load(true);
     else if (activeTab === 'block') loadBlockValidation(true);
     else if (activeTab === 'dive') loadDownsideDive(true);
-    else loadContinuousDive(true);
+    else if (activeTab === 'continuous') loadContinuousDive(true);
+    else loadCreditGap(true);
   });
   await load(false);
   return { destroy() {} };
@@ -1053,4 +1056,100 @@ export async function render(container, { actionsSlot }) {
       '<div style="font-size:9px;font-family:var(--mono);color:var(--text3);">CONTINUOUS DIVE · ' + (data.updatedAt||'').slice(0,10) + ' · 5000 sims · bloque 12M</div>' +
       '<div style="font-size:9px;color:var(--text2);margin-top:4px;">Variable continua vs forward MaxDD · 4 transformaciones × 2 indicadores × 3 horizontes. Objetivo: ¿tiene más señal la variable continua que el score -1/0/+1?</div>' +
     '</div>' + html;
+  }
+
+  let creditGapData = null;
+  async function loadCreditGap(force=false) {
+    if (creditGapData && !force) { paintCreditGap(creditGapData); return; }
+    document.getElementById('radar-wrap').innerHTML = '<div class="empty"><div class="loader-ring"></div><span style="font-family:var(--mono);font-size:11px;color:var(--text3);margin-left:10px;">Credit Gap Validation (5000 sims × 4 lags)...</span></div>';
+    try {
+      creditGapData = await fetch('/api/macro-history?type=creditgap').then(r=>r.ok?r.json():null);
+      paintCreditGap(creditGapData);
+    } catch(e) {
+      document.getElementById('radar-wrap').innerHTML = `<div class="empty"><div class="empty-icon">⚠</div><div class="empty-title">Error</div><div class="empty-desc">${e.message}</div></div>`;
+    }
+  }
+
+  function paintCreditGap(data) {
+    const el = document.getElementById('radar-wrap');
+    if (!data?.lagResults) { el.innerHTML = '<div class="empty"><div class="empty-icon">⚠</div><div class="empty-title">Sin datos</div></div>'; return; }
+    const f3=v=>v!=null?(v>=0?'+':'')+v.toFixed(3):'—';
+    const f2=v=>v!=null?v.toFixed(2):'—';
+    const f1=v=>v!=null?(v>=0?'+':'')+v.toFixed(1)+'%':'—';
+    const col=v=>v==null?'var(--text3)':v>0?'var(--green)':'var(--red)';
+    const colDD=v=>v==null?'var(--text3)':v<-10?'var(--red)':v<-5?'var(--amber)':'var(--green)';
+    const sigCol=v=>v?.excludes0?'var(--green)':v?.pBoot!=null&&v.pBoot<0.1?'var(--amber)':'var(--text3)';
+    const d=data.desc||{};
+
+    // Header descriptivo
+    const descHTML=`<div class="mac-card" style="margin-bottom:12px;">
+      <div style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:8px;">creditGrowthGap = TOTLL YoY − Nominal GDP YoY · Validación antes de thresholds</div>
+      <div style="font-size:9px;color:var(--amber);font-family:var(--mono);margin-bottom:8px;">⚠ Scoring PROVISIONAL — no usar hasta completar validación empírica. HIST_MACRO_V1 FROZEN.</div>
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;font-family:var(--mono);font-size:9px;">
+        ${[['N obs',d.n],['Rango',d.first+'→'+d.last],['Mediana',f2(d.median)+'pp'],['% positivo',d.pctPositive+'%'],['p10/p90',f2(d.p10)+'/'+f2(d.p90)]].map(([l,v])=>`<div style="background:var(--surface2);border-radius:4px;padding:6px;"><div style="color:var(--text3);margin-bottom:3px;">${l}</div><div style="color:var(--text1);font-weight:700;">${v}</div></div>`).join('')}
+      </div>
+      <div style="font-size:9px;color:var(--text3);margin-top:8px;">${d.semanticNote}</div>
+    </div>`;
+
+    // Tabla resumen × lag × horizonte
+    const LAG_LABELS={'lag0M':'t (contemporáneo)','lag3M':'t−3M (lag 3M)','lag6M':'t−6M (lag 6M)','lag12M':'t−12M (lag 12M)'};
+    const summaryHTML=`<div class="mac-card" style="margin-bottom:12px;">
+      <div style="font-size:9px;font-weight:700;color:var(--text3);margin-bottom:8px;">Correlaciones por lag y horizonte</div>
+      <table style="width:100%;border-collapse:collapse;font-size:9px;font-family:var(--mono);">
+        <thead><tr style="background:var(--surface2);">
+          <th style="padding:4px 6px;text-align:left;color:var(--text3);">Lag</th>
+          <th style="padding:4px 6px;text-align:right;color:var(--text3);">N</th>
+          <th style="padding:4px 6px;text-align:right;color:var(--text3);">ρ Ret+6M</th>
+          <th style="padding:4px 6px;text-align:right;color:var(--text3);">ρ Ret+12M</th>
+          <th style="padding:4px 6px;text-align:right;color:var(--text3);">ρ DD+6M</th>
+          <th style="padding:4px 6px;text-align:right;color:var(--text3);">ρ DD+12M</th>
+          <th style="padding:4px 6px;text-align:right;color:var(--text3);">ρ DD>10%</th>
+          <th style="padding:4px 6px;text-align:right;color:var(--text3);">Bootstrap DD12</th>
+          <th style="padding:4px 6px;text-align:right;color:var(--text3);">Temporal</th>
+          <th style="padding:4px 6px;text-align:right;color:var(--text3);">Monotónico</th>
+        </tr></thead><tbody>
+        ${Object.entries(data.lagResults).map(([k,lr])=>`
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:4px 6px;color:var(--text2);">${LAG_LABELS[k]||k}</td>
+            <td style="padding:4px 6px;text-align:right;color:var(--text3);">${lr.n}</td>
+            <td style="padding:4px 6px;text-align:right;color:${col(lr.corr.spR6?.rho)};">${f3(lr.corr.spR6?.rho)}${lr.corr.spR6?.p!=null&&lr.corr.spR6.p<0.05?'*':''}</td>
+            <td style="padding:4px 6px;text-align:right;color:${col(lr.corr.spR12?.rho)};">${f3(lr.corr.spR12?.rho)}${lr.corr.spR12?.p!=null&&lr.corr.spR12.p<0.05?'*':''}</td>
+            <td style="padding:4px 6px;text-align:right;color:${col(lr.corr.spDD6?.rho)};">${f3(lr.corr.spDD6?.rho)}${lr.corr.spDD6?.p!=null&&lr.corr.spDD6.p<0.05?'*':''}</td>
+            <td style="padding:4px 6px;text-align:right;color:${col(lr.corr.spDD12?.rho)};">${f3(lr.corr.spDD12?.rho)}${lr.corr.spDD12?.p!=null&&lr.corr.spDD12.p<0.05?'*':''}</td>
+            <td style="padding:4px 6px;text-align:right;color:${col(lr.corr.spDD10?.rho)};">${f3(lr.corr.spDD10?.rho)}${lr.corr.spDD10?.p!=null&&lr.corr.spDD10.p<0.05?'*':''}</td>
+            <td style="padding:4px 6px;text-align:right;font-size:9px;color:${sigCol(lr.boot)};">${lr.boot?'ρ='+lr.boot.rhoObs+' p='+lr.boot.pBoot+(lr.boot.excludes0?' ✓':''):'—'}</td>
+            <td style="padding:4px 6px;text-align:right;color:${lr.regDep?'var(--amber)':'var(--green)'};">${lr.regDep?'⚡REGIME':'STABLE'}</td>
+            <td style="padding:4px 6px;text-align:right;color:${lr.isMonotonic?'var(--green)':'var(--amber)'};">${lr.isMonotonic?'✓':'—'}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+
+    // Quintiles × lag
+    const quintilesHTML=Object.entries(data.lagResults).map(([k,lr])=>`
+      <div class="mac-card" style="margin-bottom:10px;">
+        <div style="font-size:9px;font-weight:700;color:var(--text2);margin-bottom:8px;">${LAG_LABELS[k]||k} — Quintiles vs DD+12M y Ret+12M ${lr.isMonotonic?'<span style="color:var(--green);">✓ monotónico</span>':'<span style="color:var(--amber);">— no monotónico</span>'}</div>
+        <div style="display:flex;gap:6px;">
+          ${(lr.quintiles||[]).map(q=>`<div style="flex:1;background:var(--surface2);border-radius:4px;padding:8px;text-align:center;">
+            <div style="font-size:8px;color:var(--teal);">Q${q.q}</div>
+            <div style="font-size:8px;color:var(--text3);">[${q.gapMin},${q.gapMax}]pp</div>
+            <div style="font-family:var(--mono);font-size:12px;font-weight:700;color:${colDD(q.medDD12)};">${f1(q.medDD12)}</div>
+            <div style="font-size:8px;color:var(--text3);">DD>10%: ${q.pDD10!=null?q.pDD10+'%':'—'}</div>
+            <div style="font-size:8px;color:${col(q.medRet12)};">Ret: ${f1(q.medRet12)}</div>
+            <div style="font-size:8px;color:var(--text3);">N=${q.n}</div>
+          </div>`).join('')}
+        </div>
+        <div style="display:flex;gap:4px;margin-top:8px;">
+          ${(lr.temp||[]).map(t=>`<div style="flex:1;background:rgba(0,0,0,0.2);border-radius:4px;padding:5px;text-align:center;">
+            <div style="font-size:8px;color:var(--text3);">${t.label} (N=${t.n})</div>
+            <div style="font-family:var(--mono);font-size:11px;font-weight:700;color:${col(t.rho)};">${f3(t.rho)}${t.p!=null&&t.p<0.05?'*':''}</div>
+            <div style="font-size:8px;color:var(--text3);">p=${t.p!=null?t.p.toFixed(3):'—'}</div>
+          </div>`).join('')}
+        </div>
+      </div>`).join('');
+
+    el.innerHTML=`<div class="mac-card" style="margin-bottom:10px;background:rgba(251,191,36,0.04);border-color:rgba(251,191,36,0.2);">
+      <div style="font-size:9px;font-family:var(--mono);color:var(--text3);">Credit Gap Validation · ${(data.updatedAt||'').slice(0,10)} · 5000 sims · 4 lags (0/3/6/12M)</div>
+      <div style="font-size:9px;color:var(--amber);margin-top:3px;">Scoring PROVISIONAL — datos→transformación→evidencia→semántica→scoring (no al revés)</div>
+    </div>`+descHTML+summaryHTML+quintilesHTML;
   }
