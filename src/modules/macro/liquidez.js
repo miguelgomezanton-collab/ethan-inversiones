@@ -9,7 +9,7 @@ function regime(liq) {
   // Indicadores: M2 Global (±3), Impulso Crediticio (±2), Velocidad M2 (±2), Reservas (±1/−2), BBB Spread (±1)
   // PROVISIONAL — pesos y thresholds pendientes de calibración
   let rawScore = 0, maxAvailable = 0;
-  const MAX_POSSIBLE = 9; // 3+2+2+1+1
+  const MAX_POSSIBLE = 12; // M2×3 + Crédito×3 + Impulso×2 + VelM2×2 + Reservas×1 + BBB×1
   const detail = {};
   for (const [k, i] of Object.entries(liq)) {
     if (i?.score != null) {
