@@ -22,11 +22,19 @@ export async function render(container,{actionsSlot}){
     const avail=macro.availableScore??17;
     const cov=macro.coverage??1;
     const man=getManuals();
-    // Ciclo position: map score a fase
-    const fase=s>=10?'BOOM':s>=4?'EXPANSIÓN':s>=0?'DESACEL.':s>=-4?'RECESIÓN LEVE':'RECESIÓN SEVERA';
-    const faseCol=s>=10?'var(--green)':s>=4?'var(--green)':s>=0?'var(--amber)':s>=-4?'var(--red)':'var(--red)';
-    const covColor=cov>=0.85?'var(--green)':cov>=0.65?'var(--amber)':'var(--red)';
-    const covLabel=cov>=0.85?'cobertura alta':cov>=0.65?'cobertura parcial':'cobertura insuficiente';
+    // Ciclo score exclusivo (solo los 3 indicadores de ciclo)
+    const cicloUSD = co.curvaUSD?.score ?? null;
+    const cicloEUR = co.curvaEUR?.score ?? null;
+    const cicloLEI = (co.lei ?? ind.lei)?.score ?? null;
+    const cicloScore = [cicloUSD, cicloEUR, cicloLEI].filter(v => v != null).reduce((a,b)=>a+b, 0);
+    const cicloAvail = [cicloUSD, cicloEUR, cicloLEI].filter(v => v != null).length;
+    const cicloMax = 3; // ±1 × 3 indicadores
+
+    // Dial usa cicloScore (no scoreTotal global)
+    const fase    = cicloScore >= 2 ? 'EXPANSIÓN' : cicloScore === 1 ? 'RECUPERAC.' : cicloScore === 0 ? 'NEUTRAL' : cicloScore >= -1 ? 'DESACEL.' : 'CONTRACCIÓN';
+    const faseCol = cicloScore > 0 ? 'var(--green)' : cicloScore === 0 ? 'var(--amber)' : 'var(--red)';
+    const covColor= cov>=0.85?'var(--green)':cov>=0.65?'var(--amber)':'var(--red)';
+    const covLabel= cov>=0.85?'cobertura alta':cov>=0.65?'cobertura parcial':'cobertura insuficiente';
 
     el.innerHTML=`
       <div style="display:grid;grid-template-columns:260px 1fr;gap:16px;margin-bottom:14px;">
@@ -34,27 +42,28 @@ export async function render(container,{actionsSlot}){
         <div class="mac-card" style="display:flex;flex-direction:column;align-items:center;justify-content:center;">
           <svg viewBox="0 0 240 240" style="width:210px;height:210px;">
             <circle cx="120" cy="120" r="90" fill="none" stroke="var(--border)" stroke-width="2"/>
-            <!-- 6 sectores -->
-            <path d="M120,120 L120,30 A90,90 0 0,1 198,75 Z" fill="${s>=4&&s<10?'rgba(74,222,128,0.18)':'rgba(74,222,128,0.06)'}" stroke="var(--border)" stroke-width="1"/>
-            <path d="M120,120 L198,75 A90,90 0 0,1 198,165 Z" fill="${s>=10?'rgba(74,222,128,0.22)':'rgba(74,222,128,0.05)'}" stroke="var(--border)" stroke-width="1"/>
-            <path d="M120,120 L198,165 A90,90 0 0,1 120,210 Z" fill="rgba(251,191,36,0.06)" stroke="var(--border)" stroke-width="1"/>
-            <path d="M120,120 L120,210 A90,90 0 0,1 42,165 Z" fill="${s>=0&&s<4?'rgba(251,191,36,0.22)':'rgba(251,191,36,0.06)'}" stroke="${s>=0&&s<4?'var(--amber)':'var(--border)'}" stroke-width="${s>=0&&s<4?'2':'1'}"/>
-            <path d="M120,120 L42,165 A90,90 0 0,1 42,75 Z" fill="${s<0&&s>=-4?'rgba(244,113,116,0.20)':'rgba(244,113,116,0.06)'}" stroke="${s<0&&s>=-4?'var(--red)':'var(--border)'}" stroke-width="${s<0&&s>=-4?'2':'1'}"/>
-            <path d="M120,120 L42,75 A90,90 0 0,1 120,30 Z" fill="${s<-4?'rgba(244,113,116,0.25)':'rgba(64,217,192,0.06)'}" stroke="${s<-4?'var(--red)':'var(--border)'}" stroke-width="${s<-4?'2':'1'}"/>
+            <!-- 5 sectores: Contracción / Desacel / Neutral / Recuperac / Expansión -->
+            <path d="M120,120 L120,30 A90,90 0 0,1 198,75 Z" fill="${cicloScore>=2?'rgba(74,222,128,0.22)':'rgba(74,222,128,0.06)'}" stroke="${cicloScore>=2?'var(--green)':'var(--border)'}" stroke-width="${cicloScore>=2?'2':'1'}"/>
+            <path d="M120,120 L198,75 A90,90 0 0,1 198,165 Z" fill="${cicloScore===1?'rgba(74,222,128,0.18)':'rgba(74,222,128,0.05)'}" stroke="${cicloScore===1?'var(--green)':'var(--border)'}" stroke-width="${cicloScore===1?'2':'1'}"/>
+            <path d="M120,120 L198,165 A90,90 0 0,1 120,210 Z" fill="${cicloScore===0?'rgba(251,191,36,0.22)':'rgba(251,191,36,0.06)'}" stroke="${cicloScore===0?'var(--amber)':'var(--border)'}" stroke-width="${cicloScore===0?'2':'1'}"/>
+            <path d="M120,120 L120,210 A90,90 0 0,1 42,165 Z" fill="${cicloScore===-1?'rgba(244,113,116,0.20)':'rgba(244,113,116,0.06)'}" stroke="${cicloScore===-1?'var(--red)':'var(--border)'}" stroke-width="${cicloScore===-1?'2':'1'}"/>
+            <path d="M120,120 L42,165 A90,90 0 0,1 42,75 Z" fill="${cicloScore<=-2?'rgba(244,113,116,0.25)':'rgba(64,217,192,0.06)'}" stroke="${cicloScore<=-2?'var(--red)':'var(--border)'}" stroke-width="${cicloScore<=-2?'2':'1'}"/>
+            <path d="M120,120 L42,75 A90,90 0 0,1 120,30 Z" fill="rgba(64,217,192,0.04)" stroke="var(--border)" stroke-width="1"/>
             <!-- Labels -->
-            <text x="120" y="40" text-anchor="middle" font-family="IBM Plex Mono" font-size="8" fill="var(--green)">EXPANSIÓN</text>
-            <text x="196" y="108" text-anchor="end" font-family="IBM Plex Mono" font-size="8" fill="var(--green)">BOOM</text>
-            <text x="196" y="155" text-anchor="end" font-family="IBM Plex Mono" font-size="8" fill="var(--amber)">DESACEL.</text>
-            <text x="120" y="204" text-anchor="middle" font-family="IBM Plex Mono" font-size="8" fill="var(--red)">REC. LEVE</text>
-            <text x="44" y="155" text-anchor="start" font-family="IBM Plex Mono" font-size="8" fill="var(--red)">REC. SEVERA</text>
-            <text x="44" y="85" text-anchor="start" font-family="IBM Plex Mono" font-size="8" fill="var(--teal)">RECUPER.</text>
-            <!-- Centro -->
-            <circle cx="120" cy="120" r="40" fill="var(--surface)"/>
-            <text x="120" y="113" text-anchor="middle" font-family="Cormorant Garamond" font-size="12" font-style="italic" fill="${faseCol}">${fase}</text>
-            <text x="120" y="128" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="var(--text3)">${s>=0?'+':''}${s} / ${avail}</text>
-            <text x="120" y="140" text-anchor="middle" font-family="IBM Plex Mono" font-size="8" fill="${covColor}">${Math.round(cov*100)}% cob.</text>
+            <text x="120" y="40"  text-anchor="middle" font-family="IBM Plex Mono" font-size="8" fill="var(--green)">EXPANSIÓN</text>
+            <text x="196" y="108" text-anchor="end"    font-family="IBM Plex Mono" font-size="8" fill="var(--green)">RECUPERAC.</text>
+            <text x="196" y="155" text-anchor="end"    font-family="IBM Plex Mono" font-size="8" fill="var(--amber)">NEUTRAL</text>
+            <text x="120" y="204" text-anchor="middle" font-family="IBM Plex Mono" font-size="8" fill="var(--red)">DESACEL.</text>
+            <text x="44"  y="155" text-anchor="start"  font-family="IBM Plex Mono" font-size="8" fill="var(--red)">CONTRACCIÓN</text>
+            <text x="44"  y="85"  text-anchor="start"  font-family="IBM Plex Mono" font-size="8" fill="var(--teal)">—</text>
+            <!-- Centro: cicloScore exclusivo -->
+            <circle cx="120" cy="120" r="44" fill="var(--surface)"/>
+            <text x="120" y="110" text-anchor="middle" font-family="Cormorant Garamond" font-size="11" font-style="italic" fill="${faseCol}">${fase}</text>
+            <text x="120" y="126" text-anchor="middle" font-family="IBM Plex Mono" font-size="11" font-weight="bold" fill="${faseCol}">${cicloScore>=0?'+':''}${cicloScore} / ±${cicloMax}</text>
+            <text x="120" y="139" text-anchor="middle" font-family="IBM Plex Mono" font-size="8"  fill="${covColor}">${cicloAvail}/${cicloMax} ind.</text>
           </svg>
-          <div style="font-family:var(--mono);font-size:9px;text-align:center;margin-top:6px;color:${covColor};">${covLabel} · ${avail}/${macro.maxPossible||17} pts disponibles</div>
+          <div style="font-family:var(--mono);font-size:9px;text-align:center;margin-top:4px;color:var(--text3);">Score Ciclo · Curva USD ${cicloUSD!=null?(cicloUSD>=0?'+':'')+cicloUSD:'—'} + Curva EUR ${cicloEUR!=null?(cicloEUR>=0?'+':'')+cicloEUR:'—'} + LEI ${cicloLEI!=null?(cicloLEI>=0?'+':'')+cicloLEI:'—'} = ${cicloScore>=0?'+':''}${cicloScore}</div>
+          <div style="font-family:var(--mono);font-size:8px;text-align:center;margin-top:2px;color:var(--text3);">${covLabel} · Score global ETHAN: ${s>=0?'+':''}${s}/17</div>
         </div>
 
         <!-- Indicadores adelantados -->
@@ -123,21 +132,24 @@ export async function render(container,{actionsSlot}){
         </div>
       </div>
 
-      <!-- Cuadrante régimen 2x2 -->
+      <!-- Cuadrante régimen 2x2 — PENDIENTE conexión Ciclo × Liquidez -->
       <div class="mac-card" style="margin-bottom:14px;">
-        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:var(--text3);margin-bottom:12px;">Mapa de Régimen Macro (Crecimiento × Liquidez)</div>
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px;">
+          <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:var(--text3);">Mapa de Régimen Macro (Crecimiento × Liquidez)</div>
+          <div style="font-size:8px;font-family:var(--mono);color:var(--amber);">⏳ Pendiente conexión Ciclo × Liquidez — posición activa disponible tras Audit 1.2</div>
+        </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:2px;border:1px solid var(--border);border-radius:8px;overflow:hidden;">
           ${[
-            {l:'BOOM',c:'var(--green)',desc:'Crecimiento alto + Liquidez alta · RV agresiva, small caps, commodities',active:s>=10},
-            {l:'GOLDILOCKS',c:'var(--teal)',desc:'Crecimiento moderado + Liquidez alta · RV quality, bonos IG, oro',active:s>=4&&s<10},
-            {l:'DESACELERACIÓN',c:'var(--amber)',desc:'Crecimiento moderado + Liquidez baja · Defensivo, cash, bonos cortos',active:s>=0&&s<4},
-            {l:'RECESIÓN',c:'var(--red)',desc:'Crecimiento negativo + Liquidez baja · Cash, treasuries, oro',active:s<0},
-          ].map(q=>`<div style="padding:16px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;min-height:100px;${q.active?'background:rgba(64,217,192,0.08);border:2px solid var(--teal);':'background:var(--surface2);'}">
+            {l:'BOOM',           c:'var(--green)', desc:'Crecimiento alto + Liquidez alta · RV agresiva, small caps, commodities'},
+            {l:'GOLDILOCKS',     c:'var(--teal)',  desc:'Crecimiento moderado + Liquidez alta · RV quality, bonos IG, oro'},
+            {l:'DESACELERACIÓN', c:'var(--amber)', desc:'Crecimiento moderado + Liquidez baja · Defensivo, cash, bonos cortos'},
+            {l:'RECESIÓN',       c:'var(--red)',   desc:'Crecimiento negativo + Liquidez baja · Cash, treasuries, oro'},
+          ].map(q=>`<div style="padding:16px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;min-height:100px;background:var(--surface2);">
             <div style="font-size:11px;font-weight:700;color:${q.c};margin-bottom:6px;">${q.l}</div>
             <div style="font-size:9px;color:var(--text3);line-height:1.4;">${q.desc}</div>
-            ${q.active?`<div style="font-size:8px;font-family:var(--mono);color:var(--teal);margin-top:6px;font-weight:700;">◆ POSICIÓN ACTUAL</div>`:''}
           </div>`).join('')}
         </div>
+        <div style="font-size:8px;font-family:var(--mono);color:var(--text3);margin-top:8px;">Eje Crecimiento ← cicloScore (Curva USD + Curva EUR + LEI) · Eje Liquidez ← liqScore (M2 + Impulso + Vel.M2) · Conexión pendiente cierre Audit 1.2</div>
       </div>
 
       <!-- Panel manuales -->
