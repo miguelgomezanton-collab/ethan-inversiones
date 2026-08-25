@@ -1061,13 +1061,58 @@ export async function render(container, { actionsSlot }) {
   let creditGapData = null;
   async function loadCreditGap(force=false) {
     if (creditGapData && !force) { paintCreditGap(creditGapData); return; }
-    document.getElementById('radar-wrap').innerHTML = '<div class="empty"><div class="loader-ring"></div><span style="font-family:var(--mono);font-size:11px;color:var(--text3);margin-left:10px;">Credit Gap Validation (5000 sims × 4 lags)...</span></div>';
-    try {
-      creditGapData = await fetch('/api/macro-history?type=creditgap').then(r=>r.ok?r.json():null);
-      paintCreditGap(creditGapData);
-    } catch(e) {
-      document.getElementById('radar-wrap').innerHTML = `<div class="empty"><div class="empty-icon">⚠</div><div class="empty-title">Error</div><div class="empty-desc">${e.message}</div></div>`;
-    }
+    // Mostrar estado SP500 + botón backfill antes de cargar
+    document.getElementById('radar-wrap').innerHTML = `
+      <div class="mac-card" style="margin-bottom:12px;background:rgba(64,217,192,0.04);border-color:rgba(64,217,192,0.2);">
+        <div style="font-size:10px;font-weight:700;color:var(--text2);margin-bottom:8px;">⚠ SP500 histórico — paso previo necesario</div>
+        <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:10px;">
+          El análisis Credit Gap necesita el histórico completo del S&P 500 (1976→hoy) persistido en Firestore.<br>
+          Si es la primera vez o el funnel muestra N=202→39, ejecuta el backfill primero.
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button id="sp500-backfill-btn" class="btn btn-primary" style="font-size:10px;">
+            🔄 Ejecutar SP500 Backfill (1970→hoy)
+          </button>
+          <button id="skip-backfill-btn" class="btn" style="font-size:10px;">
+            Saltar → Cargar Credit Gap directamente
+          </button>
+        </div>
+        <div id="backfill-status" style="margin-top:10px;font-size:9px;font-family:var(--mono);color:var(--text3);"></div>
+      </div>`;
+
+    document.getElementById('sp500-backfill-btn')?.addEventListener('click', async () => {
+      const statusEl = document.getElementById('backfill-status');
+      const btn = document.getElementById('sp500-backfill-btn');
+      btn.disabled = true;
+      btn.textContent = '⏳ Ejecutando backfill (puede tardar 30-60s)...';
+      statusEl.innerHTML = '<div class="loader-ring" style="display:inline-block;margin-right:8px;"></div>Fetching SP500 1970→2029 por tramos paralelos...';
+      try {
+        const r = await fetch('/api/macro-history?type=sp500-backfill');
+        const d = await r.json();
+        if (d.canonicalAudit) {
+          const ok = d.acceptanceTest?.filter(t=>t.ok).length||0;
+          const total = d.acceptanceTest?.length||0;
+          statusEl.innerHTML = `<span style="color:var(--green);">✓ Backfill completado</span><br>
+            N=${d.canonicalAudit.n} · ${d.canonicalAudit.firstDate}→${d.canonicalAudit.lastDate}<br>
+            Acceptance test: ${ok}/${total} fechas OK<br>
+            ${d.errors?.length?'<span style="color:var(--amber);">Errores: '+d.errors.join(', ')+'</span>':''}`;
+          setTimeout(() => { creditGapData = null; loadCreditGap(true); }, 2000);
+        } else {
+          statusEl.innerHTML = `<span style="color:var(--red);">Error: ${d.error||JSON.stringify(d).slice(0,100)}</span>`;
+          btn.disabled = false; btn.textContent = '🔄 Reintentar backfill';
+        }
+      } catch(e) {
+        statusEl.innerHTML = `<span style="color:var(--red);">Error de red: ${e.message}</span>`;
+        btn.disabled = false; btn.textContent = '🔄 Reintentar backfill';
+      }
+    });
+
+    document.getElementById('skip-backfill-btn')?.addEventListener('click', () => {
+      document.getElementById('radar-wrap').innerHTML = '<div class="empty"><div class="loader-ring"></div><span style="font-family:var(--mono);font-size:11px;color:var(--text3);margin-left:10px;">Credit Gap Validation (5000 sims × 4 lags)...</span></div>';
+      fetch('/api/macro-history?type=creditgap').then(r=>r.ok?r.json():null).then(d=>{
+        creditGapData = d; paintCreditGap(d);
+      }).catch(e=>{ document.getElementById('radar-wrap').innerHTML=`<div class="empty"><div class="empty-icon">⚠</div><div class="empty-title">Error</div><div class="empty-desc">${e.message}</div></div>`; });
+    });
   }
 
   function paintCreditGap(data) {
