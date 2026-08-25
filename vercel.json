@@ -15,6 +15,10 @@
     {
       "path": "/api/macro-history?type=componentvalidation-recompute",
       "schedule": "0 7 3 * *"
+    },
+    {
+      "path": "/api/macro-history?type=sp500-backfill",
+      "schedule": "0 6 1 * *"
     }
   ],
   "rewrites": [

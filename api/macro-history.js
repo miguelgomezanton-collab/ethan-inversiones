@@ -185,15 +185,30 @@ export default async function handler(req, res) {
     ]);
 
   // ── Procesar series ───────────────────────────
-  // SP500: usar el chunk más completo disponible, con fallback progresivo
-  // rSp = mensual completo (puede fallar por timeout) | rNq = diario largo | rRu = mensual reciente
+  // SP500: intentar snapshot Firestore primero (sin timeout), luego chunks FRED como fallback
+  let spFirestore = null;
+  try {
+    const db = getDB();
+    const snap = await db.collection('ethan_market_data').doc('sp500_monthly_v1').get();
+    if (snap.exists && snap.data()?.data) {
+      const d = snap.data().data;
+      // Convertir a array ordenado ascendente
+      spFirestore = Object.entries(d)
+        .map(([date, value]) => ({ date: date+'-01', value }))
+        .sort((a,b) => a.date.localeCompare(b.date));
+      errs.push && null; // no error
+    }
+  } catch(e) { errs.push('SP500 Firestore read: ' + e.message); }
+
   const spChunkA = rSp.status === 'fulfilled' && rSp.value?.length > 0 ? rSp.value : null;
   const spChunkB = rNq.status === 'fulfilled' && rNq.value?.length > 0 ? rNq.value : null;
   const spChunkC = rRu.status === 'fulfilled' && rRu.value?.length > 0 ? rRu.value : null;
-  // Elegir el que tenga mayor cobertura histórica
-  const sp = [spChunkA, spChunkB, spChunkC]
-    .filter(Boolean)
-    .reduce((best, arr) => (!best || arr[0]?.date < best[0]?.date) ? arr : best, null);
+  // Prioridad: Firestore snapshot (cobertura completa) → chunks FRED
+  const sp = spFirestore && spFirestore.length > 500
+    ? spFirestore  // Firestore tiene histórico completo
+    : [spChunkA, spChunkB, spChunkC]
+        .filter(Boolean)
+        .reduce((best, arr) => (!best || arr[0]?.date < best[0]?.date) ? arr : best, null);
   const nq   = rNq.status   === 'fulfilled' ? rNq.value   : null;
   const ru   = rRu.status   === 'fulfilled' ? rRu.value   : null;
   const au   = rAu.status   === 'fulfilled' ? rAu.value   : null;
@@ -914,7 +929,102 @@ export default async function handler(req, res) {
   }
 
 
-  // ── CREDIT GAP VALIDATION + WALK-FORWARD CALIBRATION (type=creditgap) ──
+  // ── SP500 HISTÓRICO — SNAPSHOT FIRESTORE (type=sp500-backfill) ──────
+  // Construye/actualiza el snapshot histórico completo de SP500 mensual.
+  // Estrategia: fetch por tramos de 10 años para evitar timeout FRED.
+  // Resultado se persiste en Firestore. El spMap en el handler normal lo lee.
+  // Cron: mensual (ver vercel.json). También disponible como endpoint manual.
+  if (type === 'sp500-backfill') {
+    const cronSecret = process.env.CRON_SECRET;
+    const authHeader = req.headers?.['authorization'];
+    if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const SP500_DOC = 'sp500_monthly_v1';
+    const SP500_COL = 'ethan_market_data';
+
+    // Leer snapshot existente
+    let existing = {};
+    try {
+      const db = getDB();
+      const snap = await db.collection(SP500_COL).doc(SP500_DOC).get();
+      if (snap.exists) existing = snap.data()?.data || {};
+    } catch(e) { errs.push('Firestore read: ' + e.message); }
+
+    // Fetch por tramos de 10 años
+    const DECADES = [
+      ['1970-01-01','1979-12-31'],
+      ['1980-01-01','1989-12-31'],
+      ['1990-01-01','1999-12-31'],
+      ['2000-01-01','2009-12-31'],
+      ['2010-01-01','2019-12-31'],
+      ['2020-01-01','2029-12-31'],
+    ];
+
+    const newData = { ...existing };
+    const fetchLog = [];
+
+    for (const [from, to] of DECADES) {
+      const startYM = from.slice(0,7);
+      // Saltar décadas ya cubiertas (a menos que incluya el año actual)
+      const endYear = parseInt(to.slice(0,4));
+      const thisYear = new Date().getFullYear();
+      const alreadyCovered = Object.keys(newData).some(ym => ym >= startYM)
+        && endYear < thisYear;
+      if (alreadyCovered) {
+        fetchLog.push({ range: from+'→'+to, status: 'SKIPPED_ALREADY_CACHED' });
+        continue;
+      }
+
+      try {
+        const url = `https://api.stlouisfed.org/fred/series/observations` +
+          `?series_id=SP500&api_key=${key}&file_type=json&sort_order=asc` +
+          `&frequency=m&observation_start=${from}&observation_end=${to}`;
+        const ctrl = new AbortController();
+        setTimeout(() => ctrl.abort(), 25000); // 25s por tramo
+        const r = await fetch(url, { signal: ctrl.signal });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const j = await r.json();
+        const obs = (j.observations || []).filter(o => o.value !== '.');
+        obs.forEach(o => { newData[o.date.slice(0,7)] = parseFloat(o.value); });
+        fetchLog.push({ range: from+'→'+to, status: 'OK', n: obs.length,
+          first: obs[0]?.date, last: obs[obs.length-1]?.date });
+      } catch(e) {
+        fetchLog.push({ range: from+'→'+to, status: 'ERROR', error: e.message });
+        errs.push('SP500 backfill '+from+': '+e.message);
+      }
+    }
+
+    // Persistir en Firestore
+    const totalN = Object.keys(newData).length;
+    const sorted = Object.keys(newData).sort();
+    try {
+      const db = getDB();
+      await db.collection(SP500_COL).doc(SP500_DOC).set({
+        data: newData,
+        updatedAt: new Date().toISOString(),
+        n: totalN,
+        first: sorted[0],
+        last: sorted[sorted.length-1],
+        source: 'FRED SP500 monthly',
+      });
+    } catch(e) { errs.push('Firestore write: ' + e.message); }
+
+    // Validar cobertura de fechas clave
+    const CHECK_DATES = ['2000-01','2008-09','2020-03','2024-01','2026-06'];
+    const coverage = CHECK_DATES.map(ym => ({ ym, value: newData[ym]||null, ok: !!newData[ym] }));
+
+    return res.status(200).json({
+      updatedAt: new Date().toISOString(),
+      title: 'SP500 Historical Snapshot — Backfill',
+      n: totalN, first: sorted[0], last: sorted[sorted.length-1],
+      fetchLog, coverage,
+      errors: errs.length ? errs : undefined,
+    });
+  }
+
+
   if (type === 'creditgap') {
     const cg_fm = {};
     for (const h of [3,6,12]) {
