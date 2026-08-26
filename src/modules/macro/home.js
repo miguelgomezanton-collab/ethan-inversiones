@@ -181,9 +181,7 @@ export async function render(container, { actionsSlot }) {
     const liqScore   = (liq.m2?.score||0)+(liq.impulso?.score||0)+(liq.velM2?.score||0);
     const polScore   = (co.tipoReal?.score||0)+(liq.reservas?.score||0);
     const infScore   = ind.cpi?.score || 0;
-    // Fix 1+2: usar ind.fearGreed (no seg.fearGreed). Si no existe → MISSING, no 0.
-    const fgInd      = ind.fearGreed;
-    const sentScore  = fgInd?.score ?? null; // null = MISSING, no colapsar a 0
+    const sentScore  = ind.fearGreed?.score || 0;
 
     el.innerHTML = `
       <div style="display:grid;grid-template-columns:220px 1fr 180px;gap:14px;margin-bottom:14px;">
@@ -220,10 +218,9 @@ export async function render(container, { actionsSlot }) {
                 {l:'Liquidez global',   v:liq.m2?.value!=null?(liq.m2.value>=0?'+':'')+f2(liq.m2.value)+'% M2':'—', s:liqScore},
                 {l:'Política monetaria',v:co.tipoReal?.value!=null?'Tipo real '+(co.tipoReal.value>=0?'+':'')+f2(co.tipoReal.value)+'%':'—', s:polScore},
                 {l:'Inflación',         v:co.cpi?.value!=null?'CPI '+f1(co.cpi.value)+'%':'—', s:infScore},
-                {l:'Sentimiento', v:fgInd?.value!=null?'F&G '+fgInd.value+(fgInd.label_text?' · '+fgInd.label_text:''):'MISSING', s:sentScore},
+                {l:'Sentimiento',       v:seg.fearGreed?.value!=null?'F&G '+seg.fearGreed.value:'—', s:sentScore},
               ].map(row=>{
-                // Fix 2: score null → gris MISSING, no colapsar a 0 → rojo
-                const c = row.s == null ? 'text3' : row.s > 0 ? 'green' : row.s < 0 ? 'red' : 'amber';
+                const c=row.s>0?'green':row.s<0?'red':'amber';
                 return `<div style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:6px;border:1px solid var(--border);margin-bottom:5px;">
                   <div style="width:8px;height:8px;border-radius:50%;background:var(--${c});flex-shrink:0;"></div>
                   <span style="flex:1;font-size:10px;color:var(--text1);">${row.l}</span>
@@ -234,20 +231,20 @@ export async function render(container, { actionsSlot }) {
           </div>
         </div>
 
-        <!-- Estado indicadores -->
+        <!-- Delta -->
         <div class="mac-card" style="display:flex;flex-direction:column;gap:8px;align-items:center;justify-content:center;text-align:center;">
-          <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:4px;">Estado de indicadores</div>
+          <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:4px;">vs Mes Anterior</div>
           <div style="padding:10px 0;border-bottom:1px solid var(--border);width:100%;">
             <div style="font-size:28px;font-weight:700;color:var(--green);">↑ ${mejoran}</div>
-            <div style="font-size:10px;color:var(--text3);">Positivos</div>
+            <div style="font-size:10px;color:var(--text3);">Mejoran</div>
           </div>
           <div style="padding:10px 0;border-bottom:1px solid var(--border);width:100%;">
             <div style="font-size:28px;font-weight:700;color:var(--red);">↓ ${empeoran}</div>
-            <div style="font-size:10px;color:var(--text3);">Negativos</div>
+            <div style="font-size:10px;color:var(--text3);">Empeoran</div>
           </div>
           <div style="padding:10px 0;width:100%;">
             <div style="font-size:28px;font-weight:700;color:var(--text3);">= ${neutros}</div>
-            <div style="font-size:10px;color:var(--text3);">Neutros</div>
+            <div style="font-size:10px;color:var(--text3);">Sin cambios</div>
           </div>
           <div style="padding-top:8px;border-top:1px solid var(--border);width:100%;">
             <div style="font-size:9px;color:var(--text3);font-family:var(--mono);">Índice difusión</div>
