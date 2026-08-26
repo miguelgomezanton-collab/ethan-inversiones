@@ -605,7 +605,13 @@ async function runAllocationEngine(el) {
   const scoreMedio = candidates.length > 0 ? candidates.reduce((s,a) => s+a.score, 0)/candidates.length : 0;
   const cashPct    = Math.max(0, Math.min(100, ((8 - scoreMedio) / 8) * 100));
   const investedPct = 100 - cashPct;
-  const corePositions = mtInverseVol(candidates, coreMaxW, investedPct);
+  // Cap 40% sobre budget CORE total (100%), no sobre investedPct.
+  // 1 elegible → 40% activo + 60% cash. Cash táctico = 100% - Σpesos.
+  const corePositionsRaw = mtInverseVol(candidates, coreMaxW, 100);
+  const corePositions = corePositionsRaw.map(p => ({
+    ...p,
+    weightPct: Math.min(p.weightPct, investedPct),
+  }));
 
   // Scores RV / RF para el banner
   const rvAssets = allocationAssets.filter(a => a.type === 'RV' && !a.error);
