@@ -5,13 +5,28 @@ const fsign = v => v != null ? (v>=0?'+':'')+Number(v).toFixed(2) : '—';
 const col   = s => s > 0 ? 'var(--green)' : s === 0 ? 'var(--amber)' : 'var(--red)';
 
 function regime(liq) {
-  const total = Object.values(liq)
-    .filter(i => i?.score != null)
-    .reduce((s, i) => s + i.score, 0);
-  if (total >= 4)  return { title: 'Liquidez Expansiva',   c: 'var(--green)', sub: 'Combustible para el ciclo', score: total };
-  if (total >= 0)  return { title: 'Liquidez Neutral',     c: 'var(--amber)', sub: 'Mixto — selectividad clave', score: total };
-  if (total >= -4) return { title: 'Liquidez Contractiva', c: 'var(--red)',   sub: 'El dinero se retira del sistema', score: total };
-  return             { title: 'Drenaje Severo',           c: 'var(--red)',   sub: 'Riesgo sistémico — reducir exposición', score: total };
+  // Liquidity Score propio — independiente del macro.scoreTotal
+  // Indicadores: M2 Global (±3), Impulso Crediticio (±2), Velocidad M2 (±2), Reservas (±1/−2), BBB Spread (±1)
+  // PROVISIONAL — pesos y thresholds pendientes de calibración
+  let rawScore = 0, maxAvailable = 0;
+  const MAX_POSSIBLE = 12; // M2×3 + Crédito×3 + Impulso×2 + VelM2×2 + Reservas×1 + BBB×1
+  const detail = {};
+  for (const [k, i] of Object.entries(liq)) {
+    if (i?.score != null) {
+      rawScore     += i.score;
+      maxAvailable += Math.abs(i.weight || 1);
+      detail[k]     = i.score;
+    }
+  }
+  const coverage = +(maxAvailable / MAX_POSSIBLE).toFixed(3);
+
+  let title, c, sub;
+  if (rawScore >= 4)  { title = 'Liquidez Expansiva';   c = 'var(--green)'; sub = 'Combustible para el ciclo'; }
+  else if (rawScore >= 0)  { title = 'Liquidez Neutral';     c = 'var(--amber)'; sub = 'Mixto — selectividad clave'; }
+  else if (rawScore >= -4) { title = 'Liquidez Contractiva'; c = 'var(--red)';   sub = 'El dinero se retira del sistema'; }
+  else                     { title = 'Drenaje Severo';       c = 'var(--red)';   sub = 'Riesgo sistémico — reducir exposición'; }
+
+  return { title, c, sub, score: rawScore, maxAvailable, coverage, detail };
 }
 
 function buildPhrase(liq) {
@@ -129,71 +144,209 @@ export async function render(container, { actionsSlot }) {
 
       <!-- GRID 6 CARDS -->
       <div class="co-liq-grid3">
-        ${liqCard('💵','M2 Global (USA+EUR+JPN)', liq.m2,
+        ${liqCard('💵','M2 Global', liq.m2,
           liq.m2?.auto
-            ? `${liq.m2.coverage||''} · USA: ${liq.m2.components?.usYoY!=null?(liq.m2.components.usYoY>=0?'+':'')+f2(liq.m2.components.usYoY)+'%':'—'} · EUR: ${liq.m2.components?.eurYoY!=null?(liq.m2.components.eurYoY>=0?'+':'')+f2(liq.m2.components.eurYoY)+'%':'—'} · JPN: ${liq.m2.components?.jpYoY!=null?(liq.m2.components.jpYoY>=0?'+':'')+f2(liq.m2.components.jpYoY)+'%':'—'}`
+            ? (() => {
+                const c = liq.m2.components || {};
+                const fsn = f => f === 'ok' ? '✓ OK' : f === 'stale' ? '✗ STALE' : f === 'manual' ? '✎ manual' : '— missing';
+                const row = (flag, key, label) => {
+                  const r = c[key];
+                  if (!r) return `${label}: —`;
+                  if (r.error) return `${label}: ⚠ ${r.error}${r.fallbackReason?' ('+r.fallbackReason+')':''}${r.source?' ['+r.source+']':''}`;
+                  const srcTag = r.source ? ` [${r.source}${r.fallbackReason?' · '+r.fallbackReason:''}]` : '';
+                  const yoyLabel = r.isOfficialYoY ? 'YoY oficial BOJ' : 'YoY calc.';
+                  const baseInfo = r.baseDate ? ` | base ${r.baseDate}` : (r.isOfficialYoY ? ' | YoY directo BOJ' : '');
+                  return `${label}: ${r.currentDate||'—'} | ${yoyLabel} ${r.yoy!=null?(r.yoy>=0?'+':'')+f2(r.yoy)+'%':'—'}${baseInfo} | ${r.ageDays!=null?r.ageDays+'d':'-'} · ${fsn(r.freshness)}${srcTag}`;
+                };
+                return [
+                  row(true,'us','USA FRED M2SL'),
+                  row(true,'eur','EUR ECB BSI'),
+                  row(true,'jp','JPN BOJ'),
+                  `CHN: ${c.chn?.valid
+                    ? (c.chn.source === 'manual override'
+                      ? `${f2(c.chn.yoy)}% (manual override)`
+                      : `${c.chn.currentDate||'—'} | YoY calc. ${c.chn.yoy!=null?(c.chn.yoy>=0?'+':'')+f2(c.chn.yoy)+'%':'—'} | base ${c.chn.baseDate||'—'} | N=${c.chn.nObs||'—'} | ${c.chn.ageDays!=null?c.chn.ageDays+'d':'-'} · ✓ OK [${c.chn.source||'—'}]`)
+                    : (() => {
+                        const d = c.chn?.diag || {};
+                        const diagAll = c.chn?.diagAll || [d];
+                        return `<span style="color:var(--red)">⚠ MISSING</span><br>` +
+                          diagAll.map((sd,i) => {
+                            const lines = [
+                              `Fuente ${i+1} [${sd.source||'—'}]: HTTP ${sd.httpStatus||'—'} · branch:${sd.parserBranch||'—'} · nObs:${sd.nObsReceived||0}→${sd.nObsParsed||0}`,
+                              sd.last3?.length ? `Más recientes: ${sd.last3.join(' | ')}` : null,
+                              sd.first3?.length ? `Más antiguas: ${sd.first3.join(' | ')}` : null,
+                              sd.latestDate ? `current: ${sd.latestDate} = ${sd.latestValue}` : null,
+                              sd.targetBaseDate ? `target base: ${sd.targetBaseDate}` : null,
+                              sd.baseDate ? `base found: ${sd.baseDate} = ${sd.baseValue} (Δ${sd.baseDeltaDays}d)` : null,
+                              sd.yoyCalc ? `YoY calc: ${sd.yoyCalc}` : null,
+                              sd.failReason ? `<strong style="color:var(--red)">FAIL: ${sd.failReason}</strong>` : null,
+                              sd.error ? `Error: ${sd.error}` : null,
+                            ].filter(Boolean);
+                            return lines.join('<br>');
+                          }).join('<br>---<br>');
+                      })()}`,
+                  `Cobertura: ${liq.m2.coverageWeight||'—'}/100 (mín. 60) · Global YoY: ${liq.m2.value!=null?(liq.m2.value>=0?'+':'')+f2(liq.m2.value)+'%':'bloqueado'} · Estado: <strong style="color:${liq.m2.audit?.aggregateStatus==='OK'?'var(--green)':liq.m2.audit?.aggregateStatus==='PARTIAL'?'var(--amber)':'var(--red)'};">${liq.m2.audit?.aggregateStatus||'—'}</strong>${liq.m2.audit?.renormalized?' · Pesos renormalizados (missing: '+liq.m2.audit?.missingRegions?.join(', ')?.toUpperCase()+')':''}`,
+                  `<span style="color:var(--text3);font-size:9px;">Metodología: media ponderada YoY | Pesos USA=35 EUR=25 JPN=10 CHN=30 | ${liq.m2.audit?.historicalProxy?'HIST_MACRO_V1 usa M2SL USA como HISTORICAL_PROXY para pre-2016':''}</span>`,
+                ].join('<br>');
+              })()
             : 'YoY — estimado global (Fed+ECB+PBOC+BoJ)',
-          '≥+5.0%→+3  ·  +3.0-4.9%→+1  ·  <+3.0%→−3  ·  peso ×3',
+          '≥+5.0%→+3  ·  +3.0-4.9%→+1  ·  <+3.0%→−3  ·  peso ×3 · min.cobertura 60/100',
           (s, v) => s > 0 ? `<strong style="color:var(--green)">+${s} pts.</strong> M2 creciendo — combustible para el ciclo y expansión de múltiplos.` :
             s === 0 ? `<strong style="color:var(--amber)">0 pts.</strong> M2 entre +3% y +5% — ciclo sostenido pero sin exceso monetario.` :
             v != null ? `<strong style="color:var(--red)">${s} pts.</strong> M2 bajo umbral — presión sobre activos de riesgo con 6-12m de retardo.` :
-            `Sin datos automáticos aún. Introduce China M2 YoY% con "Editar manuales" para completar el cálculo.`)}
+            `Sin datos o cobertura insuficiente (<60/100). Introduce China M2 YoY% con "Editar manuales" para mejorar cobertura.`)}
 
         ${liqCard('📈','Crédito vs Nominal GDP', liq.credito,
           liq.credito?.auto
-            ? `Crédito YoY: ${liq.credito.creditYoY!=null?(liq.credito.creditYoY>=0?'+':'')+f2(liq.credito.creditYoY)+'%':'—'} · GDP YoY: ${liq.credito.gdpYoY!=null?'+'+f2(liq.credito.gdpYoY)+'%':'—'} · FRED TOTLL vs GDP`
-            : 'Crecimiento crédito − Crecimiento nominal GDP',
-          '≥+3.0%→+3  ·  +1.5-2.9%→0  ·  <+1.5%→−3  ·  peso ×3',
-          (s, v) => s > 0 ? `<strong style="color:var(--green)">+${s} pts.</strong> Crédito crece más que el nominal — expansión financiera saludable.` :
-            s === 0 ? `<strong style="color:var(--amber)">0 pts.</strong> Crédito alineado con el nominal — ciclo estable.` :
-            `<strong style="color:var(--red)">${s} pts.</strong> Crédito crece menos que el nominal — desapalancamiento en curso.`)}
+            ? (() => {
+                const tl  = liq.credito.tl  || {};
+                const gdp = liq.credito.gdp || {};
+                const fsn = f => f==='ok'?'✓ OK':f==='warn'?'⚠ WARN':f==='stale'?'✗ STALE':'—';
+                return [
+                  '🔍 DEBUG Crédito vs PIB',
+                  `TOTLL: ${tl.date||'—'} | base ${tl.baseDate||'—'} | ${tl.ageDays!=null?tl.ageDays+'d':'—'} · ${fsn(tl.freshness)}${tl.error?' ⚠ '+tl.error:''}`,
+                  `GDP:   ${gdp.date||'—'} | base ${gdp.baseDate||'—'} | ${gdp.ageDays!=null?gdp.ageDays+'d':'—'} · ${fsn(gdp.freshness)}${gdp.error?' ⚠ '+gdp.error:''}`,
+                  `CreditYoY: ${liq.credito.creditYoY!=null?(liq.credito.creditYoY>=0?'+':'')+f2(liq.credito.creditYoY)+'%':'—'} | GdpYoY: ${liq.credito.gdpYoY!=null?(liq.credito.gdpYoY>=0?'+':'')+f2(liq.credito.gdpYoY)+'%':'—'} | Diff: ${liq.credito.value!=null?(liq.credito.value>=0?'+':'')+f2(liq.credito.value)+'%':'—'}`,
+                  `Score: ${liq.credito.score!=null?liq.credito.score:'bloqueado'}${liq.credito.stale?' · STALE':''}`,
+                ].join('<br>');
+              })()
+            : 'Manual override',
+          '≥+3.0%→+3  ·  +1.5-2.9%→0  ·  <+1.5%→−3  ·  PROVISIONAL · peso ×3',
+          (s, v) => s > 0 ? `<strong style="color:var(--green)">+${s} pts.</strong> Crédito crece significativamente más que el PIB nominal — expansión financiera.` :
+            s === 0 ? `<strong style="color:var(--amber)">0 pts.</strong> Crédito crece moderadamente más que el nominal — impulso leve.` :
+            v != null && v > 0 ? `<strong style="color:var(--amber)">${s} pts.</strong> Crédito crece más que el PIB nominal (+${typeof v === 'number' ? v.toFixed(2) : v} pp) pero por debajo del umbral de señal. <em>Scoring provisional.</em>` :
+            v != null && v <= 0 ? `<strong style="color:var(--red)">${s} pts.</strong> Crédito crece menos que el PIB nominal — desapalancamiento bancario.` :
+            `<strong style="color:var(--red)">${s} pts.</strong> Sin datos suficientes.`)}
 
         ${liqCard('⚡','Impulso Crediticio', liq.impulso,
           liq.impulso?.auto
-            ? `Aceleración TOTLL: YoY ahora ${liq.impulso.yoyNow!=null?(liq.impulso.yoyNow>=0?'+':'')+f2(liq.impulso.yoyNow)+'%':'—'} vs hace 3m ${liq.impulso.yoy3mAgo!=null?(liq.impulso.yoy3mAgo>=0?'+':'')+f2(liq.impulso.yoy3mAgo)+'%':'—'} · FRED TOTLL`
-            : 'Aceleración del crédito — anticipa gasto con 6-9 meses',
-          '≥+1.0→+2  ·  +0.5-0.9→+1  ·  <+0.5→−2  ·  peso ×2',
-          (s, v) => s >= 2 ? `<strong style="color:var(--green)">+2 pts.</strong> Impulso fuerte — expansión de demanda en 6-9 meses.` :
+            ? (() => {
+                const c   = liq.impulso.current || {};
+                const p3m = liq.impulso.point3m || {};
+                const fsn = f => f==='ok'?'✓ OK':f==='warn'?'⚠ WARN':f==='stale'?'✗ STALE':'—';
+                return [
+                  '🔍 DEBUG Impulso Crediticio',
+                  `Actual:  ${c.date||'—'} | base ${c.baseDate||'—'} | ${c.ageDays!=null?c.ageDays+'d':'—'} · ${fsn(c.freshness)}`,
+                  `Hace 3M: ${p3m.date||'—'} | base ${p3m.baseDate||'—'}`,
+                  `YoY actual: ${liq.impulso.yoyNow!=null?(liq.impulso.yoyNow>=0?'+':'')+f2(liq.impulso.yoyNow)+'%':'—'} | YoY 3M atrás: ${liq.impulso.yoy3mAgo!=null?(liq.impulso.yoy3mAgo>=0?'+':'')+f2(liq.impulso.yoy3mAgo)+'%':'—'}`,
+                  `Impulso (diff): ${liq.impulso.value!=null?(liq.impulso.value>=0?'+':'')+f2(liq.impulso.value)+' pp':'—'}`,
+                  `Score: ${liq.impulso.score!=null?liq.impulso.score:'bloqueado'}${liq.impulso.stale?' · STALE':''}${liq.impulso.error?' · ⚠ '+liq.impulso.error:''}`,
+                ].join('<br>');
+              })()
+            : 'Manual override',
+          '≥+1.0→+2  ·  +0.5-0.9→+1  ·  <+0.5→−2  ·  PROVISIONAL · peso ×2',
+          (s, v) => s >= 2 ? `<strong style="color:var(--green)">+2 pts.</strong> Impulso fuerte — crédito acelerando.` :
             s === 1 ? `<strong style="color:var(--green)">+1 pt.</strong> Impulso positivo moderado.` :
-            `<strong style="color:var(--red)">${s} pts.</strong> Impulso negativo — contracción del gasto con retardo.`)}
+            v != null && v >= 0 ? `<strong style="color:var(--amber)">${s} pts.</strong> Crédito creciendo pero desacelerando — impulso negativo. <em>Scoring provisional.</em>` :
+            `<strong style="color:var(--red)">${s} pts.</strong> Crédito desacelerando — contracción del impulso crediticio.`)}
 
-        ${liqCard('🔄','Velocidad M2', liq.velM2, 'YoY · FRED M2V (trimestral) · automático',
-          '≥0%→+2  ·  −1.5 a −0.1%→−1  ·  <−1.5%→−2  ·  peso ×2',
-          (s, v) => s >= 2 ? `<strong style="color:var(--green)">+2 pts.</strong> ≥0% — el dinero circula activamente. El M2 se traduce en actividad económica real.` :
-            s === -1 ? `<strong style="color:var(--amber)">−1 pt.</strong> Entre −1.5% y −0.1% — velocidad cayendo ligeramente. El dinero se acumula en vez de circular.` :
-            `<strong style="color:var(--red)">−2 pts.</strong> <−1.5% — velocidad muy baja. Bancos no prestan, empresas no invierten, consumidores no gastan. Señal de estancamiento aunque haya mucho M2.`)}
+        ${liqCard('🔄','Velocidad M2', liq.velM2,
+          liq.velM2?.auto
+            ? (() => {
+                const v = liq.velM2;
+                const fsn = f => f==='ok'?'✓ OK':f==='warn'?'⚠ WARN':f==='stale'?'✗ STALE':'—';
+                return [
+                  '🔍 DEBUG Velocidad M2',
+                  `M2V actual: ${v.date||'—'} | ${v.rawValue!=null?v.rawValue.toFixed(4):'—'}`,
+                  `Base:       ${v.baseDate||'—'} | ${v.baseValue!=null?v.baseValue.toFixed(4):'—'}`,
+                  `YoY: ${v.value!=null?(v.value>=0?'+':'')+f2(v.value)+'%':'—'} | ${v.ageDays!=null?v.ageDays+'d':'—'} · ${fsn(v.freshness)}`,
+                  `Score: ${v.score!=null?v.score:'bloqueado'}${v.stale?' · STALE':''} · Fuente: FRED M2V [PROVISIONAL]`,
+                ].join('<br>');
+              })()
+            : 'YoY · FRED M2V (trimestral) · automático',
+          '≥0%→+2  ·  −1.5 a −0.1%→−1  ·  <−1.5%→−2  ·  PROVISIONAL · peso ×2',
+          (s, v) => s >= 2
+            ? `<strong style="color:var(--green)">+2 pts.</strong> Velocidad M2 ${v!=null?(v>=0?'+':'')+f2(v)+'% interanual':'—'}. Scoring provisional.`
+            : s === -1
+            ? `<strong style="color:var(--amber)">−1 pt.</strong> Velocidad M2 ${v!=null?(v>=0?'+':'')+f2(v)+'% interanual':'—'}. Scoring provisional.`
+            : `<strong style="color:var(--red)">${s!=null?s:'—'} pts.</strong> Velocidad M2 ${v!=null?(v>=0?'+':'')+f2(v)+'% interanual':'—'}. Scoring provisional.`)}
 
-        ${liqCard('🏦','Reservas Bancarias Fed', liq.reservas, 'Valor absoluto en $T · FRED WRESBAL (semanal) · automático',
-          '≥$3.5T→+1  ·  $2.5-3.4T→−1  ·  <$2.5T→−2  ·  peso ×1',
-          (s, v) => s > 0 ? `<strong style="color:var(--green)">+1 pt.</strong> ≥$3.5T — liquidez abundante. Los bancos tienen amplia capacidad prestadora.` :
-            s === -1 ? `<strong style="color:var(--amber)">−1 pt.</strong> $2.5-3.4T — reservas en zona baja. QT activo de la Fed — menos liquidez en el sistema.` :
-            `<strong style="color:var(--red)">−2 pts.</strong> <$2.5T — reservas insuficientes. La Fed está drenando agresivamente. Riesgo de contracción crediticia sistémica.`)}
+        ${liqCard('🏦','Reservas Bancarias Fed', liq.reservas,
+          liq.reservas?.auto
+            ? (() => {
+                const r = liq.reservas;
+                const fsn = f => f==='ok'?'✓ OK':f==='warn'?'⚠ WARN':f==='stale'?'✗ STALE':'—';
+                return [
+                  '🔍 DEBUG Reservas Bancarias',
+                  `Fecha: ${r.date||'—'} | Bruto FRED: ${r.rawValueM!=null?Number(r.rawValueM).toLocaleString('es-ES')+' $M':'—'} | Convertido: ${r.value!=null?'$'+r.value+'T':'—'}`,
+                  `Antigüedad: ${r.ageDays!=null?r.ageDays+'d':'—'} · ${fsn(r.freshness)} · Fuente: FRED WRESBAL`,
+                  `Score: ${r.score!=null?r.score:'bloqueado'}${r.stale?' · STALE':''} [PROVISIONAL · thresholds fijos $3.5T/$2.5T]`,
+                ].join('<br>');
+              })()
+            : 'Valor absoluto en $T · FRED WRESBAL (semanal) · automático',
+          '≥$3.5T→+1  ·  $2.5-3.4T→−1  ·  <$2.5T→−2  ·  PROVISIONAL · peso ×1',
+          (s, v) => s > 0
+            ? `<strong style="color:var(--green)">+1 pt.</strong> Reservas $${v}T — liquidez sistémica elevada. Scoring provisional.`
+            : s === -1
+            ? `<strong style="color:var(--amber)">−1 pt.</strong> Reservas $${v}T — zona media. Scoring provisional.`
+            : `<strong style="color:var(--red)">${s!=null?s:'—'} pts.</strong> Reservas ${v!=null?'$'+v+'T':'—'}. Scoring provisional.`)}
 
         ${liq.bbb ? `<div class="co-liq-card">
           <div class="co-liq-card-header"><span class="co-liq-card-title">📊 BBB Spread</span><span style="font-size:9px;color:var(--text3);font-family:var(--mono);">${liq.bbb.date||'—'}</span></div>
           <div style="font-family:var(--serif);font-size:32px;font-weight:600;font-style:italic;color:${col(liq.bbb.score)};">${f2(liq.bbb.value)}%</div>
           <div style="font-size:10px;color:var(--text2);font-family:var(--mono);margin-bottom:2px;">OAS · FRED BAMLC0A4CBBB</div>
-          <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:4px;">≤1.00%→+1  ·  1.00-1.50%→0  ·  >1.50%→−1  ·  peso ×1</div>
+          <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:4px;">≤1.00%→+1  ·  >1.00% y ≤1.50%→0  ·  >1.50%→−1  ·  PROVISIONAL · peso ×1</div>
           <div class="co-ind-bar-track" style="margin:8px 0 4px;"><div class="co-ind-bar-fill" style="width:${Math.min(liq.bbb.value/4*100,100)}%;background:${col(liq.bbb.score)};"></div></div>
+          <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:8px;background:rgba(64,217,192,0.04);border:1px solid rgba(64,217,192,0.15);border-radius:6px;padding:8px 10px;line-height:1.8;">
+            🔍 DEBUG BBB Spread<br>
+            Fecha: ${liq.bbb.date||'—'} | BAMLC0A4CBBB: ${liq.bbb.value!=null?liq.bbb.value.toFixed(2)+'%':'—'}<br>
+            Antigüedad: ${liq.bbb.ageDays!=null?liq.bbb.ageDays+'d':'—'} · ${liq.bbb.freshness==='ok'?'✓ OK':liq.bbb.freshness==='warn'?'⚠ WARN':'✗ STALE'} (≤7d OK | 8-10d WARN | >10d STALE)<br>
+            Score: ${liq.bbb.score!=null?liq.bbb.score:'bloqueado'}${liq.bbb.stale?' · STALE':''} · Fuente: FRED BAMLC0A4CBBB [PROVISIONAL]
+          </div>
           <div style="font-size:10px;color:var(--text2);line-height:1.5;margin-top:8px;">
-            ${liq.bbb.score>0?'<strong style="color:var(--green)">+1 pt.</strong> ≤1.00% — mercado tranquilo, acceso barato al crédito corporativo.':
-              liq.bbb.score===0?'<strong style="color:var(--amber)">0 pts.</strong> 1.00-1.50% — neutral, coste de crédito moderado.':
-              '<strong style="color:var(--red)">−1 pt.</strong> >1.50% — estrés crediticio, prima de riesgo corporativo elevada.'}
+            ${liq.bbb.score>0?'<strong style="color:var(--green)">+1 pt.</strong> ≤1.00% — spreads contenidos, mercado tranquilo. Scoring provisional.':
+              liq.bbb.score===0?'<strong style="color:var(--amber)">0 pts.</strong> >1.00% y ≤1.50% — neutral, coste de crédito moderado. Scoring provisional.':
+              liq.bbb.score!=null?'<strong style="color:var(--red)">−1 pt.</strong> >1.50% — estrés crediticio, prima de riesgo elevada. Scoring provisional.':
+              '<strong style="color:var(--text3)">— pts.</strong> Dato obsoleto o no disponible.'}
           </div>
         </div>` : ''}
       </div>
 
       <!-- IMPLICACIONES -->
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px 22px;margin-top:16px;">
-        <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:14px;">💡 Implicaciones para la estrategia</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+          <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:0.08em;">💡 Implicaciones para la estrategia</div>
+          <div style="font-family:var(--mono);font-size:9px;color:var(--text3);">
+            Liquidity Score: <span style="color:${reg.c};font-weight:700;">${reg.score>=0?'+':''}${reg.score}</span> / ${reg.maxAvailable} · cobertura ${Math.round(reg.coverage*100)}% · <span style="color:var(--amber)">PROVISIONAL</span>
+          </div>
+        </div>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;">
-          <div style="background:var(--surface2);border-radius:8px;padding:12px 14px;"><div style="font-size:10px;font-weight:700;color:${reg.c};margin-bottom:6px;text-transform:uppercase;">Renta Variable</div><div style="font-size:11px;color:var(--text2);line-height:1.5;">${reg.score>=4?'Liquidez expansiva favorece expansión de múltiplos. Entorno propicio para posiciones largas.':reg.score>=0?'Liquidez mixta. Selectividad: calidad sobre momentum.':'Liquidez contractiva presiona valoraciones. Preferir FCF alto y calidad sobre growth.'}</div></div>
-          <div style="background:var(--surface2);border-radius:8px;padding:12px 14px;"><div style="font-size:10px;font-weight:700;color:var(--amber);margin-bottom:6px;text-transform:uppercase;">Renta Fija</div><div style="font-size:11px;color:var(--text2);line-height:1.5;">${reg.score>=0?'Spreads contenidos favorecen IG. Duration media acceptable.':'QT + spreads ampliando. Duration corta o flotantes. IG estricto sobre HY.'}</div></div>
-          <div style="background:var(--surface2);border-radius:8px;padding:12px 14px;"><div style="font-size:10px;font-weight:700;color:var(--blue);margin-bottom:6px;text-transform:uppercase;">Sizing</div><div style="font-size:11px;color:var(--text2);line-height:1.5;">${reg.score>=4?'Liquidez favorable. Sizing normal, stops amplios.':reg.score>=0?'Sizing moderado. Stops ajustados.':'Sizing conservador. Esperar M2>+3% para aumentar exposición.'}</div></div>
+          <div style="background:var(--surface2);border-radius:8px;padding:12px 14px;">
+            <div style="font-size:10px;font-weight:700;color:${reg.c};margin-bottom:6px;text-transform:uppercase;">Renta Variable</div>
+            <div style="font-size:11px;color:var(--text2);line-height:1.5;">
+              ${reg.score >= 4
+                ? `Liquidity Score ${reg.score>=0?'+':''}${reg.score}: liquidez expansiva${liq.m2?.value!=null?' · M2 Global +'+f2(liq.m2.value)+'%':''}.`
+                : reg.score >= 0
+                ? `Liquidity Score ${reg.score>=0?'+':''}${reg.score}: liquidez neutral${liq.m2?.value!=null?' · M2 Global '+fsign(liq.m2.value)+'%':''}.`
+                : `Liquidity Score ${reg.score}: liquidez contractiva${liq.m2?.value!=null?' · M2 Global '+fsign(liq.m2.value)+'%':''}.`}
+              <span style="color:var(--text3);font-style:italic;"> Scoring provisional.</span>
+            </div>
+          </div>
+          <div style="background:var(--surface2);border-radius:8px;padding:12px 14px;">
+            <div style="font-size:10px;font-weight:700;color:var(--amber);margin-bottom:6px;text-transform:uppercase;">Renta Fija</div>
+            <div style="font-size:11px;color:var(--text2);line-height:1.5;">
+              ${liq.bbb?.value != null
+                ? `BBB OAS: ${f2(liq.bbb.value)}% — ${liq.bbb.value <= 1.0 ? 'spreads contenidos, mercado tranquilo.' : liq.bbb.value <= 1.5 ? 'spreads moderados, zona neutral.' : 'spreads elevados, estrés crediticio.'}`
+                : 'BBB Spread no disponible.'}
+              <span style="color:var(--text3);font-style:italic;"> Scoring provisional.</span>
+            </div>
+          </div>
+          <div style="background:var(--surface2);border-radius:8px;padding:12px 14px;">
+            <div style="font-size:10px;font-weight:700;color:var(--blue);margin-bottom:6px;text-transform:uppercase;">Sizing</div>
+            <div style="font-size:11px;color:var(--text2);line-height:1.5;">
+              ${reg.score >= 4
+                ? 'Liquidity Score expansivo: sizing normal.'
+                : reg.score >= 0
+                ? 'Liquidity Score neutral: sizing moderado, stops ajustados.'
+                : 'Liquidity Score contractivo: sizing conservador.'}
+              ${liq.reservas?.value != null ? ` Reservas Fed: $${f2(liq.reservas.value)}T.` : ''}
+              <span style="color:var(--text3);font-style:italic;"> Scoring provisional.</span>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div class="co-footer" style="margin-top:16px;">Fuentes: FRED (M2SL, M2V, WRESBAL, BAMLC0A4CBBB, TOTLL, GDP, USSLIND) · ECB (M2 EUR, Curva EUR) · BOJ API (M2 JPN) · China M2: input manual mensual (PBoC)</div>
+      <div class="co-footer" style="margin-top:16px;">Fuentes: FRED (M2SL, M2V, WRESBAL, BAMLC0A4CBBB, TOTLL, GDP, USALOLITOAASTSAM) · ECB (M2 EUR, Curva EUR) · BOJ vía Cloudflare Worker proxy (M2 JPN) · ChinaData.live PBoC (M2 CHN — pendiente automatización)</div>
     `;
 
     // Eventos manuales

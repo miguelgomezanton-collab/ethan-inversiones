@@ -1,5 +1,6 @@
 import { getMacroData } from './macro-data.js';
 import { UserData } from '../../userdata.js';
+import { regimeFromScore, rvRangeFromScore } from './regime.js';
 
 const ESTRATEGIA_KEY = 'ethan_estrategia_ia';
 
@@ -316,8 +317,9 @@ export async function render(container, { actionsSlot }) {
     const el = document.getElementById('inv-panel-analisis');
     const s = macro?.scoreTotal ?? 0;
     const mainCol = s >= 4 ? 'var(--green)' : s >= 0 ? 'var(--amber)' : 'var(--red)';
-    const fase = macro?.coyuntura?.label || (s>=8?'Expansión':s>=4?'Desaceleración moderada':s>=0?'Contracción':'Crisis');
-    const rvPct = s>=10?'75-90%':s>=4?'55-70%':s>=0?'35-55%':'15-35%';
+    const _regime = regimeFromScore(s);
+    const fase   = _regime.label;   // fuente canónica HIST_MACRO_V1
+    const rvPct  = rvRangeFromScore(s);
     const ind = macro?.indicators || {};
     const fmtN = (v,d=2) => v!=null?Number(v).toFixed(d):'—';
 
@@ -364,11 +366,12 @@ export async function render(container, { actionsSlot }) {
         <div class="inv-score-big" style="color:${mainCol}">${s > 0 ? '+' : ''}${s}</div>
         <div>
           <div class="inv-score-label" style="color:${mainCol}">${fase}</div>
+          <div style="font-size:8px;font-family:var(--mono);color:var(--text3);margin-top:2px;">Motor: HIST_MACRO_V1</div>
           <div class="inv-score-sub">Score macro ETHAN · −17 a +17 · ${new Date().toLocaleDateString('es-ES')}</div>
           <div class="inv-pills">
             ${ind.curvaUS != null ? `<span class="inv-pill ${ind.curvaUS>0?'pos':'neg'}">📈 Curva ${fmtN(ind.curvaUS)}%</span>` : ''}
             ${ind.m2Global != null ? `<span class="inv-pill ${ind.m2Global>0?'pos':'neg'}">💧 M2 ${fmtN(ind.m2Global,1)}%</span>` : ''}
-            ${ind.fearGreed != null ? `<span class="inv-pill ${ind.fearGreed>50?'pos':ind.fearGreed>30?'neu':'neg'}">😰 F&G ${Math.round(ind.fearGreed)}</span>` : ''}
+            ${ind.fearGreed?.value != null ? `<span class="inv-pill ${ind.fearGreed.value>50?'pos':ind.fearGreed.value>30?'neu':'neg'}">😰 F&G ${Math.round(ind.fearGreed.value)}</span>` : ''}
             ${ind.vix != null ? `<span class="inv-pill ${ind.vix<15?'pos':ind.vix<25?'neu':'neg'}">⚡ VIX ${fmtN(ind.vix,1)}</span>` : ''}
           </div>
         </div>
