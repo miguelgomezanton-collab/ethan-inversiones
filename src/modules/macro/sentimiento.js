@@ -102,7 +102,7 @@ export async function render(container, { actionsSlot }) {
           <div style="font-size:9px;font-family:var(--mono);color:var(--text3);background:rgba(64,217,192,0.04);border:1px solid rgba(64,217,192,0.12);border-radius:6px;padding:6px 8px;line-height:1.7;">
             🔍 F&G<br>
             ${fg?.value??'—'} · ${fg?.date||'sin fecha'} · ${fg?.ageDays!=null?fg.ageDays+'d':'—'} · ${fsn(fg?.freshness)}<br>
-            Fuente: ${fg?.source||'—'}<br>
+            Fuente: ${fg?.source||'—'}${fg?.source&&fg.source!=='CNN'?` <strong style="color:var(--amber);">⚠ FALLBACK / PROXY — no es dato CNN directo</strong>`:''}<br>
             Score risk-on: ${fgComp?fgComp.score>=0?'+'+fgComp.score:fgComp.score:'excluido (STALE)'} · <25→−1 | 25–54→0 | ≥55→+1
           </div>
         </div>

@@ -1145,11 +1145,13 @@ export default async function handler(req, res) {
   } else errs.push('BBB: ' + rBbb.reason?.message);
 
   // 11. Fear & Greed — CNN (scraping) con freshness
-  // Clasificación actual: incorrecta (sentimiento ≠ política monetaria) — pendiente reclasificación
+  // F&G desacoplado del scoreTotal (decisión arquitectónica agosto 2026):
+  // - scoreTotal debe contener solo variables macro/financieras con histórico reproducible
+  // - F&G (LIVE_ONLY) entra exclusivamente en sentimentScore con convención risk-on coherente
+  // - Señal contrarian se mantiene como capa informativa no puntuable
+  // - score: null → excluido del loop scoreTotal; weight: 0 para documentar la intención
   const fg = rFg.status === 'fulfilled' ? rFg.value : null;
   if (fg) {
-    const ageDays = fg.date ? Math.round((Date.now() - new Date(fg.date).getTime()) / 86400000) : 0;
-    const freshness = ageDays <= 1 ? 'ok' : ageDays <= 3 ? 'warn' : 'stale';
     ind.fearGreed = {
       label: 'Fear & Greed (CNN)',
       value: fg.value, date: fg.date || null,
@@ -1162,8 +1164,10 @@ export default async function handler(req, res) {
         const d = Math.round((Date.now() - new Date(fg.date).getTime()) / 86400000);
         return d <= 1 ? 'ok' : d <= 3 ? 'warn' : 'stale';
       })(),
-      score: scFG(fg.value),
-      weight: 1,
+      score: null,   // excluido del scoreTotal — solo entra en sentimentScore
+      weight: 0,     // MAX_POSSIBLE no incluye F&G (LIVE_ONLY, sin histórico reproducible)
+      scoreContrarian: scFG(fg.value),       // conservado para señal contrarian informativa
+      scoreSentiment: scFG_sent(fg.value),   // score risk-on para sentimentScore
     };
   } else errs.push('FearGreed: ' + rFg.reason?.message);
 
@@ -1172,7 +1176,7 @@ export default async function handler(req, res) {
   // STALE/MISSING/ERROR quedan completamente excluidos de ambos.
   let scoreTotal = 0, availableScore = 0;
   const scoreDetail = {};
-  const MAX_POSSIBLE = 17; // suma teórica de todos los pesos cuando todos puntúan
+  const MAX_POSSIBLE = 16; // curvaUSD×1 + curvaEUR×1 + lei×1 + m2×3 + credito×3 + impulso×2 + velM2×2 + reservas×1 + bbb×1 + tipoReal×1. F&G excluido (LIVE_ONLY)
   Object.entries(ind).forEach(([k, i]) => {
     if (i.score != null) {
       scoreTotal    += i.score;
@@ -1266,7 +1270,7 @@ export default async function handler(req, res) {
   try {
     const sentComponents = [];
     if (ind.fearGreed?.freshness !== 'stale' && ind.fearGreed?.value != null)
-      sentComponents.push({ key: 'fg',  score: scFG_sent(ind.fearGreed.value),  weight: 1 });
+      sentComponents.push({ key: 'fg',  score: ind.fearGreed.scoreSentiment ?? scFG_sent(ind.fearGreed.value),  weight: 1 });
     if (seguimiento.vix?.valid && seguimiento.vix?.aboveSMA200 != null)
       sentComponents.push({ key: 'vix', score: scVIX_sent(seguimiento.vix.aboveSMA200), weight: 1 });
     if (seguimiento.hySpread?.freshness !== 'stale' && seguimiento.hySpread?.value != null)
