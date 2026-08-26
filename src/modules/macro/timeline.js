@@ -1,512 +1,141 @@
-// timeline.js — Timeline Histórico con selector de variable macro
+// timeline.js — usa /api/macro-history (sin key en frontend)
 import { getMacroData } from './macro-data.js';
 
-const MACRO_VARS = {
-  US10Y:        { label: 'Treasury 10Y' },
-  DFF:          { label: 'Fed Funds Rate' },
-  CPI_YOY:      { label: 'CPI Headline YoY' },
-  CORE_CPI_YOY: { label: 'Core CPI YoY' },
-};
-
 export async function render(container, { actionsSlot }) {
-  let currentWindow = '10Y';
-  let currentVar    = 'US10Y';
-
-  actionsSlot.innerHTML = `
-    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-      <div style="display:flex;align-items:center;gap:4px;">
-        <span style="font-size:9px;color:var(--text3);font-family:var(--mono);">Variable:</span>
-        <select id="tl-var" style="background:var(--surface2);border:1px solid var(--border);color:var(--text1);font-family:var(--mono);font-size:10px;padding:4px 8px;border-radius:4px;cursor:pointer;">
-          ${Object.entries(MACRO_VARS).map(([k,v]) =>
-            `<option value="${k}" ${k==='US10Y'?'selected':''}>${v.label}</option>`).join('')}
-        </select>
-      </div>
-      <div style="display:flex;gap:4px;">
-        ${['5Y','10Y','20Y','MAX'].map(w =>
-          `<button class="btn tl-win ${w==='10Y'?'btn-primary':''}" data-w="${w}" style="padding:4px 9px;font-size:10px;">${w}</button>`
-        ).join('')}
-      </div>
-      <button class="btn btn-primary" id="tl-refresh" style="padding:4px 9px;font-size:10px;">↻</button>
-    </div>`;
-
+  actionsSlot.innerHTML = `<button class="btn btn-primary" id="tl-refresh">↻ Actualizar</button>`;
   container.innerHTML = `<div id="tl-wrap"><div class="empty"><div class="loader-ring"></div><div class="empty-title">Descargando datos históricos...</div></div></div>`;
 
-  let histData = null;
-
-  async function load(force = false) {
+  async function load() {
     const el = document.getElementById('tl-wrap');
     try {
       const [macro, hist] = await Promise.all([
-        getMacroData(force),
+        getMacroData(false),
         fetch('/api/macro-history?type=timeline').then(r => { if (!r.ok) throw new Error('macro-history: ' + r.status); return r.json(); })
       ]);
-      histData = hist;
       paint(macro, hist);
     } catch(e) {
-      el.innerHTML = `<div class="empty"><div class="empty-icon">⚠</div><div class="empty-title">Error</div><div class="empty-desc">${e.message}</div></div>`;
+      document.getElementById('tl-wrap').innerHTML = `<div class="empty"><div class="empty-icon">⚠</div><div class="empty-title">Error</div><div class="empty-desc">${e.message}</div></div>`;
     }
   }
-
-    function buildAnalogiasHTML(an) {
-      if (!an || !an.current || !an.current.top10 || !an.current.top10.length) {
-        return '<div class="mac-card" style="background:rgba(251,191,36,0.04);border-color:rgba(251,191,36,0.2);"><div style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text3);">Analogías Históricas — sin datos suficientes</div></div>';
-      }
-      const cur = an.current, sum = cur.summary, top = cur.top10;
-      const f1  = v => v != null ? (v>=0?'+':'')+v.toFixed(1)+'%' : '—';
-      const f3  = v => v != null ? (v>=0?'+':'')+v.toFixed(3) : '—';
-      const col = v => v == null ? 'var(--text3)' : v > 0 ? 'var(--green)' : 'var(--red)';
-      const sc  = v => v > 0.8 ? 'var(--green)' : v > 0.5 ? 'var(--amber)' : 'var(--red)';
-
-      const summaryCards = [
-        ['Mediana S&P +6m',  sum.medianSp6m,  true],
-        ['Mediana S&P +12m', sum.medianSp12m, true],
-        ['% positivas +12m', sum.pctPositive12m != null ? sum.pctPositive12m + '%' : null, false],
-        ['Mediana MaxDD 12m', sum.medianMaxDD, true],
-      ].map(([label, val, isRet]) =>
-        '<div style="background:var(--surface2);border-radius:8px;padding:10px;text-align:center;">' +
-          '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:4px;">' + label + '</div>' +
-          '<div style="font-family:var(--serif);font-size:20px;font-weight:600;font-style:italic;color:' + (isRet ? col(typeof val === 'string' ? parseFloat(val) : val) : 'var(--text1)') + ';">' +
-            (isRet && val != null ? (val >= 0 ? '+' : '') + parseFloat(val).toFixed(1) + '%' : val || '—') +
-          '</div></div>'
-      ).join('');
-
-      const topRows = top.map((a, i) =>
-        '<tr style="border-bottom:1px solid var(--border);' + (i === 0 ? 'background:rgba(64,217,192,0.04);' : '') + '">' +
-          '<td style="padding:6px 8px;font-family:var(--mono);color:var(--text1);">' + a.month + '</td>' +
-          '<td style="padding:6px 8px;text-align:right;font-family:var(--mono);color:' + sc(a.similarity) + ';">' + (a.similarity*100).toFixed(1) + '%</td>' +
-          '<td style="padding:6px 8px;text-align:right;font-family:var(--mono);color:var(--text3);">' + a.dimsUsed + '/9</td>' +
-          '<td style="padding:6px 8px;text-align:right;font-family:var(--mono);color:' + col(a.scoreNorm) + ';">' + f3(a.scoreNorm) + '</td>' +
-          '<td style="padding:6px 8px;text-align:right;font-family:var(--mono);color:' + col(a.sp3m) + ';">' + f1(a.sp3m) + '</td>' +
-          '<td style="padding:6px 8px;text-align:right;font-family:var(--mono);color:' + col(a.sp6m) + ';">' + f1(a.sp6m) + '</td>' +
-          '<td style="padding:6px 8px;text-align:right;font-family:var(--mono);color:' + col(a.sp12m) + ';">' + f1(a.sp12m) + '</td>' +
-          '<td style="padding:6px 8px;text-align:right;font-family:var(--mono);color:var(--red);">' + f1(a.maxDD12m) + '</td>' +
-        '</tr>'
-      ).join('');
-
-      const probeBlocks = (an.probes || []).map(probe => {
-        if (probe.error) return '<div style="font-size:10px;color:var(--text3);margin-bottom:8px;">' + probe.month + ': ' + probe.error + '</div>';
-        const diag = probe.diag || {};
-        // Pipeline summary
-        const pipelineHtml = diag.universeTotal != null
-          ? '<div style="font-size:9px;font-family:var(--mono);color:var(--text3);margin-bottom:6px;line-height:1.7;background:var(--surface2);padding:6px 8px;border-radius:4px;">' +
-            'Universe: ' + diag.universeTotal + ' → válidos: ' + diag.afterValid +
-            ' → embargo-12M: ' + diag.afterEmbargo +
-            ' → coverage≥60%: ' + diag.afterCoverage +
-            ' → sim calculada: ' + (diag.afterSimCalc||0) +
-            ' → elegibles: ' + (diag.eligibleCount||0) +
-            ' → final: ' + (probe.analogies?.length||0) +
-          '</div>' : '';
-        // Top 15 raw con rejection reasons
-        const rawRows = (diag.top15Raw || []).map(c =>
-          '<tr style="border-top:1px solid var(--border);opacity:' + (c.eligible?'1':'0.55') + ';">' +
-            '<td style="padding:2px 4px;color:' + (c.eligible?'var(--text1)':'var(--text3)') + ';">' + c.month + '</td>' +
-            '<td style="padding:2px 4px;text-align:right;color:' + sc(c.sim) + ';">' + (c.sim*100).toFixed(1) + '%</td>' +
-            '<td style="padding:2px 4px;text-align:right;color:var(--text3);">' + c.dims + '</td>' +
-            '<td style="padding:2px 4px;text-align:right;color:' + col(c.scoreNorm) + ';">' + f3(c.scoreNorm) + '</td>' +
-            '<td style="padding:2px 4px;text-align:right;color:' + col(c.sp3m) + ';">' + f1(c.sp3m) + '</td>' +
-            '<td style="padding:2px 4px;text-align:right;color:' + col(c.sp6m) + ';">' + f1(c.sp6m) + '</td>' +
-            '<td style="padding:2px 4px;text-align:right;color:' + col(c.sp12m) + ';">' + f1(c.sp12m) + '</td>' +
-            '<td style="padding:2px 4px;text-align:right;color:var(--red);">' + f1(c.maxDD12m) + '</td>' +
-            '<td style="padding:2px 4px;font-size:8px;color:' + (c.status==='SELECTED'?'var(--teal)':c.status==='ELIGIBLE'?'var(--green)':'var(--red)') + ';">' +
-              (c.status||'?') + (c.status==='REJECTED'?' ' + (c.rejectionReasons||[]).join(', '):'') + '</td>' +
-          '</tr>'
-        ).join('');
-        return '<div style="margin-bottom:16px;">' +
-          '<div style="font-size:10px;font-weight:700;color:var(--teal);margin-bottom:4px;font-family:var(--mono);">' +
-            probe.month + ' · ' + (probe.analogies?.length||0) + ' analogías finales</div>' +
-          pipelineHtml +
-          (rawRows ? '<table style="width:100%;border-collapse:collapse;font-size:9px;font-family:var(--mono);">' +
-            '<tr style="color:var(--text3);"><td style="padding:2px 4px;">Mes</td><td style="padding:2px 4px;text-align:right;">Sim.</td>' +
-            '<td style="padding:2px 4px;text-align:right;">D</td><td style="padding:2px 4px;text-align:right;">Score</td>' +
-            '<td style="padding:2px 4px;text-align:right;">+3m</td><td style="padding:2px 4px;text-align:right;">+6m</td>' +
-            '<td style="padding:2px 4px;text-align:right;">+12m</td><td style="padding:2px 4px;text-align:right;">DD</td>' +
-            '<td style="padding:2px 4px;">Estado</td></tr>' +
-            rawRows + '</table>' : '') +
-        '</div>';
-      }).join('');
-
-      return (
-        '<div class="mac-card" style="margin-bottom:14px;">' +
-          '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px;">' +
-            '<div><span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);">Analogías Históricas</span>' +
-            '<span style="font-size:9px;font-family:var(--mono);color:var(--text2);margin-left:8px;">' + cur.month + ' · Top ' + top.length + ' · ' + an.version + '</span></div>' +
-            (an.spCoverage ? '<div style="font-size:9px;font-family:var(--mono);color:var(--amber);">SP500: ' + an.spCoverage.first + ' → ' + an.spCoverage.last + ' (' + an.spCoverage.n + 'm) · A:' + (an.spCoverage.chunkA||'—') + ' B:' + (an.spCoverage.chunkB||'—') + '</div>' : '') +
-            '<div style="font-size:9px;font-family:var(--mono);color:var(--text3);">Mín. ' + an.minDims + '/9 dims · excl. últimos ' + an.excludeLast + 'm · coseno z-score winsorizado</div>' +
-          '</div>' +
-          '<div style="font-size:10px;color:var(--amber);font-family:var(--mono);margin-bottom:10px;">⚠ Comportamiento histórico posterior de configuraciones similares — no es forecast</div>' +
-          '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px;">' + summaryCards + '</div>' +
-          '<table style="width:100%;border-collapse:collapse;font-size:10px;">' +
-            '<thead><tr style="background:var(--surface2);">' +
-              '<th style="padding:6px 8px;text-align:left;font-size:9px;color:var(--text3);">Mes</th>' +
-              '<th style="padding:6px 8px;text-align:right;font-size:9px;color:var(--text3);">Simil.</th>' +
-              '<th style="padding:6px 8px;text-align:right;font-size:9px;color:var(--text3);">Dims</th>' +
-              '<th style="padding:6px 8px;text-align:right;font-size:9px;color:var(--text3);">ScoreNorm</th>' +
-              '<th style="padding:6px 8px;text-align:right;font-size:9px;color:var(--text3);">S&P +3m</th>' +
-              '<th style="padding:6px 8px;text-align:right;font-size:9px;color:var(--text3);">S&P +6m</th>' +
-              '<th style="padding:6px 8px;text-align:right;font-size:9px;color:var(--text3);">S&P +12m</th>' +
-              '<th style="padding:6px 8px;text-align:right;font-size:9px;color:var(--text3);">MaxDD 12m</th>' +
-            '</tr></thead>' +
-            '<tbody>' + topRows + '</tbody>' +
-          '</table>' +
-        '</div>' +
-        '<div class="mac-card" style="margin-bottom:14px;">' +
-          '<div style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:10px;">🔍 Validación — Top 5 de meses de referencia</div>' +
-          probeBlocks +
-        '</div>'
-      );
-    }
 
   function paint(macro, hist) {
     const el = document.getElementById('tl-wrap');
-    const tl  = hist.timeline || {};
-    const s   = macro.scoreTotal ?? 0;
+    const tl = hist.timeline || {};
+    const s = macro.scoreTotal ?? 0;
     const mainCol = s >= 4 ? 'var(--green)' : s >= 0 ? 'var(--amber)' : 'var(--red)';
 
-    const spNorm    = tl.spNorm       || [];
+    const spNorm    = tl.spNorm    || [];
+    const cpiYoY    = tl.cpiYoY   || [];
     const scoreHist = tl.scoreHistory || [];
-    const mv        = tl.macroVars?.[currentVar] || {};
-    const varSeries = mv.series || [];
-    const debug     = tl._debug || {};
 
-    const toYM = d => String(d || '').slice(0, 7);
-
-    // Período común SP500 + variable seleccionada
-    const spDates  = new Set(spNorm.map(p => toYM(p.date)));
-    const varDates = new Set(varSeries.map(p => toYM(p.date)));
-    const commonDates = [...spDates].filter(d => varDates.has(d)).sort();
-
-    if (commonDates.length === 0) {
-      el.innerHTML = `<div class="empty"><div class="empty-icon">⚠</div><div class="empty-title">Sin datos</div>
-        <div class="empty-desc" style="font-family:var(--mono);font-size:10px;">
-          spNorm: ${spNorm.length} · ${mv.label||currentVar}: ${varSeries.length}<br>
-          Score: ${debug.nScore||0} meses · ${debug.firstScore||'—'} → ${debug.lastScore||'—'}
-        </div></div>`;
+    // Determinar rango de fechas desde los datos
+    const allDates = [...spNorm, ...cpiYoY, ...scoreHist].map(p => new Date(p.date + '-01'));
+    if (allDates.length === 0) {
+      el.innerHTML = `<div class="empty"><div class="empty-icon">⚠</div><div class="empty-title">Sin datos históricos</div></div>`;
       return;
     }
+    const minDate = new Date(Math.min(...allDates));
+    const maxDate = new Date();
 
-    // Filtrar por ventana
-    const lastDate  = new Date(commonDates[commonDates.length-1] + '-01');
-    const winYears  = currentWindow === 'MAX' ? 100 : parseInt(currentWindow);
-    const winStart  = new Date(lastDate); winStart.setFullYear(winStart.getFullYear() - winYears);
-    const winStartYM = winStart.toISOString().slice(0,7);
-    const winDates  = commonDates.filter(d => d >= winStartYM);
+    const W = 820, H = 180, PX = 8, PY = 12;
 
-    if (winDates.length < 3) {
-      el.innerHTML = `<div class="empty"><div class="empty-icon">⚠</div><div class="empty-title">Sin datos en ventana ${currentWindow}</div></div>`;
-      return;
-    }
-
-    const minYM = winDates[0], maxYM = winDates[winDates.length-1];
-    const minDate = new Date(minYM + '-01'), maxDate = new Date(maxYM + '-01');
-
-    // SP500: variación % desde primer punto válido de la ventana
-    const spF  = spNorm.filter(p => toYM(p.date) >= minYM && toYM(p.date) <= maxYM);
-    const spBase = spF.length ? spF[0].value : 1;
-    const spPct  = spF.map(p => ({ date: p.date, value: +((p.value / spBase - 1) * 100).toFixed(2) }));
-    const varF = varSeries.filter(p => toYM(p.date) >= minYM && toYM(p.date) <= maxYM);
-    const scF  = scoreHist.filter(p => toYM(p.date) >= minYM && toYM(p.date) <= maxYM);
-
-    // Layout SVG — 3 paneles
-    const W = 820, PX = 42, PY = 6, LABEL_H = 16;
-    const P_H = 85, GAP = 10;
-    const TOTAL_H = (P_H + LABEL_H) * 3 + GAP * 2 + PY * 2 + 16;
-
-    const p1top = PY + LABEL_H;
-    const p2top = PY + LABEL_H + P_H + GAP + LABEL_H;
-    const p3top = PY + LABEL_H + (P_H + GAP + LABEL_H) * 2;
+    // Todas las series necesitan el mismo rango de valores
+    const allVals = [
+      ...spNorm.map(p => p.value),
+      ...cpiYoY.map(p => p.value),
+      ...scoreHist.map(p => p.value * 15),
+    ].filter(v => v != null && isFinite(v));
+    const minVal = Math.min(...allVals, -10), maxVal = Math.max(...allVals, 10);
 
     function toX(dateStr) {
-      const d = new Date(toYM(dateStr) + '-01');
-      const span = maxDate - minDate;
-      return span > 0 ? PX + (d - minDate) / span * (W - 2*PX) : PX;
+      const d = new Date(dateStr + '-01');
+      return PX + (d - minDate) / (maxDate - minDate) * (W - 2 * PX);
+    }
+    function toY(val) {
+      return PY + (1 - (val - minVal) / (maxVal - minVal)) * (H - 2 * PY);
+    }
+    function pts(series, scale = 1) {
+      return series.filter(p => p.value != null)
+        .map(p => `${toX(p.date).toFixed(1)},${toY(p.value * scale).toFixed(1)}`).join(' ');
     }
 
-    // makeY genérico
-    function makeY(vals, top) {
-      const v = vals.filter(x => x != null && isFinite(x));
-      if (!v.length) return { fn: () => top + P_H/2, min: 0, max: 0 };
-      const mn = Math.min(...v), mx = Math.max(...v);
-      const pad = (mx - mn) * 0.12 || 0.5;
-      return { fn: val => top + PY + (1 - (val-(mn-pad))/((mx+pad)-(mn-pad))) * (P_H - 2*PY), min: mn-pad, max: mx+pad };
+    // Línea de cero
+    const zeroY = toY(0);
+
+    // Labels de años
+    const years = [];
+    let y = new Date(minDate); y.setMonth(0); y.setDate(1);
+    while (y <= maxDate) {
+      years.push({ year: y.getFullYear(), x: toX(y.toISOString().slice(0, 7)) });
+      y = new Date(y.getFullYear() + 1, 0, 1);
     }
-    // makeY para SP500 % — fuerza 0 en rango, ticks en múltiplos de 50%
-    function makeYpct(vals, top) {
-      const v = vals.filter(x => x != null && isFinite(x));
-      if (!v.length) return { fn: () => top + P_H/2, min: 0, max: 0, ticks: [] };
-      const mn = Math.min(0, ...v);  // siempre incluir 0
-      const mx = Math.max(0, ...v);
-      const pad = (mx - mn) * 0.08 || 5;
-      const rangeMin = mn - pad, rangeMax = mx + pad;
-      const fn = val => top + PY + (1 - (val - rangeMin) / (rangeMax - rangeMin)) * (P_H - 2*PY);
-      // Ticks en múltiplos de 50% que caigan en el rango
-      const tickStep = mx > 200 ? 50 : mx > 100 ? 25 : 10;
-      const tPct = [];
-      for (let t = Math.ceil(rangeMin/tickStep)*tickStep; t <= rangeMax; t += tickStep) {
-        tPct.push(t);
-      }
-      return { fn, min: rangeMin, max: rangeMax, ticks: tPct };
-    }
-
-    function pts(series, yFn) {
-      return series.filter(p => p.value != null && isFinite(p.value))
-        .map(p => `${toX(p.date).toFixed(1)},${yFn(p.value).toFixed(1)}`).join(' ');
-    }
-
-    const yP1 = makeYpct(spPct.map(p => p.value), p1top);
-    const yP2 = makeY(varF.map(p => p.value), p2top);
-    const yP3 = makeY(scF.map(p => p.value), p3top);
-
-    // Ticks eje X
-    const tickStep = winYears >= 15 ? 5 : 1;
-    const ticks = [];
-    let ty = Math.ceil(minDate.getFullYear() / tickStep) * tickStep;
-    while (ty <= maxDate.getFullYear() + 1) {
-      const x = toX(`${ty}-01-01`);
-      if (x >= PX && x <= W-PX) ticks.push({ year: ty, x });
-      ty += tickStep;
-    }
-
-    // Labels eje Y (3 valores por panel)
-    function yAxisLabels(yObj, top) {
-      return [0, 0.5, 1].map(f => {
-        const v = yObj.min + (yObj.max - yObj.min) * f;
-        const y = yObj.fn(v);
-        return { y, label: Math.abs(v) >= 10 ? v.toFixed(1) : v.toFixed(2) };
-      });
-    }
-
-    const lP1 = (yP1.ticks || []).map(t => ({ y: yP1.fn(t), label: (t>=0?"+":"")+t+"%" }));
-    const lP2 = yAxisLabels(yP2, p2top);
-    const lP3 = yAxisLabels(yP3, p3top);
-
-    const SCORE_N = 9, TOTAL_N = 9, MAX_POSS = 15;  // 9 indicadores FRED, MaxScore=15
-    const scoreFrom = debug.firstScore ? debug.firstScore.slice(0,7) : '—';
-    const scoreLast = debug.lastScore  ? debug.lastScore.slice(0,7)  : '—';
 
     el.innerHTML = `
       <div class="mac-card" style="margin-bottom:14px;">
-        <!-- Header -->
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-          <div>
-            <span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);">Timeline Histórico · Ventana: ${currentWindow}</span>
-            <span style="font-size:9px;font-family:var(--mono);color:var(--text2);margin-left:10px;">Común SP500+${mv.label||currentVar}: ${minYM} → ${maxYM} · ${winDates.length}m</span>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+          <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:var(--text3);">
+            SP500 normalizado · CPI YoY · Score Parcial (3 indicadores auto) · ${minDate.getFullYear()}–${maxDate.getFullYear()}
           </div>
-          <div style="font-size:9px;font-family:var(--mono);color:var(--amber);">
-            Score parcial ${SCORE_N}/${TOTAL_N} · ${debug.nScore||scF.length}m · ${debug.firstScore?.slice(0,7)||'—'} → ${debug.lastScore?.slice(0,7)||'—'} · PROVISIONAL
+          <div style="display:flex;gap:14px;">
+            ${[['var(--green)','SP500 (norm.)'],['var(--red)','CPI YoY'],['var(--teal)','Score parcial ×15']].map(([c,l])=>
+              `<div style="display:flex;align-items:center;gap:4px;font-size:9px;color:var(--text2);"><div style="width:8px;height:3px;background:${c};border-radius:2px;"></div>${l}</div>`).join('')}
           </div>
         </div>
-
-        <!-- SVG 3 paneles -->
-        <svg viewBox="0 0 ${W} ${TOTAL_H}" style="width:100%;background:var(--surface2);border-radius:8px;" preserveAspectRatio="xMidYMid meet">
-
-          <!-- Labels de panel -->
-          <text x="${PX}" y="${PY+11}" font-family="IBM Plex Mono" font-size="9" fill="var(--green)">S&amp;P 500 (var. % desde inicio ventana)</text>
-          <text x="${PX}" y="${p1top+P_H+GAP+11}" font-family="IBM Plex Mono" font-size="9" fill="var(--blue)">${mv.label||currentVar} · ${mv.unit||'%'} · ${mv.source||'FRED'} · ${mv.transform||'media mensual'}</text>
-          <text x="${PX}" y="${p2top+P_H+GAP+11}" font-family="IBM Plex Mono" font-size="9" fill="var(--teal)">Macro Score Histórico · HIST_MACRO_V1_FRED · ScoreNorm [-1,+1] · PROVISIONAL</text>
-
-          <!-- Separadores -->
-          <line x1="${PX}" y1="${p2top}" x2="${W-PX}" y2="${p2top}" stroke="var(--border)" stroke-width="0.5"/>
-          <line x1="${PX}" y1="${p3top}" x2="${W-PX}" y2="${p3top}" stroke="var(--border)" stroke-width="0.5"/>
-
-          <!-- Línea 0% P1, P2 y P3 -->
-          <line x1="${PX}" y1="${yP1.fn(0).toFixed(1)}" x2="${W-PX}" y2="${yP1.fn(0).toFixed(1)}" stroke="var(--green)" stroke-width="1" stroke-dasharray="4" opacity="0.5"/>
-          ${yP2.fn(0) > p2top && yP2.fn(0) < p2top+P_H ? `<line x1="${PX}" y1="${yP2.fn(0).toFixed(1)}" x2="${W-PX}" y2="${yP2.fn(0).toFixed(1)}" stroke="var(--border2)" stroke-width="0.8" stroke-dasharray="4"/>` : ''}
-          <line x1="${PX}" y1="${yP3.fn(0).toFixed(1)}" x2="${W-PX}" y2="${yP3.fn(0).toFixed(1)}" stroke="var(--border2)" stroke-width="0.8" stroke-dasharray="4"/>
-
-          <!-- Ticks X -->
-          ${ticks.map(t => `
-            <line x1="${t.x.toFixed(1)}" y1="${p1top}" x2="${t.x.toFixed(1)}" y2="${(p3top+P_H).toFixed(1)}" stroke="var(--border)" stroke-width="0.4" stroke-dasharray="3"/>
-            <text x="${t.x.toFixed(1)}" y="${(p3top+P_H+13).toFixed(1)}" text-anchor="middle" font-family="IBM Plex Mono" font-size="8" fill="var(--text3)">${t.year}</text>
+        <svg viewBox="0 0 ${W} ${H}" style="width:100%;background:var(--surface2);border-radius:8px;" preserveAspectRatio="none">
+          <line x1="0" y1="${zeroY.toFixed(1)}" x2="${W}" y2="${zeroY.toFixed(1)}" stroke="var(--border2)" stroke-width="1" stroke-dasharray="4"/>
+          ${years.map(y => `
+            <line x1="${y.x.toFixed(1)}" y1="0" x2="${y.x.toFixed(1)}" y2="${H}" stroke="var(--border)" stroke-width="0.5" stroke-dasharray="3"/>
+            <text x="${(y.x + 3).toFixed(1)}" y="${H - 3}" font-family="IBM Plex Mono" font-size="8" fill="var(--text3)">${y.year}</text>
           `).join('')}
-
-          <!-- Eje Y labels -->
-          ${lP1.map(l => `<text x="${(PX-3).toFixed(1)}" y="${(l.y+3).toFixed(1)}" text-anchor="end" font-family="IBM Plex Mono" font-size="7" fill="var(--text3)">${l.label}</text>`).join('')}
-          ${lP2.map(l => `<text x="${(PX-3).toFixed(1)}" y="${(l.y+3).toFixed(1)}" text-anchor="end" font-family="IBM Plex Mono" font-size="7" fill="var(--text3)">${l.label}</text>`).join('')}
-          ${lP3.map(l => `<text x="${(PX-3).toFixed(1)}" y="${(l.y+3).toFixed(1)}" text-anchor="end" font-family="IBM Plex Mono" font-size="7" fill="var(--text3)">${l.label}</text>`).join('')}
-
-          <!-- Series -->
-          ${pts(spPct, yP1.fn) ? `<polyline points="${pts(spPct, yP1.fn)}"  fill="none" stroke="var(--green)" stroke-width="1.5" stroke-linejoin="round" opacity="0.9"/>` : ''}
-          ${pts(varF, yP2.fn) ? `<polyline points="${pts(varF, yP2.fn)}" fill="none" stroke="var(--blue)"  stroke-width="1.5" stroke-linejoin="round" opacity="0.85"/>` : ''}
-          ${pts(scF, yP3.fn)  ? `<polyline points="${pts(scF, yP3.fn)}"  fill="none" stroke="var(--teal)"  stroke-width="2"   stroke-linejoin="round"/>` : ''}
-
-          <!-- Punto actual score — muestra ScoreNorm, no raw -->
-          ${scF.length ? (() => {
-            const last = scF[scF.length-1];
-            const cx = toX(last.date).toFixed(1);
-            const cy = yP3.fn(last.value).toFixed(1);
-            const snLabel = last.value != null ? (last.value >= 0 ? '+' : '') + last.value.toFixed(2) : '—';
-            const snCol = last.value > 0.2 ? 'var(--green)' : last.value < -0.2 ? 'var(--red)' : 'var(--amber)';
-            return `<circle cx="${cx}" cy="${cy}" r="4" fill="${snCol}"/>
-                    <text x="${(+cx+6).toFixed(1)}" y="${(+cy+4).toFixed(1)}" font-family="IBM Plex Mono" font-size="9" fill="${snCol}">${snLabel}</text>`;
-          })() : ''}
-          <!-- Overlay tooltip -->
-          <rect id="tl-overlay" x="${PX}" y="${p1top}" width="${W-2*PX}" height="${p3top+P_H-p1top}" fill="transparent" style="cursor:crosshair;"/>
-          <line id="tl-cursor" x1="${PX}" y1="${p1top}" x2="${PX}" y2="${p3top+P_H}" stroke="var(--text3)" stroke-width="0.8" stroke-dasharray="3" opacity="0" pointer-events="none"/>
-          <g id="tl-tooltip" opacity="0" pointer-events="none">
-            <rect id="tl-tt-bg" x="0" y="0" width="220" height="72" rx="5" fill="var(--surface)" stroke="var(--border)" stroke-width="1"/>
-            <text id="tl-tt-date" x="8" y="15" font-family="IBM Plex Mono" font-size="9" fill="var(--teal)">—</text>
-            <text id="tl-tt-sp"   x="8" y="28" font-family="IBM Plex Mono" font-size="9" fill="var(--green)">S&amp;P 500: —</text>
-            <text id="tl-tt-var"  x="8" y="41" font-family="IBM Plex Mono" font-size="9" fill="var(--blue)">—: —</text>
-            <text id="tl-tt-sc"   x="8" y="54" font-family="IBM Plex Mono" font-size="9" fill="var(--teal)">Score: —</text>
-            <text id="tl-tt-note" x="8" y="67" font-family="IBM Plex Mono" font-size="8" fill="var(--text3)">PROVISIONAL</text>
-          </g>
+          ${pts(cpiYoY)    ? `<polyline points="${pts(cpiYoY)}"     fill="none" stroke="var(--red)"   stroke-width="1.5" stroke-linejoin="round" opacity="0.75"/>` : ''}
+          ${pts(spNorm)    ? `<polyline points="${pts(spNorm)}"     fill="none" stroke="var(--green)" stroke-width="2"   stroke-linejoin="round" opacity="0.8"/>` : ''}
+          ${pts(scoreHist) ? `<polyline points="${pts(scoreHist, 15)}" fill="none" stroke="var(--teal)"  stroke-width="2" stroke-linejoin="round"/>` : ''}
+          <circle cx="${(W - PX - 4).toFixed(1)}" cy="${(PY + 10).toFixed(1)}" r="4" fill="${mainCol}"/>
+          <text x="${(W - PX - 30).toFixed(1)}" y="${(PY + 8).toFixed(1)}" font-family="IBM Plex Mono" font-size="8" fill="${mainCol}">${s >= 0 ? '+' : ''}${s}</text>
         </svg>
-
-        <!-- Debug/auditoría -->
-        <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:8px;line-height:1.7;">
-          Serie: ${mv.source||'—'} · Frecuencia origen: ${currentVar.includes('YOY')?'mensual':'diaria'} ·
-          Transformación: ${mv.transform||'media mensual'} · Período: ${minYM} → ${maxYM} · N meses válidos: ${varF.length}<br>
-          ${debug.version||'HIST_MACRO_V1_FRED'} · 8 ind. score + BBB (analogías) · ${debug.nValid||'—'}/${debug.nTotal||'—'} meses válidos · ${debug.firstScore||'—'} → ${debug.lastScore||'—'} · <span style="color:${debug.invariantsPass?'var(--green)':'var(--red)'}">${debug.invariantStatus||'—'}</span>
-          ${hist.errors?.length ? ' · ⚠ ' + hist.errors.slice(0,2).join(', ') : ''}
+        <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:8px;">
+          Score parcial = Curva USD + Tipo Real + BBB Spread (×15 para visibilidad). Rango: −3 a +3. Score completo requiere M2 Global, LEI e Impulso (manuales).
+          ${hist.errors?.length ? ' · ⚠ ' + hist.errors.slice(0, 2).join(', ') : ''}
         </div>
       </div>
 
-      <!-- AUDITORÍA HIST_MACRO_V1_FRED -->
-      <div class="mac-card" style="margin-bottom:14px;font-family:var(--mono);">
-        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:10px;">
-          🔍 Auditoría HIST_MACRO_V1_FRED — 4 meses de referencia
-          <span style="color:var(--text3);font-weight:400;margin-left:8px;">
-            ${debug.nValid||'—'}/${debug.nTotal||'—'} meses válidos · MaxPossible=${debug.maxPossible||14} · BBB Max Macro:0/Analogías:±1 · <span style="color:${debug.invariantsPass?'var(--green)':'var(--red)'}">${debug.invariantStatus||'—'}</span>
-          </span>
-        </div>
-        ${(debug.auditMonths||[]).map(m => {
-          if (!m.valid) return `<div style="font-size:10px;color:var(--text3);margin-bottom:12px;">${m.month}: N/A — ${m.error||'cobertura insuficiente'}</div>`;
-          const comps = m.components || {};
-          const IND_ORDER = ['curvaUSD','tipoReal','lei','m2usa','creditoVsPib','impulso','velM2','reservas','bbb'];
-          const snCol = m.scoreNorm > 0.2 ? 'var(--green)' : m.scoreNorm < -0.2 ? 'var(--red)' : 'var(--amber)';
-          return `
-            <div style="margin-bottom:16px;border-bottom:1px solid var(--border);padding-bottom:12px;">
-              <div style="font-size:10px;color:var(--teal);margin-bottom:6px;font-weight:700;">
-                ${m.month} · ScoreNorm <span style="color:${snCol}">${m.scoreNorm>=0?'+':''}${m.scoreNorm?.toFixed(3)}</span>
-                · Raw ${m.scoreRaw>=0?'+':''}${m.scoreRaw} / ${m.maxAvailable}
-                · Coverage ${Math.round(m.coverage*100)}%
-                · Válidos ${Object.values(comps).filter(c=>c.valid&&c.maxScore>0).length}/8
-                ${m.violations?.length ? `<span style="color:var(--red)">⚠ ${m.violations.length} VIOLACIÓN(ES): ${m.violations.join(' | ')}</span>` : ''}
-              </div>
-              <table style="width:100%;border-collapse:collapse;font-size:9px;">
-                <thead><tr>
-                  <th style="text-align:left;padding:3px 6px;color:var(--text3);">Indicador</th>
-                  <th style="text-align:right;padding:3px 6px;color:var(--text3);">Valor</th>
-                  <th style="text-align:right;padding:3px 6px;color:var(--text3);">Score</th>
-                  <th style="text-align:right;padding:3px 6px;color:var(--text3);">Max</th>
-                  <th style="text-align:left;padding:3px 6px;color:var(--text3);">Fuente</th>
-                  <th style="text-align:center;padding:3px 6px;color:var(--text3);">OK</th>
-                </tr></thead>
-                <tbody>
-                  ${IND_ORDER.map(k => {
-                    const c = comps[k];
-                    if (!c) return '';
-                    const sc = c.score != null ? (c.score>=0?'+':'')+c.score : '—';
-                    const vl = c.value != null ? (typeof c.value === 'number' ? c.value.toFixed(2) : c.value) : '—';
-                    const col = c.valid ? (c.score > 0 ? 'var(--green)' : c.score < 0 ? 'var(--red)' : 'var(--amber)') : 'var(--text3)';
-                    return `<tr style="border-bottom:1px solid var(--border);">
-                      <td style="padding:3px 6px;color:var(--text2);">${k}</td>
-                      <td style="padding:3px 6px;text-align:right;color:var(--text1);">${vl}</td>
-                      <td style="padding:3px 6px;text-align:right;color:${col};font-weight:700;">${sc}</td>
-                      <td style="padding:3px 6px;text-align:right;color:var(--text3);">±${c.maxScore||1}</td>
-                      <td style="padding:3px 6px;color:var(--text3);font-size:8px;">${c.source||'—'}${c.note?' · '+c.note:''}</td>
-                      <td style="padding:3px 6px;text-align:center;">${c.valid?'✓':'✗'}</td>
-                    </tr>`;
-                  }).join('')}
-                  <tr style="background:var(--surface2);">
-                    <td style="padding:4px 6px;font-weight:700;color:var(--text1);">TOTAL</td>
-                    <td colspan="2" style="padding:4px 6px;text-align:right;font-weight:700;color:${snCol};">Raw ${m.scoreRaw>=0?'+':''}${m.scoreRaw} / ${m.maxAvailable} = Norm ${m.scoreNorm>=0?'+':''}${m.scoreNorm?.toFixed(3)}</td>
-                    <td style="padding:4px 6px;text-align:right;color:var(--text3);">${debug.maxPossible||14}</td>
-                    <td colspan="2" style="padding:4px 6px;color:var(--text3);">Coverage ${Math.round(m.coverage*100)}% (${m.maxAvailable}/${debug.maxPossible||14}) ${m.coverage>=0.6?'✓ válido':'✗ N/A'}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>`;
-        }).join('')}
+      <div class="mac-card">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:var(--text3);margin-bottom:12px;">Períodos Históricos con Configuración Similar</div>
+        <table style="width:100%;border-collapse:collapse;font-size:11px;">
+          <thead><tr style="background:var(--surface2);">
+            <th style="padding:8px 12px;text-align:left;font-size:9px;text-transform:uppercase;color:var(--text3);border-bottom:1px solid var(--border);">Período</th>
+            <th style="padding:8px 12px;text-align:center;font-size:9px;color:var(--text3);border-bottom:1px solid var(--border);">Curva USD</th>
+            <th style="padding:8px 12px;text-align:center;font-size:9px;color:var(--text3);border-bottom:1px solid var(--border);">CPI YoY</th>
+            <th style="padding:8px 12px;text-align:center;font-size:9px;color:var(--text3);border-bottom:1px solid var(--border);">Tipo Real</th>
+            <th style="padding:8px 12px;text-align:center;font-size:9px;color:var(--text3);border-bottom:1px solid var(--border);">SP500 +6m</th>
+            <th style="padding:8px 12px;text-align:center;font-size:9px;color:var(--text3);border-bottom:1px solid var(--border);">SP500 +12m</th>
+            <th style="padding:8px 12px;text-align:left;font-size:9px;color:var(--text3);border-bottom:1px solid var(--border);">Contexto</th>
+          </tr></thead>
+          <tbody>
+            ${[
+              {p:'Jun 2022', c:'-0.04%',cpi:'9.1%', tr:'-3.7%',s6:'-14%',s12:'-18%',ctx:'Pico inflación · Fed subiendo agresivamente',s6c:'var(--red)',  s12c:'var(--red)'},
+              {p:'Oct 2019', c:'+0.15%',cpi:'1.8%', tr:'+3.5%',s6:'+8%', s12:'+19%',ctx:'Curva recuperando · Fed bajando tipos',    s6c:'var(--green)',s12c:'var(--green)'},
+              {p:'Nov 2018', c:'+0.21%',cpi:'2.2%', tr:'+0.2%',s6:'-7%', s12:'+14%',ctx:'QT + trade war · luego Fed pivotó',        s6c:'var(--red)',  s12c:'var(--green)'},
+              {p:'Dic 2007', c:'+0.74%',cpi:'4.1%', tr:'+1.1%',s6:'-12%',s12:'-38%',ctx:'Crisis subprime · spreads disparados',     s6c:'var(--red)',  s12c:'var(--red)'},
+              {p:'Mar 2020', c:'+0.48%',cpi:'+1.5%',tr:'+3.5%',s6:'+39%',s12:'+53%',ctx:'COVID · Fed QE masivo → rebote brutal',   s6c:'var(--green)',s12c:'var(--green)'},
+            ].map(r => `<tr>
+              <td style="padding:9px 12px;border-bottom:1px solid var(--border);font-weight:600;">${r.p}</td>
+              <td style="padding:9px 12px;text-align:center;border-bottom:1px solid var(--border);font-family:var(--mono);color:${r.c.startsWith('-')?'var(--red)':'var(--green)'};">${r.c}</td>
+              <td style="padding:9px 12px;text-align:center;border-bottom:1px solid var(--border);font-family:var(--mono);color:var(--amber);">${r.cpi}</td>
+              <td style="padding:9px 12px;text-align:center;border-bottom:1px solid var(--border);font-family:var(--mono);color:${parseFloat(r.tr)>0?'var(--green)':'var(--red)'};">${r.tr}</td>
+              <td style="padding:9px 12px;text-align:center;border-bottom:1px solid var(--border);font-family:var(--mono);font-weight:700;color:${r.s6c};">${r.s6}</td>
+              <td style="padding:9px 12px;text-align:center;border-bottom:1px solid var(--border);font-family:var(--mono);font-weight:700;color:${r.s12c};">${r.s12}</td>
+              <td style="padding:9px 12px;border-bottom:1px solid var(--border);font-size:10px;color:var(--text2);">${r.ctx}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+        <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:10px;">Rendimientos históricos documentados. No constituyen garantía de rendimientos futuros.</div>
       </div>
-
-      <!-- ANALOGÍAS HISTÓRICAS — FASE 2B -->
-      ${buildAnalogiasHTML(hist.analogies)}
-      <div class="co-footer" style="margin-top:14px;">
-        Fuentes: FRED SP500 (mensual) · FRED DGS10/DFF/CPIAUCSL/CPILFESL ·
-        HIST_MACRO_V1_FRED · ${debug.version||"HIST_MACRO_V1_FRED"} · ${debug.nScore||scF.length} meses válidos (coverage≥60%) · ${debug.firstScore?.slice(0,7)||"—"} → ${debug.lastScore?.slice(0,7)||"—"} · PROVISIONAL
-      </div>
+      <div class="co-footer" style="margin-top:14px;">Calculado en servidor · Yahoo Finance (SP500) · FRED (CPIAUCSL, DGS10, DGS2, DFF, BAMLC0A4CBBB) · sin API key en frontend</div>
     `;
-
-    // Tooltip interactivo
-    const svgEl     = el.querySelector('svg');
-    const overlay   = el.querySelector('#tl-overlay');
-    const cursor    = el.querySelector('#tl-cursor');
-    const tooltip   = el.querySelector('#tl-tooltip');
-    const ttBg      = el.querySelector('#tl-tt-bg');
-    const ttDate    = el.querySelector('#tl-tt-date');
-    const ttSp      = el.querySelector('#tl-tt-sp');
-    const ttVar     = el.querySelector('#tl-tt-var');
-    const ttSc      = el.querySelector('#tl-tt-sc');
-
-    // Índices por mes
-    const spMap  = new Map(spPct.map(p => [toYM(p.date), p.value]));
-    const varMap = new Map(varF.map(p => [toYM(p.date), p.value]));
-    const scMap  = new Map(scF.map(p => [toYM(p.date), p])); // objeto completo para tooltip
-
-    if (overlay && svgEl) {
-      overlay.addEventListener('mousemove', e => {
-        const rect  = svgEl.getBoundingClientRect();
-        const svgW  = W, svgH = TOTAL_H;
-        const scaleX = svgW / rect.width;
-        const mouseX = (e.clientX - rect.left) * scaleX;
-
-        // Mes más cercano
-        const frac   = (mouseX - PX) / (W - 2*PX);
-        const ts     = minDate.getTime() + frac * (maxDate.getTime() - minDate.getTime());
-        const hoverD = new Date(ts);
-        const hYM    = `${hoverD.getFullYear()}-${String(hoverD.getMonth()+1).padStart(2,'0')}`;
-
-        const spV  = spMap.get(hYM);
-        const varV = varMap.get(hYM);
-        const scV  = scMap.get(hYM);
-
-        cursor.setAttribute('x1', mouseX); cursor.setAttribute('x2', mouseX);
-        cursor.setAttribute('opacity', '1');
-
-        ttDate.textContent = hYM;
-        ttSp.textContent   = spV  != null ? `S&P 500: ${spV >= 0 ? '+' : ''}${spV.toFixed(1)}%` : 'S&P 500: —';
-        ttVar.textContent  = varV != null ? `${mv.label||currentVar}: ${varV.toFixed(2)}${mv.unit||'%'}` : `${mv.label||currentVar}: —`;
-        if (scV != null) {
-          const snLabel  = (scV.value != null ? (scV.value>=0?'+':'')+scV.value.toFixed(2) : '—');
-          const rawLabel = (scV.scoreRaw != null ? (scV.scoreRaw>=0?'+':'')+scV.scoreRaw : '—');
-          const covLabel = scV.coverage != null ? Math.round(scV.coverage*100)+'%' : '—';
-          ttSc.textContent = `ScoreNorm ${snLabel} · Raw ${rawLabel} · Cov ${covLabel}`;
-        } else {
-          ttSc.textContent = 'Score: — (N/A o sin datos)';
-        }
-
-        // Posición tooltip — derecha o izquierda según posición
-        const ttX = mouseX + 10 < W - 230 ? mouseX + 10 : mouseX - 230;
-        const ttY = p1top + 5;
-        tooltip.setAttribute('transform', `translate(${ttX},${ttY})`);
-        tooltip.setAttribute('opacity', '1');
-      });
-      overlay.addEventListener('mouseleave', () => {
-        cursor.setAttribute('opacity', '0');
-        tooltip.setAttribute('opacity', '0');
-      });
-    }
   }
 
-  // Event listeners
-  document.addEventListener('click', e => {
-    const btn = e.target.closest('.tl-win');
-    if (!btn) return;
-    currentWindow = btn.dataset.w;
-    document.querySelectorAll('.tl-win').forEach(b => b.classList.remove('btn-primary'));
-    btn.classList.add('btn-primary');
-    if (histData) paint({scoreTotal: 0}, histData); // repintar sin recargar
-    load(false);
-  });
-
-  document.addEventListener('change', e => {
-    if (e.target.id !== 'tl-var') return;
-    currentVar = e.target.value;
-    if (histData) load(false);
-  });
-
-  document.getElementById('tl-refresh')?.addEventListener('click', () => load(true));
-  await load(false);
+  document.getElementById('tl-refresh')?.addEventListener('click', load);
+  await load();
   return { destroy() {} };
 }
