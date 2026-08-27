@@ -227,18 +227,36 @@ function mtAnalyzeAsset(raw) {
 }
 
 function mtInverseVol(candidates, maxWeight, totalPct=100) {
+  const EPS = 0.001; // tolerancia para invariante HARD
   const withVol=candidates.map(a=>({...a,vol:mtDailyVol(a.closes)})).filter(a=>a.vol&&a.vol>0);
   if(!withVol.length)return[];
   const invVols=withVol.map(a=>1/a.vol),sumIV=invVols.reduce((a,b)=>a+b,0);
   let pos=withVol.map((a,i)=>({...a,weightPct:(invVols[i]/sumIV)*totalPct}));
-  const effMax=Math.max(maxWeight,1/pos.length)*totalPct;
+
+  // Cap HARD: nunca superar maxWeight×totalPct, independientemente del N de activos.
+  // Capital sobrante no se redistribuye por encima del cap — queda como cash táctico adicional.
+  const effMax = maxWeight * totalPct; // FIX: eliminado Math.max(maxWeight,1/N) que permitía bypass
+
+  let totalAssigned = 0;
   for(let iter=0;iter<10;iter++){
     const over=pos.filter(p=>p.weightPct>effMax);if(!over.length)break;
-    let excess=0;pos.forEach(p=>{if(p.weightPct>effMax){excess+=p.weightPct-effMax;p.weightPct=effMax;}});
-    const under=pos.filter(p=>p.weightPct<effMax),underSum=under.reduce((s,p)=>s+p.weightPct,0);
-    if(!underSum||!under.length)break;
-    under.forEach(p=>{p.weightPct+=p.weightPct/underSum*excess;});
+    let excess=0;
+    pos.forEach(p=>{if(p.weightPct>effMax){excess+=p.weightPct-effMax;p.weightPct=effMax;}});
+    totalAssigned=pos.reduce((s,p)=>s+p.weightPct,0);
+    // Solo redistribuir el exceso a activos que aún tienen margen bajo effMax
+    const under=pos.filter(p=>p.weightPct<effMax-EPS);
+    const underCapacity=under.reduce((s,p)=>s+(effMax-p.weightPct),0);
+    if(!under.length||!underCapacity){break;} // no hay margen → exceso queda como cash
+    // Redistribuir proporcionalmente a la capacidad restante de cada activo
+    under.forEach(p=>{p.weightPct+=Math.min(effMax-p.weightPct,(p.weightPct/under.reduce((s,u)=>s+u.weightPct,0))*excess);});
   }
+
+  // Invariante HARD: ningún activo puede superar maxWeight×totalPct
+  if(pos.some(p=>p.weightPct>effMax+EPS)){
+    const breach=pos.map(p=>`${p.ticker}:${p.weightPct.toFixed(2)}%`).join(',');
+    throw new Error(`CORE_MAX_WEIGHT_BREACH — effMax=${effMax.toFixed(1)}% violado por [${breach}]`);
+  }
+
   return pos.sort((a,b)=>b.weightPct-a.weightPct);
 }
 
@@ -587,7 +605,13 @@ async function runAllocationEngine(el) {
   const scoreMedio = candidates.length > 0 ? candidates.reduce((s,a) => s+a.score, 0)/candidates.length : 0;
   const cashPct    = Math.max(0, Math.min(100, ((8 - scoreMedio) / 8) * 100));
   const investedPct = 100 - cashPct;
-  const corePositions = mtInverseVol(candidates, coreMaxW, investedPct);
+  // Cap 40% sobre budget CORE total (100%), no sobre investedPct.
+  // 1 elegible → 40% activo + 60% cash. Cash táctico = 100% - Σpesos.
+  const corePositionsRaw = mtInverseVol(candidates, coreMaxW, 100);
+  const corePositions = corePositionsRaw.map(p => ({
+    ...p,
+    weightPct: Math.min(p.weightPct, investedPct),
+  }));
 
   // Scores RV / RF para el banner
   const rvAssets = allocationAssets.filter(a => a.type === 'RV' && !a.error);
