@@ -67,16 +67,21 @@ function liqCard(icon, title, ind, subtitle, thresholds, signal) {
     : (ind.value != null ? fsign(ind.value) + '%' : '—');
   const maxAbs = title.includes('Reservas') ? 2 : title.includes('M2') ? 10 : title.includes('Crédito vs') ? 8 : 5;
   const barVal = title.includes('Reservas') ? (ind.value != null ? ind.value - 3 : null) : ind.value;
+  // El subtitle contiene la metodología — se muestra en bloque audit colapsable
+  const auditHTML = subtitle ? `<div class="audit-toggle" onclick="this.classList.toggle('open')">
+    <span class="audit-lbl">Metodología ▾</span>
+    <div class="audit-body">${typeof subtitle === 'string' ? subtitle : ''}</div>
+  </div>` : '';
   return `<div class="co-liq-card">
     <div class="co-liq-card-header">
       <span class="co-liq-card-title">${icon} ${title}</span>
       <span style="font-size:9px;color:var(--text3);font-family:var(--mono);">${ind.date||'—'}${ind.manual?' · ✎':''}</span>
     </div>
     <div style="font-family:var(--serif);font-size:32px;font-weight:600;font-style:italic;color:${c};">${displayVal}</div>
-    <div style="font-size:10px;color:var(--text2);font-family:var(--mono);margin-bottom:2px;">${subtitle}</div>
     <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:4px;">${thresholds}</div>
     ${ind.value != null && barVal != null ? centeredBar(barVal, maxAbs) : '<div style="height:8px;background:var(--surface2);border-radius:4px;margin:8px 0 4px;"></div>'}
     <div style="font-size:10px;color:var(--text2);line-height:1.5;margin-top:8px;">${signal(ind.score, ind.value)}</div>
+    ${auditHTML}
   </div>`;
 }
 
@@ -203,7 +208,7 @@ export async function render(container, { actionsSlot }) {
                 const gdp = liq.credito.gdp || {};
                 const fsn = f => f==='ok'?'✓ OK':f==='warn'?'⚠ WARN':f==='stale'?'✗ STALE':'—';
                 return [
-                  '🔍 DEBUG Crédito vs PIB',
+                  'Metodología — Crédito vs PIB',
                   `TOTLL: ${tl.date||'—'} | base ${tl.baseDate||'—'} | ${tl.ageDays!=null?tl.ageDays+'d':'—'} · ${fsn(tl.freshness)}${tl.error?' ⚠ '+tl.error:''}`,
                   `GDP:   ${gdp.date||'—'} | base ${gdp.baseDate||'—'} | ${gdp.ageDays!=null?gdp.ageDays+'d':'—'} · ${fsn(gdp.freshness)}${gdp.error?' ⚠ '+gdp.error:''}`,
                   `CreditYoY: ${liq.credito.creditYoY!=null?(liq.credito.creditYoY>=0?'+':'')+f2(liq.credito.creditYoY)+'%':'—'} | GdpYoY: ${liq.credito.gdpYoY!=null?(liq.credito.gdpYoY>=0?'+':'')+f2(liq.credito.gdpYoY)+'%':'—'} | Diff: ${liq.credito.value!=null?(liq.credito.value>=0?'+':'')+f2(liq.credito.value)+'%':'—'}`,
@@ -225,7 +230,7 @@ export async function render(container, { actionsSlot }) {
                 const p3m = liq.impulso.point3m || {};
                 const fsn = f => f==='ok'?'✓ OK':f==='warn'?'⚠ WARN':f==='stale'?'✗ STALE':'—';
                 return [
-                  '🔍 DEBUG Impulso Crediticio',
+                  'Metodología — Impulso Crediticio',
                   `Actual:  ${c.date||'—'} | base ${c.baseDate||'—'} | ${c.ageDays!=null?c.ageDays+'d':'—'} · ${fsn(c.freshness)}`,
                   `Hace 3M: ${p3m.date||'—'} | base ${p3m.baseDate||'—'}`,
                   `YoY actual: ${liq.impulso.yoyNow!=null?(liq.impulso.yoyNow>=0?'+':'')+f2(liq.impulso.yoyNow)+'%':'—'} | YoY 3M atrás: ${liq.impulso.yoy3mAgo!=null?(liq.impulso.yoy3mAgo>=0?'+':'')+f2(liq.impulso.yoy3mAgo)+'%':'—'}`,
@@ -246,7 +251,7 @@ export async function render(container, { actionsSlot }) {
                 const v = liq.velM2;
                 const fsn = f => f==='ok'?'✓ OK':f==='warn'?'⚠ WARN':f==='stale'?'✗ STALE':'—';
                 return [
-                  '🔍 DEBUG Velocidad M2',
+                  'Metodología — Velocidad M2',
                   `M2V actual: ${v.date||'—'} | ${v.rawValue!=null?v.rawValue.toFixed(4):'—'}`,
                   `Base:       ${v.baseDate||'—'} | ${v.baseValue!=null?v.baseValue.toFixed(4):'—'}`,
                   `YoY: ${v.value!=null?(v.value>=0?'+':'')+f2(v.value)+'%':'—'} | ${v.ageDays!=null?v.ageDays+'d':'—'} · ${fsn(v.freshness)}`,
@@ -267,7 +272,7 @@ export async function render(container, { actionsSlot }) {
                 const r = liq.reservas;
                 const fsn = f => f==='ok'?'✓ OK':f==='warn'?'⚠ WARN':f==='stale'?'✗ STALE':'—';
                 return [
-                  '🔍 DEBUG Reservas Bancarias',
+                  'Metodología — Reservas Bancarias',
                   `Fecha: ${r.date||'—'} | Bruto FRED: ${r.rawValueM!=null?Number(r.rawValueM).toLocaleString('es-ES')+' $M':'—'} | Convertido: ${r.value!=null?'$'+r.value+'T':'—'}`,
                   `Antigüedad: ${r.ageDays!=null?r.ageDays+'d':'—'} · ${fsn(r.freshness)} · Fuente: FRED WRESBAL`,
                   `Score: ${r.score!=null?r.score:'bloqueado'}${r.stale?' · STALE':''} [PROVISIONAL · thresholds fijos $3.5T/$2.5T]`,
@@ -284,20 +289,22 @@ export async function render(container, { actionsSlot }) {
         ${liq.bbb ? `<div class="co-liq-card">
           <div class="co-liq-card-header"><span class="co-liq-card-title">📊 BBB Spread</span><span style="font-size:9px;color:var(--text3);font-family:var(--mono);">${liq.bbb.date||'—'}</span></div>
           <div style="font-family:var(--serif);font-size:32px;font-weight:600;font-style:italic;color:${col(liq.bbb.score)};">${f2(liq.bbb.value)}%</div>
-          <div style="font-size:10px;color:var(--text2);font-family:var(--mono);margin-bottom:2px;">OAS · FRED BAMLC0A4CBBB</div>
           <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:4px;">≤1.00%→+1  ·  >1.00% y ≤1.50%→0  ·  >1.50%→−1  ·  PROVISIONAL · peso ×1</div>
           <div class="co-ind-bar-track" style="margin:8px 0 4px;"><div class="co-ind-bar-fill" style="width:${Math.min(liq.bbb.value/4*100,100)}%;background:${col(liq.bbb.score)};"></div></div>
-          <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:8px;background:rgba(64,217,192,0.04);border:1px solid rgba(64,217,192,0.15);border-radius:6px;padding:8px 10px;line-height:1.8;">
-            🔍 DEBUG BBB Spread<br>
-            Fecha: ${liq.bbb.date||'—'} | BAMLC0A4CBBB: ${liq.bbb.value!=null?liq.bbb.value.toFixed(2)+'%':'—'}<br>
-            Antigüedad: ${liq.bbb.ageDays!=null?liq.bbb.ageDays+'d':'—'} · ${liq.bbb.freshness==='ok'?'✓ OK':liq.bbb.freshness==='warn'?'⚠ WARN':'✗ STALE'} (≤7d OK | 8-10d WARN | >10d STALE)<br>
-            Score: ${liq.bbb.score!=null?liq.bbb.score:'bloqueado'}${liq.bbb.stale?' · STALE':''} · Fuente: FRED BAMLC0A4CBBB [PROVISIONAL]
-          </div>
           <div style="font-size:10px;color:var(--text2);line-height:1.5;margin-top:8px;">
-            ${liq.bbb.score>0?'<strong style="color:var(--green)">+1 pt.</strong> ≤1.00% — spreads contenidos, mercado tranquilo. Scoring provisional.':
-              liq.bbb.score===0?'<strong style="color:var(--amber)">0 pts.</strong> >1.00% y ≤1.50% — neutral, coste de crédito moderado. Scoring provisional.':
-              liq.bbb.score!=null?'<strong style="color:var(--red)">−1 pt.</strong> >1.50% — estrés crediticio, prima de riesgo elevada. Scoring provisional.':
+            ${liq.bbb.score>0?'<strong style="color:var(--green)">+1 pt.</strong> ≤1.00% — spreads contenidos, mercado tranquilo.':
+              liq.bbb.score===0?'<strong style="color:var(--amber)">0 pts.</strong> >1.00% y ≤1.50% — neutral, coste de crédito moderado.':
+              liq.bbb.score!=null?'<strong style="color:var(--red)">−1 pt.</strong> >1.50% — estrés crediticio, prima de riesgo elevada.':
               '<strong style="color:var(--text3)">— pts.</strong> Dato obsoleto o no disponible.'}
+          </div>
+          <div class="audit-toggle" onclick="this.classList.toggle('open')">
+            <span class="audit-lbl">Metodología ▾</span>
+            <div class="audit-body">
+              Fuente: FRED BAMLC0A4CBBB (ICE BofA BBB OAS) · Frecuencia: diaria<br>
+              Fecha: ${liq.bbb.date||'—'} | Valor: ${liq.bbb.value!=null?liq.bbb.value.toFixed(2)+'%':'—'}<br>
+              Antigüedad: ${liq.bbb.ageDays!=null?liq.bbb.ageDays+'d':'—'} · ${liq.bbb.freshness==='ok'?'✓ OK':liq.bbb.freshness==='warn'?'⚠ WARN':'✗ STALE'}<br>
+              Score: ${liq.bbb.score!=null?liq.bbb.score:'bloqueado'}${liq.bbb.stale?' · STALE':''} · Peso ×1 · [PROVISIONAL]
+            </div>
           </div>
         </div>` : ''}
       </div>

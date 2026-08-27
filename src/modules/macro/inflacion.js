@@ -95,14 +95,16 @@ export async function render(container,{actionsSlot}){
                 <div style="font-size:11px;color:var(--text2);line-height:1.5;">${rc.label}</div>
               </div>
             </div>
-            <!-- DEBUG -->
-            <div style="font-size:9px;font-family:var(--mono);color:var(--text3);background:rgba(64,217,192,0.04);border:1px solid rgba(64,217,192,0.15);border-radius:6px;padding:8px 10px;margin-bottom:10px;line-height:1.8;">
-              🔍 DEBUG Persistencia Inflacionaria<br>
-              Headline (CPIAUCSL): ${f1(rc.headline)}%<br>
-              Core (CPILFESL): ${f1(rc.core)}%<br>
-              Gap Headline−Core: ${rc.gap>=0?'+':''}${f1(rc.gap)} pp → ${rc.tipo.toUpperCase()} (gap ${rc.tipo==='coyuntural'?'≥':'<'} 0.5 pp)<br>
-              Índice heurístico: ${rc.pct}/100 · regla: CPI≤2.5→10 | ≤3.0→20 | ≤3.5→30 | ≤4.0→50 | >4.0→75<br>
-              Horizonte de vigilancia: 3–6 meses [PROVISIONAL · regla fija no calculada]
+            <!-- Audit colapsable -->
+            <div class="audit-toggle" onclick="this.classList.toggle('open')" style="margin-bottom:10px;">
+              <span class="audit-lbl">Metodología ▾</span>
+              <div class="audit-body">
+                Headline (CPIAUCSL): ${f1(rc.headline)}%<br>
+                Core (CPILFESL): ${f1(rc.core)}%<br>
+                Gap Headline−Core: ${rc.gap>=0?'+':''}${f1(rc.gap)} pp → ${rc.tipo.toUpperCase()}<br>
+                Índice heurístico: ${rc.pct}/100 · regla: CPI≤2.5→10 | ≤3.0→20 | ≤3.5→30 | ≤4.0→50 | >4.0→75<br>
+                Estado: PROVISIONAL · HEURÍSTICO · no calculado estadísticamente
+              </div>
             </div>
             <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;font-size:8px;font-family:var(--mono);text-align:center;">
               <div style="background:rgba(74,222,128,0.08);border-radius:4px;padding:5px;"><div style="color:var(--green);">0–3m</div><div style="color:var(--text3);margin-top:2px;">Sin señal</div></div>

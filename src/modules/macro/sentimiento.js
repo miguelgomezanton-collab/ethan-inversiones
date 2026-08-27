@@ -99,11 +99,14 @@ export async function render(container, { actionsSlot }) {
           ${fg?`<div style="display:flex;gap:4px;justify-content:center;font-size:9px;font-family:var(--mono);color:var(--text3);margin-bottom:8px;">
             <span>1d:${fg.previousClose??'—'}</span><span>·</span><span>1s:${fg.previousWeek??'—'}</span><span>·</span><span>1m:${fg.previousMonth??'—'}</span>
           </div>` : ''}
-          <div style="font-size:9px;font-family:var(--mono);color:var(--text3);background:rgba(64,217,192,0.04);border:1px solid rgba(64,217,192,0.12);border-radius:6px;padding:6px 8px;line-height:1.7;">
-            🔍 F&G<br>
-            ${fg?.value??'—'} · ${fg?.date||'sin fecha'} · ${fg?.ageDays!=null?fg.ageDays+'d':'—'} · ${fsn(fg?.freshness)}<br>
-            Fuente: ${fg?.source||'—'}${fg?.source&&fg.source!=='CNN'?` <strong style="color:var(--amber);">⚠ FALLBACK / PROXY — no es dato CNN directo</strong>`:''}<br>
-            Score risk-on: ${fgComp?fgComp.score>=0?'+'+fgComp.score:fgComp.score:'excluido (STALE)'} · <25→−1 | 25–54→0 | ≥55→+1
+          <div class="audit-toggle" onclick="this.classList.toggle('open')" style="margin-top:8px;">
+            <span class="audit-lbl">Metodología ▾</span>
+            <div class="audit-body">
+              ${fg?.value??'—'} · ${fg?.date||'sin fecha'} · ${fg?.ageDays!=null?fg.ageDays+'d':'—'} · ${fsn(fg?.freshness)}<br>
+              Fuente: ${fg?.source||'—'}${fg?.source&&fg.source!=='CNN'?` <strong style="color:var(--amber);">⚠ FALLBACK / PROXY</strong>`:''}<br>
+              Score risk-on: ${fgComp?fgComp.score>=0?'+'+fgComp.score:fgComp.score:'excluido (STALE)'} · &lt;25→−1 | 25–54→0 | ≥55→+1<br>
+              Score contrarian (informativo): ${fg?.scoreContrarian!=null?fg.scoreContrarian:'—'} · LIVE_ONLY · no entra en scoreTotal
+            </div>
           </div>
         </div>
 
@@ -121,11 +124,13 @@ export async function render(container, { actionsSlot }) {
               <div style="height:100%;width:${Math.min(vix.value/60*100,100)}%;background:${vix.aboveSMA200?'var(--red)':'var(--green)'};border-radius:2px;"></div>
             </div>
           ` : '<div style="font-size:10px;color:var(--text3);margin-bottom:8px;">Sin datos VIX</div>'}
-          <div style="font-size:9px;font-family:var(--mono);color:var(--text3);background:rgba(64,217,192,0.04);border:1px solid rgba(64,217,192,0.12);border-radius:6px;padding:6px 8px;line-height:1.7;">
-            🔍 VIX<br>
-            ${vix?.date||'—'} · ${vix?.ageDays!=null?vix.ageDays+'d':'—'} · ${fsn(vix?.freshness)}<br>
-            Sesiones: ${vix?.sessionsUsed||'—'} (mín. 200 para SMA200)<br>
-            Score risk-on: ${vixComp?vixComp.score>=0?'+'+vixComp.score:vixComp.score:'excluido'} · &lt;SMA200→+1 | ≥SMA200→−1
+          <div class="audit-toggle" onclick="this.classList.toggle('open')">
+            <span class="audit-lbl">Metodología ▾</span>
+            <div class="audit-body">
+              ${vix?.date||'—'} · ${vix?.ageDays!=null?vix.ageDays+'d':'—'} · ${fsn(vix?.freshness)}<br>
+              Sesiones: ${vix?.sessionsUsed||'—'} (mín. 200 para SMA200) · ^VIX Yahoo Finance<br>
+              Score risk-on: ${vixComp?vixComp.score>=0?'+'+vixComp.score:vixComp.score:'excluido'} · &lt;SMA200→+1 | ≥SMA200→−1 · [PROVISIONAL]
+            </div>
           </div>
         </div>
 
@@ -140,11 +145,13 @@ export async function render(container, { actionsSlot }) {
               <div style="height:100%;width:${Math.min((hy.value||0)/12*100,100)}%;background:${hy.value<3.5?'var(--green)':hy.value<=5?'var(--amber)':'var(--red)'};border-radius:2px;"></div>
             </div>
           ` : '<div style="font-size:10px;color:var(--text3);margin-bottom:8px;">Sin datos HY</div>'}
-          <div style="font-size:9px;font-family:var(--mono);color:var(--text3);background:rgba(64,217,192,0.04);border:1px solid rgba(64,217,192,0.12);border-radius:6px;padding:6px 8px;line-height:1.7;">
-            🔍 HY OAS<br>
-            ${hy?.date||'—'} · ${hy?.ageDays!=null?hy.ageDays+'d':'—'} · ${fsn(hy?.freshness)}<br>
-            BAMLH0A0HYM2 · OAS: ${hy?.value!=null?f2(hy.value)+'%':'—'}<br>
-            Score risk-on: ${hyComp?hyComp.score>=0?'+'+hyComp.score:hyComp.score:'excluido (STALE)'} · &lt;3.5%→+1 | 3.5–5%→0 | &gt;5%→−1
+          <div class="audit-toggle" onclick="this.classList.toggle('open')">
+            <span class="audit-lbl">Metodología ▾</span>
+            <div class="audit-body">
+              ${hy?.date||'—'} · ${hy?.ageDays!=null?hy.ageDays+'d':'—'} · ${fsn(hy?.freshness)}<br>
+              BAMLH0A0HYM2 · OAS: ${hy?.value!=null?f2(hy.value)+'%':'—'} · FRED (ICE BofA)<br>
+              Score risk-on: ${hyComp?hyComp.score>=0?'+'+hyComp.score:hyComp.score:'excluido (STALE)'} · &lt;3.5%→+1 | 3.5–5%→0 | &gt;5%→−1 · [PROVISIONAL]
+            </div>
           </div>
         </div>
       </div>

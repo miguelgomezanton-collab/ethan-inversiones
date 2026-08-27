@@ -153,7 +153,7 @@ export async function render(container,{actionsSlot}){
       </div>
 
       <!-- Panel manuales -->
-      <div id="ciclo-manual-panel" style="display:none;background:var(--surface);border:1px dashed var(--border2);border-radius:12px;padding:18px 20px;">
+      <div id="ciclo-manual-panel" style="background:rgba(64,217,192,0.04);border:1px solid rgba(64,217,192,0.15);border-radius:6px;padding:8px 10px;line-height:1.8;background:var(--surface);border:1px dashed var(--border2);border-radius:12px;padding:18px 20px;">
         <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px;">✎ Override Manual — Ciclo</div>
         <div style="font-size:10px;color:var(--text3);font-family:var(--mono);margin-bottom:14px;">OECD CLI USA se obtiene automáticamente de FRED (USALOLITOAASTSAM). Solo introduce un override si FRED no está disponible o el dato tiene más de 2 meses. Override: introduce el delta MoM en puntos (ej. +0.04 si el nivel subió de 100.76 a 100.80). Score: >0 y subiendo → +1 | <100 y bajando → -1 | resto → 0.</div>
         ${manualInput('lei','Override LEI (% m/m)','Deja vacío para usar FRED USSLIND automático · ≥+0.3%→+1 · ±0.3%→0 · <−0.3%→−1',man.lei)}

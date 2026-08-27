@@ -1542,3 +1542,33 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 /* ── Macro nuevos módulos ── */
 .mac-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px 18px;}
 .mac-card-sm{background:var(--surface2);border-radius:8px;padding:10px 14px;}
+
+/* ── Audit / Metodología colapsable ─────────── */
+.audit-toggle {
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+.audit-lbl {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--text3);
+  letter-spacing: 0.06em;
+  transition: color 0.15s;
+}
+.audit-toggle:hover .audit-lbl { color: var(--text2); }
+.audit-toggle.open .audit-lbl { color: var(--teal); }
+.audit-body {
+  display: none;
+  margin-top: 8px;
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--text3);
+  line-height: 1.7;
+  background: var(--surface2);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+.audit-toggle.open .audit-body { display: block; }

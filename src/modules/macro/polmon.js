@@ -125,12 +125,19 @@ export async function render(container, { actionsSlot }) {
             ${tr?.value!=null&&tr.value<0?`<div style="position:absolute;right:50%;width:${Math.min(Math.abs(tr.value)*16,50)}%;height:100%;background:var(--red);border-radius:3px 0 0 3px;"></div>`:''}
             <div style="position:absolute;left:50%;top:0;width:1px;height:100%;background:var(--border2);"></div>
           </div>
-          <div style="font-size:9px;color:var(--text3);font-family:var(--mono);background:rgba(64,217,192,0.04);border:1px solid rgba(64,217,192,0.15);border-radius:6px;padding:8px 10px;line-height:1.8;">
-            🔍 DEBUG<br>
-            DFF: ${tr?.ffr?.date||'—'} | ${tr?.ffr?.value!=null?f2(tr.ffr.value)+'%':'—'} | ${fsn(tr?.ffr?.freshness)}<br>
-            CPI: ${tr?.cpi?.date||'—'} | YoY ${tr?.cpi?.yoy!=null?f2(tr.cpi.yoy)+'%':'—'} | base ${tr?.cpi?.baseDate||'—'} | ${fsn(tr?.cpi?.freshness)}<br>
-            = ${tr?.ffr?.value!=null?f2(tr.ffr.value):'—'} − ${tr?.cpi?.yoy!=null?f2(tr.cpi.yoy):'—'} = ${tr?.value!=null?(tr.value>=0?'+':'')+f2(tr.value)+'%':'—'}<br>
-            Score: ${tr?.score!=null?tr.score:'bloqueado'}${tr?.stale?' · STALE':''} · ≥+1.0→+1 · ≥+0.5→0 · <+0.5→−1 [PROVISIONAL] · +1=restrictivo, −1=acomodaticio
+          <div style="font-size:10px;color:var(--text3);font-family:var(--mono);">
+            FFR ${tr?.ffr?.value!=null?f2(tr.ffr.value)+'%':'—'} − CPI ${tr?.cpi?.yoy!=null?f2(tr.cpi.yoy)+'%':'—'} = ${tr?.value!=null?(tr.value>=0?'+':'')+f2(tr.value)+'%':'—'}
+          </div>
+          <div class="audit-toggle" onclick="this.classList.toggle('open')">
+            <span class="audit-lbl">Metodología ▾</span>
+            <div class="audit-body">
+              DFF: ${tr?.ffr?.date||'—'} | ${tr?.ffr?.value!=null?f2(tr.ffr.value)+'%':'—'} | ${fsn(tr?.ffr?.freshness)}<br>
+              CPI: ${tr?.cpi?.date||'—'} | YoY ${tr?.cpi?.yoy!=null?f2(tr.cpi.yoy)+'%':'—'} | base ${tr?.cpi?.baseDate||'—'} | ${fsn(tr?.cpi?.freshness)}<br>
+              Cálculo: ${tr?.ffr?.value!=null?f2(tr.ffr.value):'—'} − ${tr?.cpi?.yoy!=null?f2(tr.cpi.yoy):'—'} = ${tr?.value!=null?(tr.value>=0?'+':'')+f2(tr.value)+'%':'—'}<br>
+              Score: ${tr?.score!=null?tr.score:'bloqueado'}${tr?.stale?' · STALE':''}<br>
+              Thresholds: ≥+1.0→+1 · ≥+0.5→0 · &lt;+0.5→−1 [PROVISIONAL]<br>
+              Convención: +1=restrictivo · −1=acomodaticio · Motor: HIST_MACRO_V1 Fase 1
+            </div>
           </div>
         </div>
 
@@ -143,14 +150,18 @@ export async function render(container, { actionsSlot }) {
             ${ffrDeltaPb != null ? (ffrDeltaPb>=0?'+':'')+ffrDeltaPb+' pb' : '—'}
           </div>
           <div style="font-size:16px;color:${ffrDirCol};margin:6px 0;font-family:var(--mono);">${ffrDir}</div>
-          <div style="font-size:9px;color:var(--text3);font-family:var(--mono);background:rgba(64,217,192,0.04);border:1px solid rgba(64,217,192,0.15);border-radius:6px;padding:8px 10px;margin-top:6px;line-height:1.8;">
-            🔍 DEBUG Dirección FFR<br>
-            Actual: ${ffr?.date||'—'} | ${ffr?.value!=null?f2(ffr.value)+'%':'—'}<br>
-            Objetivo 3M: ${target3mDate||'—'}<br>
-            Referencia: ${ffr3m?.date||'—'} | ${ffr3m?.value!=null?f2(ffr3m.value)+'%':'—'}<br>
-            Gap objetivo: ${ffr3mGapDays!=null?ffr3mGapDays+'d':'—'} · ${ffr3mValid?'✓ OK (≤7d)':'⚠ fuera tolerancia ±7d'+(ffrHistory.length<90?' — solo '+ffrHistory.length+' obs disponibles':'')}<br>
-            Δ3M: ${ffrDeltaPb!=null?(ffrDeltaPb>=0?'+':'')+ffrDeltaPb+' pb':'— (inválido)'}<br>
-            <span style="color:var(--amber)">⚠ Proxy acciones pasadas Fed — no forward-looking. Fase 2 → CME Futures.</span>
+          <div style="font-size:9px;color:var(--amber);font-family:var(--mono);margin-top:6px;">
+            ⚠ Proxy acciones pasadas Fed — no forward-looking
+          </div>
+          <div class="audit-toggle" onclick="this.classList.toggle('open')">
+            <span class="audit-lbl">Metodología ▾</span>
+            <div class="audit-body">
+              Actual: ${ffr?.date||'—'} | ${ffr?.value!=null?f2(ffr.value)+'%':'—'}<br>
+              Referencia 3M: ${ffr3m?.date||'—'} | ${ffr3m?.value!=null?f2(ffr3m.value)+'%':'—'}<br>
+              Gap objetivo: ${ffr3mGapDays!=null?ffr3mGapDays+'d':'—'} · ${ffr3mValid?'✓ OK':'⚠ fuera tolerancia ±7d'}<br>
+              Δ3M: ${ffrDeltaPb!=null?(ffrDeltaPb>=0?'+':'')+ffrDeltaPb+' pb':'— (inválido)'}<br>
+              Fase 2 pendiente: CME Futures (forward-looking)
+            </div>
           </div>
         </div>
       </div>
