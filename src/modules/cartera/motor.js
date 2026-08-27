@@ -6,7 +6,7 @@
 //   CORE (sistemático) / SATÉLITE (selección activa)
 // ═══════════════════════════════════════════════════════════════════
 // ═══════════════════════════════════════════════════════════════════
-// MÓDULO: Motor Integrado de Cartera
+// MÓDULO: ETHAN Motor de Cartera
 // Portfolio State · Asset Allocation · Risk Budget · Position Sizing
 // Pre-Trade Check · Propuestas · Parámetros
 // ═══════════════════════════════════════════════════════════════════
@@ -1448,7 +1448,7 @@ export async function render(container, { actionsSlot, savedState } = {}) {
   }
 
   // 1. Loader mientras carga
-  container.innerHTML = `<div id="mt-wrap"><div style="display:flex;align-items:center;gap:10px;padding:40px 20px;font-family:var(--mono);font-size:11px;color:var(--text3);"><div class="mt-loader-ring"></div>Cargando Motor Integrado...</div></div>`;
+  container.innerHTML = `<div id="mt-wrap"><div style="display:flex;align-items:center;gap:10px;padding:40px 20px;font-family:var(--mono);font-size:11px;color:var(--text3);"><div class="mt-loader-ring"></div>Cargando ETHAN Motor...</div></div>`;
 
   // 2. Cargar datos y política
   await loadState();

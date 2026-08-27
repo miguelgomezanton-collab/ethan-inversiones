@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════
-// MÓDULO: Análisis Fundamental (5.1)
+// MÓDULO: ETHAN Fundamentales (5.1)
 // 3 indicadores propios de ETHAN: Fundamental,
 // Greenblatt y Lynch. Datos automáticos vía
 // Financial Modeling Prep (FMP) → /api/fundamental.
@@ -19,7 +19,7 @@ export async function render(container, { actionsSlot }) {
     <div id="fund-content">
       <div class="empty">
         <div class="empty-icon">🧮</div>
-        <div class="empty-title">Análisis Fundamental</div>
+        <div class="empty-title">ETHAN Fundamentales</div>
         <div class="empty-desc">Introduce un ticker para calcular los 3 indicadores ETHAN: Fundamental, Greenblatt y Lynch.</div>
       </div>
     </div>

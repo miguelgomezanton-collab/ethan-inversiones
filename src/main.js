@@ -18,47 +18,47 @@ registerPage('dashboard', {
 
 // ── 1. MACRO — Capa operativa ───────────────────
 registerPage('macro-home', {
-  crumb: '1. Macro <span>›</span> Dashboard',
-  title: 'Dashboard Ejecutivo',
+  crumb: 'ETHAN Macro <span>›</span> Dashboard',
+  title: 'ETHAN Macro · Dashboard',
   loader: () => import('./modules/macro/home.js')
 });
 registerPage('macro-ciclo', {
-  crumb: '1. Macro <span>›</span> Ciclo Económico',
+  crumb: 'ETHAN Macro <span>›</span> Ciclo Económico',
   title: 'Ciclo Económico',
   loader: () => import('./modules/macro/ciclo.js')
 });
 registerPage('macro-liquidez', {
-  crumb: '1. Macro <span>›</span> Liquidez',
+  crumb: 'ETHAN Macro <span>›</span> Liquidez',
   title: 'Liquidez Global',
   loader: () => import('./modules/macro/liquidez.js')
 });
 registerPage('macro-polmon', {
-  crumb: '1. Macro <span>›</span> Política Monetaria',
+  crumb: 'ETHAN Macro <span>›</span> Política Monetaria',
   title: 'Política Monetaria',
   loader: () => import('./modules/macro/polmon.js')
 });
 registerPage('macro-inflacion', {
-  crumb: '1. Macro <span>›</span> Inflación',
+  crumb: 'ETHAN Macro <span>›</span> Inflación',
   title: 'Inflación',
   loader: () => import('./modules/macro/inflacion.js')
 });
 registerPage('macro-sentimiento', {
-  crumb: '1. Macro <span>›</span> Sentimiento',
+  crumb: 'ETHAN Macro <span>›</span> Sentimiento',
   title: 'Sentimiento de Mercado',
   loader: () => import('./modules/macro/sentimiento.js')
 });
 registerPage('macro-radar', {
-  crumb: '1. Macro <span>›</span> Radar de Riesgos',
-  title: 'Radar de Riesgos',
+  crumb: 'ETHAN Macro <span>›</span> Radar de Riesgos',
+  title: 'ETHAN Risk Radar',
   loader: () => import('./modules/macro/radar.js')
 });
 registerPage('macro-calendario', {
-  crumb: '1. Macro <span>›</span> Calendario',
+  crumb: 'ETHAN Macro <span>›</span> Calendario',
   title: 'Calendario Macro',
   loader: () => import('./modules/macro/calendario.js')
 });
 registerPage('macro-inversor', {
-  crumb: '1. Macro <span>›</span> Modo Inversor',
+  crumb: 'ETHAN Macro <span>›</span> Modo Inversor',
   title: 'Modo Inversor',
   loader: () => import('./modules/macro/inversor.js')
 });
@@ -67,18 +67,18 @@ registerPage('macro-inversor', {
 // Los módulos son los mismos — solo cambia la navegación.
 // Zero duplicación de lógica ni datasets.
 registerPage('lab-timeline', {
-  crumb: 'Research Lab <span>›</span> Timeline & Analogías',
-  title: 'Timeline Histórico · Research Lab',
+  crumb: 'ETHAN R-Lab <span>›</span> Timeline & Analogías',
+  title: 'ETHAN R-Lab · Timeline & Analogías',
   loader: () => import('./modules/macro/timeline.js')
 });
 registerPage('lab-correlaciones', {
-  crumb: 'Research Lab <span>›</span> Correlaciones Históricas',
-  title: 'Correlaciones Históricas · Research Lab',
+  crumb: 'ETHAN R-Lab <span>›</span> Correlaciones Históricas',
+  title: 'ETHAN R-Lab · Correlaciones',
   loader: () => import('./modules/macro/correlaciones.js')
 });
 registerPage('lab-radar', {
-  crumb: 'Research Lab <span>›</span> RISK_RADAR_V1 Validation',
-  title: 'RISK_RADAR_V1 · Block & Component Validation',
+  crumb: 'ETHAN R-Lab <span>›</span> RISK_RADAR_V1 Validation',
+  title: 'ETHAN R-Lab · Risk Radar Validation',
   loader: () => import('./modules/macro/radar.js')
 });
 
