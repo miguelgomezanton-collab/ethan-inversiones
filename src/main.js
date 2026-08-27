@@ -175,8 +175,8 @@ registerPage('car-metricas', {
   loader: () => import('./modules/cartera/metricas.js')
 });
 registerPage('car-motor', {
-  crumb: '4. Cartera <span>›</span> 4.3 Motor Integrado',
-  title: 'Motor Integrado',
+  crumb: '4. Cartera <span>›</span> ETHAN Motor',
+  title: 'ETHAN Motor',
   loader: () => import('./modules/cartera/motor.js')
 });
 
@@ -195,7 +195,7 @@ registerPage('car-vitacora', {
 
 registerPage('fund-analisis', {
   crumb: '5. Fundamentales',
-  title: 'Análisis Fundamental',
+  title: 'ETHAN Fundamentales',
   loader: () => import('./modules/fundamentales/analisis.js')
 });
 registerPage('smart-money', {
