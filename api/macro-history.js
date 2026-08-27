@@ -138,7 +138,7 @@ export default async function handler(req, res) {
   // vía type=componentvalidation-recompute (cron mensual, ver vercel.json).
   // No necesita FRED_API_KEY ni el fetch histórico: por eso vive antes de todo eso.
   if (type === 'componentvalidation') {
-    res.setHeader('Cache-Control', 'no-store'); // el propio doc de Firestore ya actúa de caché
+    res.setHeader('Cache-Control', 'no-store');
     try {
       const db = getDB();
       const snap = await db.collection(CV_COLLECTION).doc(CV_DOC).get();
@@ -147,7 +147,14 @@ export default async function handler(req, res) {
       }
       return res.status(200).json(snap.data());
     } catch (e) {
-      return res.status(500).json({ error: 'Firestore read failed: ' + e.message });
+      // Firestore no disponible (credenciales no configuradas) — degradación controlada
+      // El cron mensual (componentvalidation-recompute) persiste el snapshot cuando Firestore esté disponible
+      return res.status(200).json({
+        notComputedYet: true,
+        componentValidation: {},
+        componentMatrix: [],
+        note: 'Firestore no disponible. El snapshot se generará cuando se configuren las credenciales. Ejecutar ?type=componentvalidation-recompute para calcular.',
+      });
     }
   }
 
