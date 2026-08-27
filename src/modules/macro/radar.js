@@ -772,7 +772,7 @@ export async function render(container, { actionsSlot }) {
     }
 
     const compHTML = data.componentNotComputedYet
-      ? '<div class="mac-card" style="margin-top:14px;">' + titleHTML + statusLineHTML + '<div class="empty"><div class="empty-icon">🕐</div><div class="empty-title">Component Validation aún no calculado</div><div class="empty-desc">El cron mensual todavía no ha corrido. Se persistirá automáticamente en Firestore la próxima ejecución.</div></div></div>'
+      ? '<div class="mac-card" style="margin-top:14px;">' + titleHTML + statusLineHTML + '<div class="empty"><div class="empty-icon">🕐</div><div class="empty-title">Component Validation aún no calculado</div><div class="empty-desc">El cron mensual todavía no ha corrido. Puedes ejecutarlo manualmente ahora.</div><button id="cv-recompute-btn" class="btn btn-primary" style="margin-top:14px;font-size:11px;">⚙ Calcular ahora (~20s)</button><div id="cv-recompute-status" style="margin-top:10px;font-family:var(--mono);font-size:10px;color:var(--text3);"></div></div></div>'
       : data.partialComponent
       ? '<div class="mac-card" style="margin-top:14px;"><div class="empty"><div class="empty-icon">⚠</div><div class="empty-title">Component Validation no disponible</div><div class="empty-desc">La lectura de /api/macro-history?type=componentvalidation falló.</div>' +
         (data.componentErrorDetail ? '<div style="margin-top:10px;font-family:var(--mono);font-size:9px;color:var(--red);background:var(--surface2);padding:8px 10px;border-radius:6px;text-align:left;">Motivo exacto: ' + String(data.componentErrorDetail).replace(/</g,'&lt;') + '</div>' : '') +
@@ -850,6 +850,32 @@ export async function render(container, { actionsSlot }) {
     el.innerHTML = summaryHTML + detailHTML + compHTML + matrixHTML +
       '<div class="co-footer" style="margin-top:14px;">RISK_RADAR_V1 Block + Component Validation · ' + (data.updatedAt||'').slice(0,10) + ' · FROZEN — no modificar thresholds hasta completar análisis' +
       (data.partialBlock?' · ⚠ Block Validation no disponible' + (data.blockErrorDetail?' ('+String(data.blockErrorDetail).replace(/</g,'&lt;')+')':''):'') + '</div>';
+
+    // Botón recompute — solo aparece cuando notComputedYet
+    document.getElementById('cv-recompute-btn')?.addEventListener('click', async () => {
+      const btn = document.getElementById('cv-recompute-btn');
+      const st  = document.getElementById('cv-recompute-status');
+      btn.disabled = true;
+      btn.textContent = '⏳ Calculando (13 indicadores × 5000 sims)...';
+      st.textContent  = 'Esto tarda ~20 segundos...';
+      try {
+        const r = await fetch('/api/macro-history?type=componentvalidation-recompute');
+        const d = await r.json();
+        if (d?.componentValidation || d?.savedToFirestore) {
+          st.innerHTML = '<span style="color:var(--green);">✓ Calculado y persistido. Recargando...</span>';
+          setTimeout(() => { blockData = null; loadBlockValidation(true); }, 1500);
+        } else if (d?.error) {
+          st.innerHTML = '<span style="color:var(--red);">Error: ' + String(d.error).replace(/</g,'&lt;') + '</span>';
+          btn.disabled = false; btn.textContent = '⚙ Reintentar';
+        } else {
+          st.innerHTML = '<span style="color:var(--amber);">Respuesta inesperada — comprueba Firestore</span>';
+          btn.disabled = false; btn.textContent = '⚙ Reintentar';
+        }
+      } catch(e) {
+        st.innerHTML = '<span style="color:var(--red);">Error de red: ' + e.message + '</span>';
+        btn.disabled = false; btn.textContent = '⚙ Reintentar';
+      }
+    });
   }
 
   let diveData = null;
