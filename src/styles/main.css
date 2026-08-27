@@ -162,6 +162,8 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 .grp[data-accent="bajista"] .grp-icon { color: var(--red); }
 .grp[data-accent="cartera"] .grp-icon { color: var(--teal); }
 .grp[data-accent="fund"] .grp-icon { color: var(--amber); }
+.grp[data-accent="research"] .grp-icon { color: var(--purple); }
+.grp[data-accent="research"] .grp-title { color: var(--purple); }
 
 .grp-body { max-height: 0; overflow: hidden; transition: max-height 0.28s ease; }
 .grp.open .grp-body { max-height: 600px; }

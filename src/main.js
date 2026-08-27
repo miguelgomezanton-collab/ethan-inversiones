@@ -16,6 +16,7 @@ registerPage('dashboard', {
   loader: () => import('./modules/dashboard.js')
 });
 
+// ── 1. MACRO — Capa operativa ───────────────────
 registerPage('macro-home', {
   crumb: '1. Macro <span>›</span> Dashboard',
   title: 'Dashboard Ejecutivo',
@@ -46,16 +47,6 @@ registerPage('macro-sentimiento', {
   title: 'Sentimiento de Mercado',
   loader: () => import('./modules/macro/sentimiento.js')
 });
-registerPage('macro-timeline', {
-  crumb: '1. Macro <span>›</span> Timeline',
-  title: 'Timeline Histórico',
-  loader: () => import('./modules/macro/timeline.js')
-});
-registerPage('macro-correlaciones', {
-  crumb: '1. Macro <span>›</span> Correlaciones',
-  title: 'Correlaciones Históricas',
-  loader: () => import('./modules/macro/correlaciones.js')
-});
 registerPage('macro-radar', {
   crumb: '1. Macro <span>›</span> Radar de Riesgos',
   title: 'Radar de Riesgos',
@@ -70,6 +61,25 @@ registerPage('macro-inversor', {
   crumb: '1. Macro <span>›</span> Modo Inversor',
   title: 'Modo Inversor',
   loader: () => import('./modules/macro/inversor.js')
+});
+
+// ── RESEARCH LAB — Capa de investigación ────────
+// Los módulos son los mismos — solo cambia la navegación.
+// Zero duplicación de lógica ni datasets.
+registerPage('lab-timeline', {
+  crumb: 'Research Lab <span>›</span> Timeline & Analogías',
+  title: 'Timeline Histórico · Research Lab',
+  loader: () => import('./modules/macro/timeline.js')
+});
+registerPage('lab-correlaciones', {
+  crumb: 'Research Lab <span>›</span> Correlaciones Históricas',
+  title: 'Correlaciones Históricas · Research Lab',
+  loader: () => import('./modules/macro/correlaciones.js')
+});
+registerPage('lab-radar', {
+  crumb: 'Research Lab <span>›</span> RISK_RADAR_V1 Validation',
+  title: 'RISK_RADAR_V1 · Block & Component Validation',
+  loader: () => import('./modules/macro/radar.js')
 });
 
 registerPage('alc-alertas', {
