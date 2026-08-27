@@ -106,26 +106,47 @@ export async function render(container,{actionsSlot}){
               <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--text3);font-family:var(--mono);margin-bottom:6px;"><span style="color:var(--red)">Negativo</span><span>0</span><span style="color:var(--green)">Positivo</span></div>
               <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:3px;">${thresholds}</div>
               <div style="font-size:10px;color:var(--text2);border-top:1px solid var(--border);padding-top:6px;margin-top:6px;">${signal}</div>
-              ${k==='curvaUSD'?`<div style="margin-top:8px;background:${i.freshness==='stale'||i.error?'rgba(244,113,116,0.07)':i.freshness==='warn'?'rgba(251,191,36,0.07)':'rgba(64,217,192,0.05)'};border:1px solid ${i.freshness==='stale'||i.error?'rgba(244,113,116,0.25)':i.freshness==='warn'?'rgba(251,191,36,0.25)':'rgba(64,217,192,0.2)'};border-radius:6px;padding:8px 10px;font-family:var(--mono);font-size:9px;color:${i.freshness==='stale'||i.error?'var(--red)':i.freshness==='warn'?'var(--amber)':'var(--text3)'};">
-                ${i.error?'⚠ ERROR — '+i.error:i.freshness==='stale'?'⚠ DATO OBSOLETO — Score bloqueado':i.freshness==='warn'?'⚠ Próximo a expirar':'🔍 Curva USD 10Y−2Y · DGS10 − DGS2'}<br>
-                DGS10: ${i.dgs10?.date||'—'} | ${i.dgs10?.value!=null?i.dgs10.value.toFixed(3)+'%':'—'}<br>
-                DGS2 : ${i.dgs2?.date||'—'} | ${i.dgs2?.value!=null?i.dgs2.value.toFixed(3)+'%':'—'}<br>
-                Fecha común: ${i.date||'—'} · Spread: ${i.value!=null?(i.value>=0?'+':'')+i.value.toFixed(2)+'%':'—'}<br>
-                Antigüedad: ${i.ageDays!=null?i.ageDays+' días':'—'} · ${i.freshness==='ok'?'✓ OK (≤7d)':i.freshness==='warn'?'⚠ WARN (8–10d)':'✗ STALE (>10d)'} · Score: ${i.score!=null?(i.score>0?'+':'')+i.score:'bloqueado'}
+              ${k==='curvaUSD'?`<div style="margin-top:6px;">
+                ${i.freshness==='stale'||i.error?`<div style="font-size:9px;color:var(--red);font-family:var(--mono);">⚠ ${i.error||'DATO OBSOLETO — Score bloqueado'}</div>`:''}
+                ${i.freshness==='warn'?`<div style="font-size:9px;color:var(--amber);font-family:var(--mono);">⚠ Próximo a expirar</div>`:''}
+                <div class="audit-toggle" onclick="this.classList.toggle('open')">
+                  <span class="audit-lbl">Metodología ▾</span>
+                  <div class="audit-body">
+                    Curva USD 10Y−2Y · DGS10 − DGS2 · FRED<br>
+                    DGS10: ${i.dgs10?.date||'—'} | ${i.dgs10?.value!=null?i.dgs10.value.toFixed(3)+'%':'—'}<br>
+                    DGS2 : ${i.dgs2?.date||'—'} | ${i.dgs2?.value!=null?i.dgs2.value.toFixed(3)+'%':'—'}<br>
+                    Spread: ${i.value!=null?(i.value>=0?'+':'')+i.value.toFixed(2)+'%':'—'} · ${i.ageDays!=null?i.ageDays+'d':'—'} · ${i.freshness==='ok'?'✓ OK':i.freshness==='warn'?'⚠ WARN':'✗ STALE'}<br>
+                    Score: ${i.score!=null?(i.score>0?'+':'')+i.score:'bloqueado'} · Thresholds PROVISIONAL
+                  </div>
+                </div>
               </div>`:''}
-              ${k==='curvaEUR'?`<div style="margin-top:8px;background:${i.freshness==='stale'||i.error?'rgba(244,113,116,0.07)':i.freshness==='warn'?'rgba(251,191,36,0.07)':'rgba(64,217,192,0.05)'};border:1px solid ${i.freshness==='stale'||i.error?'rgba(244,113,116,0.25)':i.freshness==='warn'?'rgba(251,191,36,0.25)':'rgba(64,217,192,0.2)'};border-radius:6px;padding:8px 10px;font-family:var(--mono);font-size:9px;color:${i.freshness==='stale'||i.error?'var(--red)':i.freshness==='warn'?'var(--amber)':'var(--text3)'};">
-                ${i.freshness==='stale'?'⚠ DATO OBSOLETO — Score bloqueado':i.freshness==='warn'?'⚠ Próximo a expirar':'🔍 Curva EUR 10Y−2Y · ECB YC SRS_10Y_2Y'}<br>
-                Spread: ${i.date||'—'} | ${i.value!=null?(i.value>=0?'+':'')+i.value.toFixed(2)+'%':'—'}<br>
-                Serie: spread precalculado ECB · curva soberana eurozona · Svensson<br>
-                Antigüedad: ${i.ageDays!=null?i.ageDays+' días':'—'} · ${i.freshness==='ok'?'✓ OK (≤7d)':i.freshness==='warn'?'⚠ WARN (8–10d)':'✗ STALE (>10d)'} · Score: ${i.score!=null?(i.score>0?'+':'')+i.score:'bloqueado'}
+              ${k==='curvaEUR'?`<div style="margin-top:6px;">
+                ${i.freshness==='stale'||i.error?`<div style="font-size:9px;color:var(--red);font-family:var(--mono);">⚠ DATO OBSOLETO — Score bloqueado</div>`:''}
+                ${i.freshness==='warn'?`<div style="font-size:9px;color:var(--amber);font-family:var(--mono);">⚠ Próximo a expirar</div>`:''}
+                <div class="audit-toggle" onclick="this.classList.toggle('open')">
+                  <span class="audit-lbl">Metodología ▾</span>
+                  <div class="audit-body">
+                    Curva EUR 10Y−2Y · ECB YC · spread precalculado Svensson<br>
+                    Spread: ${i.date||'—'} | ${i.value!=null?(i.value>=0?'+':'')+i.value.toFixed(2)+'%':'—'}<br>
+                    Antigüedad: ${i.ageDays!=null?i.ageDays+'d':'—'} · ${i.freshness==='ok'?'✓ OK':i.freshness==='warn'?'⚠ WARN':'✗ STALE'}<br>
+                    Score: ${i.score!=null?(i.score>0?'+':'')+i.score:'bloqueado'} · Thresholds PROVISIONAL
+                  </div>
+                </div>
               </div>`:''}
-              ${k==='lei'?`<div style="margin-top:8px;background:${i.freshness==='stale'?'rgba(244,113,116,0.07)':i.freshness==='warn'?'rgba(251,191,36,0.07)':'rgba(64,217,192,0.05)'};border:1px solid ${i.freshness==='stale'?'rgba(244,113,116,0.25)':i.freshness==='warn'?'rgba(251,191,36,0.25)':'rgba(64,217,192,0.2)'};border-radius:6px;padding:8px 10px;font-family:var(--mono);font-size:9px;color:${i.freshness==='stale'?'var(--red)':i.freshness==='warn'?'var(--amber)':'var(--text3)'};">
-                ${i.freshness==='stale'?'⚠ DATO OBSOLETO — Score bloqueado':i.freshness==='warn'?'⚠ Próximo a expirar — Score activo':'🔍 OECD CLI USA · USALOLITOAASTSAM'}<br>
-                Obs. actual: ${i.date||'—'} | Nivel ${i.value!=null?Number(i.value).toFixed(5):'—'}<br>
-                Obs. anterior: ${i.prevDate||'—'} | Nivel ${i.prevValue!=null?Number(i.prevValue).toFixed(5):'—'}<br>
-                Delta MoM: ${i.delta!=null?(i.delta>0?'+':'')+i.delta.toFixed(5)+' pts':'—'}<br>
-                Regla: nivel>${i.value>100?'✓':'✗'}100 y subiendo>${i.delta>0?'✓':'✗'}0 → Score ${i.score!=null?i.score:'bloqueado'}<br>
-                Antigüedad: ${i.ageDays} días · ${i.freshness==='ok'?'✓ OK (≤100d)':i.freshness==='warn'?'⚠ WARN (101–130d)':'✗ STALE (>130d)'} · Fuente: FRED USALOLITOAASTSAM
+              ${k==='lei'?`<div style="margin-top:6px;">
+                ${i.freshness==='stale'?`<div style="font-size:9px;color:var(--red);font-family:var(--mono);">⚠ DATO OBSOLETO — Score bloqueado</div>`:''}
+                ${i.freshness==='warn'?`<div style="font-size:9px;color:var(--amber);font-family:var(--mono);">⚠ Próximo a expirar</div>`:''}
+                <div class="audit-toggle" onclick="this.classList.toggle('open')">
+                  <span class="audit-lbl">Metodología ▾</span>
+                  <div class="audit-body">
+                    OECD CLI USA · FRED USALOLITOAASTSAM · Mensual<br>
+                    Actual: ${i.date||'—'} | Nivel ${i.value!=null?Number(i.value).toFixed(5):'—'}<br>
+                    Anterior: ${i.prevDate||'—'} | Nivel ${i.prevValue!=null?Number(i.prevValue).toFixed(5):'—'}<br>
+                    Delta MoM: ${i.delta!=null?(i.delta>0?'+':'')+i.delta.toFixed(5)+' pts':'—'}<br>
+                    Regla: nivel>100 y subiendo → +1 · Score: ${i.score!=null?i.score:'bloqueado'}<br>
+                    Antigüedad: ${i.ageDays}d · ${i.freshness==='ok'?'✓ OK (≤100d)':i.freshness==='warn'?'⚠ WARN (101–130d)':'✗ STALE (>130d)'}
+                  </div>
+                </div>
               </div>`:''}
             </div>`;
           }).join('')}
