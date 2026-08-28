@@ -1,0 +1,357 @@
+// correlaciones.js — Lead-lag correlations: Indicador(t) → SP500 Forward Return(t+H)
+// Dataset: HIST_MACRO_V1_FRED (mismo que Timeline y Analogías)
+import { getMacroData } from './macro-data.js';
+
+const IND_LABELS = {
+  curvaUSD:      'Curva USD 10Y-2Y',
+  tipoReal:      'Tipo Real (FFR-CPI)',
+  lei:           'LEI (OECD CLI USA)',
+  m2usa:         'M2 USA YoY',
+  creditoVsPib:  'Crédito vs PIB',
+  impulso:       'Impulso Crediticio',
+  velM2:         'Velocidad M2',
+  reservas:      'Reservas Bancarias',
+  bbb:           'BBB Spread',
+  scoreNorm:     'HIST_MACRO_V1 ScoreNorm',
+};
+
+const HORIZONS = [0, 3, 6, 12];
+const H_LABELS = { 0: 'Coincidente', 3: '+3M', 6: '+6M', 12: '+12M' };
+
+function rhoColor(r) {
+  if (r == null) return 'var(--text3)';
+  const a = Math.abs(r);
+  if (a >= 0.4) return r > 0 ? 'var(--green)' : 'var(--red)';
+  if (a >= 0.2) return r > 0 ? '#7abb7a' : '#d4888a';
+  return 'var(--text3)';
+}
+
+export async function render(container, { actionsSlot }) {
+  let currentH = 6;
+
+  actionsSlot.innerHTML = `
+    <div style="display:flex;gap:4px;align-items:center;">
+      <span style="font-size:9px;color:var(--text3);font-family:var(--mono);">Horizonte:</span>
+      ${HORIZONS.map(h => `<button class="btn corr-h ${h===6?'btn-primary':''}" data-h="${h}" style="padding:4px 9px;font-size:10px;">${H_LABELS[h]}</button>`).join('')}
+      <button class="btn btn-primary" id="corr-refresh" style="padding:4px 9px;font-size:10px;margin-left:6px;">↻</button>
+    </div>`;
+
+  container.innerHTML = `<div id="corr-wrap"><div class="empty"><div class="loader-ring"></div></div></div>`;
+
+  async function load(force = false) {
+    try {
+      const hist = await fetch('/api/macro-history?type=correlaciones')
+        .then(r => { if (!r.ok) throw new Error('macro-history: ' + r.status); return r.json(); });
+      paint(hist);
+    } catch(e) {
+      document.getElementById('corr-wrap').innerHTML =
+        `<div class="empty"><div class="empty-icon">⚠</div><div class="empty-title">Error</div><div class="empty-desc">${e.message}</div></div>`;
+    }
+  }
+
+
+    function buildSpearmanHTML(sp) {
+      if (!sp) return '<div style="font-size:9px;color:var(--text3);">Sin datos</div>';
+      const f3  = v => v != null ? (v>=0?'+':'')+v.toFixed(3) : '—';
+      const col = v => v == null ? 'var(--text3)' : v > 0 ? 'var(--green)' : 'var(--red)';
+      const sig = v => v != null && v < 0.05 ? '*' : '';
+      const cards2 = [
+        ['Spearman vs retorno +12M continuo', sp.return12m, sp.n],
+        ['Spearman vs binario positivo +12M (1/0)', sp.binary12m, sp.n],
+      ].map(([label, s, n]) =>
+        '<div style="background:var(--surface2);border-radius:8px;padding:12px;">' +
+          '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:6px;">' + label + '</div>' +
+          '<div style="font-family:var(--serif);font-size:28px;font-weight:600;font-style:italic;color:' + col(s?.rho) + ';">' + f3(s?.rho) + sig(s?.p) + '</div>' +
+          '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);">N=' + n + ' · p=' + (s?.p != null ? s.p.toFixed(4) : '—') + '</div>' +
+          '<div style="font-size:9px;color:var(--text3);">IC95: ' + (s?.ci95 ? '[' + s.ci95[0] + ', ' + s.ci95[1] + ']' : '—') + '</div>' +
+        '</div>'
+      ).join('');
+      const noOv =
+        '<div style="background:var(--surface2);border-radius:8px;padding:12px;margin-top:8px;">' +
+          '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:4px;">Obs. no solapadas cada 12M (N independiente)</div>' +
+          '<div style="font-size:13px;font-weight:700;font-family:var(--mono);color:' + col(sp.binary12mNonOverlap?.rho) + ';">' + f3(sp.binary12mNonOverlap?.rho) + sig(sp.binary12mNonOverlap?.p) + '</div>' +
+          '<div style="font-size:9px;color:var(--text3);">N=' + sp.nNonOverlap + ' · p=' + (sp.binary12mNonOverlap?.p != null ? sp.binary12mNonOverlap.p.toFixed(4) : '—') + ' · IC95: ' + (sp.binary12mNonOverlap?.ci95 ? '[' + sp.binary12mNonOverlap.ci95[0] + ', ' + sp.binary12mNonOverlap.ci95[1] + ']' : '—') + '</div>' +
+        '</div>';
+      let boot = '<div style="font-size:9px;color:var(--amber);margin-top:8px;">Bootstrap no disponible</div>';
+      if (sp.binary12mBootstrap) {
+        const b = sp.binary12mBootstrap;
+        const bCol = b.excludes0 ? '74,222,128' : b.pBoot < 0.05 ? '64,217,192' : '251,191,36';
+        const verdict = b.excludes0 ? '✓ IC95% excluye 0: señal robusta. ScoreNorm contiene información sobre probabilidad de retorno positivo a +12M.'
+          : b.pBoot < 0.05 ? '⚠ p<0.05 pero IC95 cruza 0 — señal sugestiva, no concluyente.'
+          : '⚠ IC95 cruza 0 — evidencia indicativa pero no robusta estadísticamente.';
+        const cells = [
+          ['ρ observado', (b.rhoObs>=0?'+':'')+b.rhoObs.toFixed(3), b.rhoObs<0?'var(--red)':'var(--green)'],
+          ['IC95% bootstrap', '['+b.ci95[0]+', '+b.ci95[1]+']', b.excludes0?'var(--green)':'var(--amber)'],
+          ['p bootstrap', b.pBoot.toFixed(4)+(b.pBoot<0.05?'*':''), b.pBoot<0.05?'var(--green)':'var(--amber)'],
+          ['N / bloque', b.T+' / '+b.block+'M', 'var(--text2)'],
+        ].map(([l,v,c]) =>
+          '<div style="background:var(--surface);border-radius:6px;padding:8px 10px;text-align:center;">' +
+            '<div style="font-size:8px;color:var(--text3);font-family:var(--mono);margin-bottom:4px;">' + l + '</div>' +
+            '<div style="font-family:var(--mono);font-size:13px;font-weight:700;color:' + c + ';">' + v + '</div>' +
+          '</div>'
+        ).join('');
+        boot =
+          '<div style="background:rgba(' + bCol + ',0.06);border:1px solid rgba(' + bCol + ',0.25);border-radius:8px;padding:12px;margin-top:10px;">' +
+            '<div style="font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;margin-bottom:8px;">' + b.method + '</div>' +
+            '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:8px;">' + cells + '</div>' +
+            '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);">' + verdict + '</div>' +
+          '</div>';
+      }
+      return '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' + cards2 + '</div>' +
+        noOv + boot +
+        '<div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:8px;">rho &lt; 0: ScoreNorm mayor asociado con menor probabilidad de retorno positivo a +12M.</div>';
+    }
+
+  function paint(hist) {
+    const el = document.getElementById('corr-wrap');
+    const cm = hist.corrMatrix;
+
+    if (!cm) {
+      el.innerHTML = `<div class="empty"><div class="empty-icon">⚠</div><div class="empty-title">Sin datos de correlación</div></div>`;
+      return;
+    }
+
+    const matrix = cm[currentH] || {};
+
+    // Tabla lead-lag
+    const rows = Object.entries(IND_LABELS).map(([k, label]) => {
+      const cell = matrix[k];
+      const rho  = cell?.rho;
+      const n    = cell?.n;
+      const isScore = k === 'scoreNorm';
+      return `<tr style="border-bottom:1px solid var(--border);${isScore?'background:rgba(64,217,192,0.04);':''}">
+        <td style="padding:8px 10px;font-size:10px;color:${isScore?'var(--teal)':'var(--text2)'};font-weight:${isScore?'700':'400'};">${label}</td>
+        <td style="padding:8px 10px;text-align:center;font-family:var(--mono);font-size:12px;font-weight:700;color:${rhoColor(rho)};">
+          ${rho != null ? (rho>=0?'+':'')+rho.toFixed(2) : '—'}
+        </td>
+        <td style="padding:8px 10px;text-align:center;font-family:var(--mono);font-size:10px;color:var(--text3);">
+          ${n != null ? n : '—'}
+        </td>
+        <td style="padding:8px 10px;text-align:center;font-family:var(--mono);font-size:10px;color:${cell?.p!=null?(cell.p<0.05?'var(--green)':'var(--amber)'):'var(--text3)'};">
+          ${cell?.p != null ? (cell.p < 0.001 ? '<0.001' : cell.p.toFixed(3)) : '—'}
+        </td>
+        <td style="padding:8px 10px;text-align:center;font-family:var(--mono);font-size:9px;color:var(--text3);">
+          ${cell?.ci95 ? '['+cell.ci95[0]+', '+cell.ci95[1]+']' : '—'}
+        </td>
+        <td style="padding:8px 10px;">
+          ${rho != null ? `<div style="height:6px;background:var(--surface2);border-radius:3px;overflow:hidden;">
+            <div style="height:100%;width:${Math.min(Math.abs(rho)*100,100)}%;background:${rhoColor(rho)};border-radius:3px;margin-left:${rho<0?'auto':'0'};"></div>
+          </div>` : ''}
+        </td>
+      </tr>`;
+    }).join('');
+
+    el.innerHTML = `
+      <div class="mac-card" style="margin-bottom:14px;">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px;">
+          <div>
+            <span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);">
+              Correlaciones Lead-Lag · S&P 500
+            </span>
+            <span style="font-size:9px;font-family:var(--mono);color:var(--text2);margin-left:8px;">
+              Indicador(t) → SP500 Forward Return ${H_LABELS[currentH]}
+            </span>
+          </div>
+          <div style="font-size:9px;font-family:var(--mono);color:var(--text3);">
+            HIST_MACRO_V1_FRED · Pearson · N≥20 obs
+          </div>
+        </div>
+
+        <table style="width:100%;border-collapse:collapse;">
+          <thead><tr style="background:var(--surface2);">
+            <th style="padding:8px 10px;text-align:left;font-size:9px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:0.08em;">Indicador macro</th>
+            <th style="padding:8px 10px;text-align:center;font-size:9px;color:var(--text3);font-weight:600;text-transform:uppercase;">ρ Pearson</th>
+            <th style="padding:8px 10px;text-align:center;font-size:9px;color:var(--text3);font-weight:600;text-transform:uppercase;">N obs</th>
+            <th style="padding:8px 10px;text-align:center;font-size:9px;color:var(--text3);font-weight:600;text-transform:uppercase;">p-value</th>
+            <th style="padding:8px 10px;text-align:center;font-size:9px;color:var(--text3);font-weight:600;text-transform:uppercase;">IC 95%</th>
+            <th style="padding:8px 10px;font-size:9px;color:var(--text3);font-weight:600;text-transform:uppercase;">Intensidad</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+
+        <div style="margin-top:12px;font-size:9px;font-family:var(--mono);color:var(--text3);line-height:1.7;background:var(--surface2);padding:10px 12px;border-radius:6px;">
+          ⚠ Correlaciones calculadas únicamente sobre SP500 (dataset FRED disponible).
+          Nasdaq, Russell, Oro, Bonos e IEF pendientes de histórico suficiente.<br>
+          Pearson mide relación lineal. No implica causalidad. Horizonte ${H_LABELS[currentH]}: el indicador precede al retorno en ${currentH} meses.<br>
+          ScoreNorm = scoreRaw / maxAvailable · misma metodología que Motor de Analogías.
+        </div>
+      </div>
+
+      <div class="mac-card" style="margin-bottom:14px;font-family:var(--mono);">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:10px;">
+          🔍 Audit Trail — Verificación Lead-Lag (sin look-ahead)
+        </div>
+        ${(hist.corrAudit||[]).map(a => {
+          if (a.error) return `<div style="font-size:9px;color:var(--text3);margin-bottom:6px;">${a.month}: ${a.error}</div>`;
+          return `<div style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border);">
+            <div style="font-size:10px;color:var(--teal);font-weight:700;margin-bottom:4px;">
+              ${a.month} · ScoreNorm ${a.scoreNorm>=0?'+':''}${a.scoreNorm?.toFixed(3)} · SP0: ${a.sp0!=null?a.sp0:'—'}
+            </div>
+            ${a.rows.map(r => r.error ? '' : `
+              <div style="font-size:9px;color:var(--text3);line-height:2;margin-left:8px;">
+                ${r.label}: valor=${r.value?.toFixed?.(3)??r.value} | score=${r.score>=0?'+':''}${r.score}
+                → SP0:${a.sp0??'—'} | SP+3m:${r.sp3m!=null?(r.sp3m>=0?'+':'')+r.sp3m+'%':'—'}
+                | SP+6m:${r.sp6m!=null?(r.sp6m>=0?'+':'')+r.sp6m+'% ('+r.sp6mDate+' nivel:'+r.sp6mRaw+')':'—'}
+                | SP+12m:${r.sp12m!=null?(r.sp12m>=0?'+':'')+r.sp12m+'%':'—'}
+              </div>`).join('')}
+          </div>`;
+        }).join('')}
+        <div style="font-size:9px;color:var(--text3);margin-top:4px;">
+          SP0 = nivel S&P 500 en el mes del indicador · SP+6m = nivel 6 meses después · forward return = SP+6m/SP0 − 1
+        </div>
+      </div>
+
+      <div class="mac-card" style="margin-bottom:14px;">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:10px;">
+          Distribución S&P 500 por Régimen Macro (ScoreNorm)
+          <span style="color:var(--text3);font-weight:400;margin-left:8px;">¿Qué distribución de retornos ha tenido históricamente el S&P condicionado al régimen?</span>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:10px;">
+          <thead><tr style="background:var(--surface2);">
+            <th style="padding:7px 10px;text-align:left;font-size:9px;color:var(--text3);">Régimen</th>
+            <th style="padding:7px 10px;text-align:center;font-size:9px;color:var(--text3);">N meses</th>
+            <th style="padding:7px 10px;text-align:center;font-size:9px;color:var(--text3);">Med +3M</th>
+            <th style="padding:7px 10px;text-align:center;font-size:9px;color:var(--text3);">Med +6M</th>
+            <th style="padding:7px 10px;text-align:center;font-size:9px;color:var(--text3);">Med +12M</th>
+            <th style="padding:7px 10px;text-align:center;font-size:9px;color:var(--text3);">% Pos +12M</th>
+            <th style="padding:7px 10px;text-align:center;font-size:9px;color:var(--text3);">Med MaxDD</th>
+          </tr></thead>
+          <tbody>
+            ${(hist.regimeAnalysis||[]).map(b => {
+              const h3  = b.byHorizon?.[3];
+              const h6  = b.byHorizon?.[6];
+              const h12 = b.byHorizon?.[12];
+              const f   = (v,suffix='%') => v!=null?(v>=0?'+':'')+v.toFixed(1)+suffix:'—';
+              const c   = v => v==null?'var(--text3)':v>0?'var(--green)':'var(--red)';
+              return `<tr style="border-bottom:1px solid var(--border);">
+                <td style="padding:7px 10px;color:var(--text2);">${b.label} <span style="color:var(--text3);font-size:9px;">(${b.min.toFixed(2)} → ${b.max.toFixed(2)})</span></td>
+                <td style="padding:7px 10px;text-align:center;color:var(--text3);">${b.nMonths}</td>
+                <td style="padding:7px 10px;text-align:center;font-family:var(--mono);color:${c(h3?.median)};">${f(h3?.median)}</td>
+                <td style="padding:7px 10px;text-align:center;font-family:var(--mono);color:${c(h6?.median)};">${f(h6?.median)}</td>
+                <td style="padding:7px 10px;text-align:center;font-family:var(--mono);color:${c(h12?.median)};">${f(h12?.median)}</td>
+                <td style="padding:7px 10px;text-align:center;font-family:var(--mono);color:${(h12?.pctPos??0)>50?'var(--green)':'var(--red)'};">${h12?.pctPos!=null?h12.pctPos+'%':'—'}</td>
+                <td style="padding:7px 10px;text-align:center;font-family:var(--mono);color:var(--red);">${f(h12?.medianDD)}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+        <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:8px;">
+          ⚠ Basado en SP500 disponible (${hist.corrMatrix ? 'HIST_MACRO_V1_FRED' : '—'}). N bajo = baja fiabilidad estadística. No implica predicción.
+        </div>
+      </div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;font-size:10px;color:var(--text3);font-family:var(--mono);">
+          <div style="background:var(--surface2);border-radius:8px;padding:10px 12px;">
+            <div style="color:var(--text2);font-weight:700;margin-bottom:4px;">Activos adicionales</div>
+            Nasdaq, Russell, Oro, Bonos (IEF) cuando tengamos histórico FRED suficiente
+          </div>
+          <div style="background:var(--surface2);border-radius:8px;padding:10px 12px;">
+            <div style="color:var(--text2);font-weight:700;margin-bottom:4px;">Significancia estadística</div>
+            p-value y bandas de confianza 95% por celda
+          </div>
+          <div style="background:var(--surface2);border-radius:8px;padding:10px 12px;">
+            <div style="color:var(--text2);font-weight:700;margin-bottom:4px;">Validación temporal</div>
+            Correlaciones por décadas — ¿son estables o cambian de régimen?
+          </div>
+        </div>
+      </div>
+
+      <div class="mac-card" style="margin-bottom:14px;">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:10px;">
+          Quintiles ScoreNorm → S&amp;P 500 Forward Return
+          <span style="font-weight:400;margin-left:6px;">N equilibrado por rank secuencial · ¿existe monotonicidad?</span>
+          ${hist.quintiles?.[0]?.balanced !== undefined ? '<span style="color:'+(hist.quintiles[0].balanced?'var(--green)':'var(--red)')+';">'+( hist.quintiles[0].balanced ? ' ✓ BALANCE OK' : ' ✗ QUINTILE_BALANCE_FAIL')+'</span>' : ''}
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:10px;">
+          <thead><tr style="background:var(--surface2);">
+            <th style="padding:6px 8px;text-align:left;font-size:9px;color:var(--text3);">Q</th>
+            <th style="padding:6px 8px;text-align:center;font-size:9px;color:var(--text3);">Rango Score</th>
+            <th style="padding:6px 8px;text-align:center;font-size:9px;color:var(--text3);">N</th>
+            <th style="padding:6px 8px;text-align:center;font-size:9px;color:var(--text3);">Med +3M</th>
+            <th style="padding:6px 8px;text-align:center;font-size:9px;color:var(--text3);">Med +6M</th>
+            <th style="padding:6px 8px;text-align:center;font-size:9px;color:var(--text3);">Med +12M</th>
+            <th style="padding:6px 8px;text-align:center;font-size:9px;color:var(--text3);">% Pos +12M</th>
+            <th style="padding:6px 8px;text-align:center;font-size:9px;color:var(--text3);">MaxDD</th>
+          </tr></thead>
+          <tbody>${(hist.quintiles||[]).map(q => {
+            const f = (v,s='%')=>v!=null?(v>=0?'+':'')+v.toFixed(1)+s:'—';
+            const c = v=>v==null?'var(--text3)':v>0?'var(--green)':'var(--red)';
+            const h3=q.byHorizon?.[3],h6=q.byHorizon?.[6],h12=q.byHorizon?.[12];
+            return '<tr style="border-bottom:1px solid var(--border);">' +
+              '<td style="padding:6px 8px;color:var(--teal);font-weight:700;font-family:var(--mono);">Q'+q.quintile+'</td>' +
+              '<td style="padding:6px 8px;text-align:center;font-family:var(--mono);font-size:9px;color:var(--text3);">['+q.minScore+', '+q.maxScore+']</td>' +
+              '<td style="padding:6px 8px;text-align:center;font-family:var(--mono);color:var(--text3);">'+(h6?.n||q.nMonths)+'</td>' +
+              '<td style="padding:6px 8px;text-align:center;font-family:var(--mono);color:'+c(h3?.median)+';">'+f(h3?.median)+'</td>' +
+              '<td style="padding:6px 8px;text-align:center;font-family:var(--mono);color:'+c(h6?.median)+';">'+f(h6?.median)+'</td>' +
+              '<td style="padding:6px 8px;text-align:center;font-family:var(--mono);color:'+c(h12?.median)+';">'+f(h12?.median)+'</td>' +
+              '<td style="padding:6px 8px;text-align:center;font-family:var(--mono);color:'+((h12?.pctPos??0)>50?'var(--green)':'var(--red)')+';">'+(h12?.pctPos!=null?h12.pctPos+'%':'—')+'</td>' +
+              '<td style="padding:6px 8px;text-align:center;font-family:var(--mono);color:var(--red);">'+f(h12?.medianDD)+'</td>' +
+            '</tr>';
+          }).join('')}</tbody>
+        </table>
+        <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:6px;">
+          Monotonicidad Q1→Q5: si +12M decrece consistentemente, Score tiene relación inversa con retorno futuro. Sin patrón → Score describe régimen, no anticipa retorno absoluto.
+        </div>
+      </div>
+
+      <div class="mac-card" style="margin-bottom:14px;">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:10px;">
+          Estabilidad Temporal · Pearson +6M en 3 bloques iguales por N · * = p&lt;0.05
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:10px;">
+          <thead><tr style="background:var(--surface2);">
+            <th style="padding:6px 8px;text-align:left;font-size:9px;color:var(--text3);">Indicador</th>
+            ${(hist.stabilityByIndicator?.tipoReal||[]).map(b =>
+              '<th style="padding:6px 8px;text-align:center;font-size:9px;color:var(--text3);">'+b.label+'<br><span style="font-weight:400;">'+b.window+'</span><br>N='+b.n+'</th>'
+            ).join('')}
+          </tr></thead>
+          <tbody>
+            ${['tipoReal','lei','bbb','scoreNorm'].map(k => {
+              const IND = {tipoReal:'Tipo Real',lei:'LEI',bbb:'BBB Spread',scoreNorm:'ScoreNorm'};
+              const blocks = hist.stabilityByIndicator?.[k]||[];
+              return '<tr style="border-bottom:1px solid var(--border);">' +
+                '<td style="padding:6px 8px;color:var(--text2);">'+IND[k]+'</td>' +
+                blocks.map(b => {
+                  if (b.lowN) return '<td style="padding:6px 8px;text-align:center;font-family:var(--mono);font-size:9px;color:var(--text3);">LOW N</td>';
+                  const col = b.rho==null?'var(--text3)':b.rho>0?'var(--green)':'var(--red)';
+                  const sig = b.p!=null&&b.p<0.05?'*':'';
+                  const ci  = b.ci95 ? ' ['+b.ci95[0]+','+b.ci95[1]+']' : '';
+                  return '<td style="padding:6px 8px;text-align:center;font-family:var(--mono);color:'+col+';">' +
+                    (b.rho!=null?(b.rho>=0?'+':'')+b.rho.toFixed(2)+sig:'—') +
+                    '<div style="font-size:8px;color:var(--text3);">'+(b.p!=null?'p='+b.p.toFixed(3):'—')+ci+'</div>' +
+                  '</td>';
+                }).join('') +
+              '</tr>';
+            }).join('')}
+          </tbody>
+        </table>
+        <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:6px;">* p&lt;0.05 · Si ρ cambia de signo entre bloques: relación de régimen, no estructural.</div>
+      </div>
+
+      <div class="mac-card" style="margin-bottom:14px;">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:10px;">
+          Spearman ScoreNorm → S&amp;P 500 · Retorno +12M
+        </div>
+        ${buildSpearmanHTML(hist.spearman)}
+      </div>
+
+      </div>
+
+      <div class="co-footer">
+        Fuente: HIST_MACRO_V1_FRED · SP500 FRED mensual ·
+        Correlaciones calculadas sobre meses con coverage≥60% · PROVISIONAL
+      </div>
+    `;
+  }
+
+  document.addEventListener('click', e => {
+    const btn = e.target.closest('.corr-h');
+    if (!btn) return;
+    currentH = parseInt(btn.dataset.h);
+    document.querySelectorAll('.corr-h').forEach(b => b.classList.remove('btn-primary'));
+    btn.classList.add('btn-primary');
+    load();
+  });
+  document.getElementById('corr-refresh')?.addEventListener('click', () => load(true));
+  await load();
+  return { destroy() {} };
+}
