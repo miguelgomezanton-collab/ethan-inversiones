@@ -54,8 +54,11 @@ function initPanels(root) {
       const rs = root.querySelector('#rlab-trace-result');
       st.innerHTML='<span style="color:var(--text3)">⏳ Trace '+tk+'...</span>';rs.innerHTML='';
       try {
-        const d=await fetch('/api/macro-history?type=trace&ticker='+tk).then(r=>r.json());
-        st.innerHTML='<span style="color:var(--green)">✓ '+tk+' completado</span>';
+        const resp = await fetch('/api/macro-history?type=rlab-trace&ticker='+tk);
+        const d = await resp.json();
+        console.log('[R-Lab Trace]', 'status_field='+d.status, 'dataset='+JSON.stringify(d.dataset)?.slice(0,120));
+        const ok = d.status==='OK' || d.dataset?.n_daily>0;
+        st.innerHTML='<span style="color:'+(ok?'var(--green)':'var(--amber)')+'">'+tk+': '+(d.status||'sin status')+'</span>';
         rs.innerHTML=renderTraceResult(d);
       }catch(err){st.innerHTML='<span style="color:var(--red)">Error: '+err.message+'</span>';}
     }
