@@ -1,4 +1,4 @@
-export function init(el) {
+export function render(el) {
   el.innerHTML = `
 <div class="page-crumb">ETHAN R-Lab <span>›</span> Trading R-Lab</div>
 <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:20px;">
