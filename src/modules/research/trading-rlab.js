@@ -55,12 +55,23 @@ function initPanels(root) {
       st.innerHTML='<span style="color:var(--text3)">⏳ Trace '+tk+'...</span>';rs.innerHTML='';
       try {
         const resp = await fetch('/api/macro-history?type=rlab-trace&ticker='+tk);
-        const d = await resp.json();
-        console.log('[R-Lab Trace]', 'status_field='+d.status, 'dataset='+JSON.stringify(d.dataset)?.slice(0,120));
-        const ok = d.status==='OK' || d.dataset?.n_daily>0;
-        st.innerHTML='<span style="color:'+(ok?'var(--green)':'var(--amber)')+'">'+tk+': '+(d.status||'sin status')+'</span>';
+        const text = await resp.text();
+        let d;
+        try { d = JSON.parse(text); }
+        catch(parseErr) {
+          st.innerHTML='<span style="color:var(--red)">RLAB_ENDPOINT_ERROR · HTTP '+resp.status+'</span>';
+          rs.innerHTML=`<div style="background:rgba(244,113,116,0.08);border:1px solid rgba(244,113,116,0.25);border-radius:6px;padding:10px;font-family:var(--mono);font-size:9px;">
+            <div style="color:var(--red);font-weight:700;margin-bottom:6px;">❌ Respuesta no-JSON del endpoint</div>
+            <div style="color:var(--text3);">HTTP: ${resp.status} · Content-Type: ${resp.headers.get('content-type')||'—'}</div>
+            <div style="color:var(--amber);margin-top:4px;word-break:break-all;">${text.slice(0,500)}</div>
+          </div>`;
+          return;
+        }
+        console.log('[R-Lab Trace]', 'ok='+d.ok, 'status='+d.status, 'stage='+d.stage, 'dataset='+JSON.stringify(d.dataset)?.slice(0,80));
+        const ok = d.ok===true;
+        st.innerHTML='<span style="color:'+(ok?'var(--green)':'var(--amber)')+'">'+tk+': '+(d.status||'sin status')+(d.stage?' [stage:'+d.stage+']':'')+'</span>';
         rs.innerHTML=renderTraceResult(d);
-      }catch(err){st.innerHTML='<span style="color:var(--red)">Error: '+err.message+'</span>';}
+      }catch(err){st.innerHTML='<span style="color:var(--red)">Error de red: '+err.message+'</span>';}
     }
 
     if (id==='rlab-results-btn') {
