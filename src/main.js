@@ -81,6 +81,11 @@ registerPage('lab-radar', {
   title: 'ETHAN R-Lab · Risk Radar Validation',
   loader: () => import('./modules/macro/radar.js')
 });
+registerPage('lab-trading', {
+  crumb: 'ETHAN R-Lab <span>›</span> Trading R-Lab',
+  title: 'ETHAN R-Lab · Trading R-Lab',
+  loader: () => import('./modules/research/trading-rlab.js')
+});
 
 registerPage('alc-alertas', {
   crumb: '2. Alcista <span>›</span> Alertas',
