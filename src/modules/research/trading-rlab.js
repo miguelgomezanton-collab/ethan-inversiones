@@ -54,7 +54,7 @@ function initPanels(root) {
       const rs = root.querySelector('#rlab-trace-result');
       st.innerHTML='<span style="color:var(--text3)">⏳ Trace '+tk+'...</span>';rs.innerHTML='';
       try {
-        const d=await fetch('/api/rlab-engine?type=trace&ticker='+tk).then(r=>r.json());
+        const d=await fetch('/api/macro-history?type=trace&ticker='+tk).then(r=>r.json());
         st.innerHTML='<span style="color:var(--green)">✓ '+tk+' completado</span>';
         rs.innerHTML=renderTraceResult(d);
       }catch(err){st.innerHTML='<span style="color:var(--red)">Error: '+err.message+'</span>';}
@@ -64,7 +64,7 @@ function initPanels(root) {
       const st=root.querySelector('#rlab-run-status');
       st&&(st.textContent='Cargando...');
       try {
-        const d=await fetch('/api/rlab-engine?type=results').then(r=>r.json());
+        const d=await fetch('/api/macro-history?type=results').then(r=>r.json());
         data=d;
         st&&(st.innerHTML='<span style="color:var(--green)">✓ '+d.n_trades+' trades</span>');
         renderOverview(root.querySelector('#rlab-panel-overview'),data);
@@ -79,7 +79,7 @@ function initPanels(root) {
       const st=root.querySelector('#rlab-run-status');
       st&&(st.textContent='Ejecutando lote '+start+'...');
       try{
-        const d=await fetch('/api/rlab-engine?type=run&start='+start+'&size=15&run_id='+runId).then(r=>r.json());
+        const d=await fetch('/api/macro-history?type=run&start='+start+'&size=15&run_id='+runId).then(r=>r.json());
         data=d; st&&(st.innerHTML='<span style="color:var(--green)">✓ Lote OK · '+d.summary?.n_trades+' trades</span>');
         renderOverview(root.querySelector('#rlab-panel-overview'),data);
       }catch(err){st&&(st.innerHTML='<span style="color:var(--red)">'+err.message+'</span>');}
@@ -93,7 +93,7 @@ function initPanels(root) {
       for(let s=0;s<105;s+=15){
         prog&&(prog.textContent='Lote '+(s/15+1)+'/7 ('+s+'–'+(s+14)+')...');
         try{
-          const d=await fetch('/api/rlab-engine?type=run&start='+s+'&size=15&run_id='+runId).then(r=>r.json());
+          const d=await fetch('/api/macro-history?type=run&start='+s+'&size=15&run_id='+runId).then(r=>r.json());
           data=d;
         }catch(e){prog&&(prog.textContent+=' ERROR: '+e.message);}
         await new Promise(r=>setTimeout(r,500));
