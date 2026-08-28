@@ -610,32 +610,94 @@ function _aggregate(trades, eventEntries, isOOS) {
 }
 
 // ── Fetch Yahoo Finance ───────────────────────────────────────────
-const RLAB_PROXIES = [
-  u => `https://soft-field-156f.miguel-gomez-anton.workers.dev/?url=${encodeURIComponent(u)}`,
-  u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-  u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
-];
+// ── fetchOHLCV — llamada directa desde backend Vercel ────────────
+// En serverless no hay CORS — llamamos Yahoo directamente sin proxy.
+// Devuelve { status, ticker, url, httpStatus, raw, dataset } siempre.
 async function fetchOHLCV(ticker) {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=10y&events=history&includePrePost=false`;
-  let lastErr;
-  for (const fn of RLAB_PROXIES) {
+  const YAHOO_URL = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=10y&events=history&includePrePost=false`;
+  const YAHOO_URL2 = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=10y&events=history&includePrePost=false`;
+
+  const HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+    'Accept': 'application/json',
+    'Accept-Language': 'en-US,en;q=0.9',
+  };
+
+  let httpStatus = null, fetchError = null, rawSize = 0;
+
+  for (const url of [YAHOO_URL, YAHOO_URL2]) {
     try {
       const ctrl = new AbortController();
-      setTimeout(() => ctrl.abort(), 15000);
-      const r = await fetch(fn(url), { signal: ctrl.signal });
-      if (!r.ok) continue;
-      const j = JSON.parse(await r.text());
-      const res = j?.chart?.result?.[0];
-      if (!res) continue;
-      const q = res.indicators.quote[0];
+      const timer = setTimeout(() => ctrl.abort(), 20000);
+      const r = await fetch(url, { headers: HEADERS, signal: ctrl.signal });
+      clearTimeout(timer);
+      httpStatus = r.status;
+
+      if (!r.ok) {
+        fetchError = `HTTP ${r.status} ${r.statusText}`;
+        continue;
+      }
+
+      const text = await r.text();
+      rawSize = text.length;
+
+      let j;
+      try { j = JSON.parse(text); }
+      catch(e) { fetchError = `JSON parse error: ${e.message} (rawSize=${rawSize})`; continue; }
+
+      const result = j?.chart?.result?.[0];
+      if (!result) {
+        const chartErr = j?.chart?.error;
+        fetchError = chartErr ? `Yahoo error: ${chartErr.code} — ${chartErr.description}` : `Sin chart.result (rawSize=${rawSize})`;
+        continue;
+      }
+
+      const ts  = result.timestamp || result.timestamps;
+      const q   = result.indicators?.quote?.[0];
+      if (!ts?.length || !q) {
+        fetchError = `Sin timestamps o quote (ts=${ts?.length}, q=${!!q})`;
+        continue;
+      }
+
+      // Filtrar nulls — Yahoo puede devolver huecos
+      const valid = ts.map((t,i) => ({
+        t, o:q.open?.[i], h:q.high?.[i], l:q.low?.[i], c:q.close?.[i], v:q.volume?.[i]
+      })).filter(x => x.c!=null && x.o!=null && x.h!=null && x.l!=null);
+
+      if (valid.length < 120) {
+        fetchError = `INSUFFICIENT_HISTORY: solo ${valid.length} barras válidas (mínimo 120)`;
+        continue;
+      }
+
       return {
-        timestamps: res.timestamp,
-        opens: q.open, highs: q.high, lows: q.low,
-        closes: q.close, vols: q.volume,
+        status: 'OK',
+        ticker,
+        url,
+        httpStatus,
+        rawSize,
+        n_raw: ts.length,
+        n_valid: valid.length,
+        timestamps: valid.map(x=>x.t),
+        opens:      valid.map(x=>x.o),
+        highs:      valid.map(x=>x.h),
+        lows:       valid.map(x=>x.l),
+        closes:     valid.map(x=>x.c),
+        vols:       valid.map(x=>x.v||0),
       };
-    } catch(e) { lastErr=e; }
+
+    } catch(e) {
+      fetchError = e.name==='AbortError' ? 'TIMEOUT (20s)' : e.message;
+    }
   }
-  throw lastErr || new Error('Sin datos OHLCV');
+
+  // Todos los intentos fallaron
+  return {
+    status: 'DATA_FETCH_ERROR',
+    ticker,
+    httpStatus,
+    rawSize,
+    error: fetchError || 'Sin datos tras todos los intentos',
+  };
 }
 
 // ── S&P 100 — universo de validación ─────────────────────────────
@@ -665,6 +727,25 @@ export default async function handler(req, res) {
     try {
       const tk = ticker.toUpperCase();
       const raw = await fetchOHLCV(tk);
+
+      // Estado HARD: fetch fallido
+      if (raw.status !== 'OK') {
+        return res.status(200).json({
+          ticker: tk,
+          status: raw.status,
+          fetch_diagnostic: {
+            url: raw.url || 'ninguna URL exitosa',
+            http_status: raw.httpStatus,
+            raw_size: raw.rawSize,
+            error: raw.error,
+          },
+          dataset: null,
+          filter_diagnosis: null,
+          engine_result: null,
+          meta: { research_status: 'DATA_FETCH_ERROR' },
+        });
+      }
+
       const { timestamps, opens, highs, lows, closes, vols } = raw;
       const n = closes.length;
 
@@ -695,6 +776,14 @@ export default async function handler(req, res) {
         n_weekly:   W.closes.length,
         n_monthly:  M.closes.length,
         ema_note:   'Función llamada "sma" en UI pero es EMA con k=2/(p+1)',
+        fetch_diagnostic: {
+          status: 'OK',
+          http_status: raw.httpStatus,
+          raw_size: raw.rawSize,
+          n_raw: raw.n_raw,
+          n_valid: raw.n_valid,
+          url: raw.url,
+        },
       };
 
       // 2. PIT sample — 12 fechas distribuidas

@@ -275,8 +275,19 @@ function renderAudit(el){
 }
 
 function renderTraceResult(d){
-  if(!d)return'<div style="color:var(--red)">Sin respuesta</div>';
-  if(d.error)return`<div style="color:var(--red);font-family:var(--mono);font-size:9px;">Error: ${d.error}</div>`;
+  if(!d)return'<div style="color:var(--red);font-family:var(--mono);font-size:9px;">Sin respuesta del endpoint</div>';
+  if(d.status&&d.status!=='OK'&&d.status!=='COMPLETED_WITH_EVENTS'&&d.status!=='COMPLETED_NO_EVENTS'){
+    const fd=d.fetch_diagnostic||{};
+    return`<div style="background:rgba(244,113,116,0.08);border:1px solid rgba(244,113,116,0.25);border-radius:6px;padding:10px;font-family:var(--mono);font-size:9px;">
+      <div style="color:var(--red);font-weight:700;margin-bottom:6px;">❌ ${d.status}</div>
+      <div style="color:var(--text3);line-height:1.8;">
+        Ticker: ${d.ticker||'—'}<br>
+        HTTP: ${fd.http_status||'—'} · Raw size: ${fd.raw_size||'—'}<br>
+        URL: ${fd.url||'—'}<br>
+        Error: ${fd.error||d.error||'—'}
+      </div>
+    </div>`;
+  }
   const ds=d.dataset||{},fd=d.filter_diagnosis||{},er=d.engine_result||{};
   const maxC=fd.max_conditions_ever??0;
   const maxCol=maxC>=9?'var(--green)':maxC>=7?'var(--amber)':'var(--red)';
