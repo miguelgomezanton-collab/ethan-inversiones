@@ -275,35 +275,69 @@ function renderAudit(el){
 }
 
 function renderTraceResult(d){
-  if(!d)return'';
-  const evs=d.events?.slice(0,3)||[];
-  const log=d.traceLog||[];
-  return`<div style="font-family:var(--mono);font-size:8px;color:var(--text3);">
-  <div style="color:var(--text2);margin-bottom:4px;">${d.ticker} · ${d.meta?.n_daily||'—'} días · ${d.meta?.n_events||0} eventos · ${d.meta?.n_trades||0} trades</div>
-  <div style="color:var(--amber);margin-bottom:6px;">${d.meta?.note||''}</div>
-  ${evs.map(ev=>`<div style="background:var(--surface2);border-radius:4px;padding:6px;margin-bottom:4px;">
-    <div style="color:var(--teal);">${ev.id} · ${ev.date_start}→${ev.date_end||'abierto'} · $${ev.price_at_start?.toFixed(2)}</div>
-    <div>M: MACD=${ev.filter_snapshot?.m_macd} S89=${ev.filter_snapshot?.m_s89k} S8=${ev.filter_snapshot?.m_s8k} RSI=${ev.filter_snapshot?.m_rsi}</div>
-    <div>W: MACD=${ev.filter_snapshot?.w_macd} S89=${ev.filter_snapshot?.w_s89k} RSI=${ev.filter_snapshot?.w_rsi}</div>
-  </div>`).join('')||'<div>Sin eventos elegibles</div>'}
-  ${log.length?`<div style="overflow-x:auto;margin-top:6px;">
-  <table style="border-collapse:collapse;">
-    <tr style="color:var(--text3);">${['Date','mi','wi','M✓','W✓','Close','Open+1','M.MACD','M.S8k','M.RSI','W.S89k','W.RSI','D.RSI14'].map(h=>`<th style="padding:2px 5px;border-bottom:1px solid var(--border);white-space:nowrap;">${h}</th>`).join('')}</tr>
-    ${log.slice(0,15).map(r=>`<tr>
-      <td style="padding:2px 5px;color:var(--text2);">${r.date}</td>
-      <td style="padding:2px 5px;">${r.mi}</td>
-      <td style="padding:2px 5px;">${r.wi}</td>
-      <td style="padding:2px 5px;color:${r.mOk?'var(--green)':'var(--red)'};">${r.mOk?'✓':'✗'}</td>
-      <td style="padding:2px 5px;color:${r.wOk?'var(--green)':'var(--red)'};">${r.wOk?'✓':'✗'}</td>
-      <td style="padding:2px 5px;">${r.close}</td>
-      <td style="padding:2px 5px;color:var(--teal);">${r.open_next||'—'}</td>
-      <td style="padding:2px 5px;">${r.m_macd}</td>
-      <td style="padding:2px 5px;">${r.m_s8k}</td>
-      <td style="padding:2px 5px;">${r.m_rsi}</td>
-      <td style="padding:2px 5px;">${r.w_s89k}</td>
-      <td style="padding:2px 5px;">${r.w_rsi}</td>
-      <td style="padding:2px 5px;">${r.d_rsi14}</td>
-    </tr>`).join('')}
-  </table></div>`:''}
-</div>`;
+  if(!d)return'<div style="color:var(--red)">Sin respuesta</div>';
+  if(d.error)return`<div style="color:var(--red);font-family:var(--mono);font-size:9px;">Error: ${d.error}</div>`;
+  const ds=d.dataset||{},fd=d.filter_diagnosis||{},er=d.engine_result||{};
+  const maxC=fd.max_conditions_ever??0;
+  const maxCol=maxC>=9?'var(--green)':maxC>=7?'var(--amber)':'var(--red)';
+
+  const dataHTML=`<div style="background:var(--surface2);border-radius:6px;padding:8px;margin-bottom:8px;">
+    <div style="font-size:9px;font-weight:700;color:var(--teal);margin-bottom:4px;">1. Dataset</div>
+    <div style="font-family:var(--mono);font-size:8px;color:var(--text3);line-height:1.8;">
+      <b style="color:var(--text1);">${ds.ticker||'—'}</b> · ${ds.first_date||'—'} → ${ds.last_date||'—'}<br>
+      ${ds.n_daily||'—'} sesiones · ${ds.n_weekly||'—'} semanas · ${ds.n_monthly||'—'} meses<br>
+      <span style="color:var(--amber);">${ds.ema_note||''}</span>
+    </div></div>`;
+
+  const pitHTML=`<div style="background:var(--surface2);border-radius:6px;padding:8px;margin-bottom:8px;">
+    <div style="font-size:9px;font-weight:700;color:var(--teal);margin-bottom:4px;">2. Point-in-Time (barras cerradas)</div>
+    <div style="overflow-x:auto;"><table style="border-collapse:collapse;font-size:8px;font-family:var(--mono);">
+      <tr style="color:var(--text3);">${['Date','Monthly bar','Closed','Weekly bar','Closed'].map(h=>`<th style="padding:2px 6px;border-bottom:1px solid var(--border);">${h}</th>`).join('')}</tr>
+      ${(d.pit_sample||[]).slice(0,8).map(p=>`<tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
+        <td style="padding:2px 6px;color:var(--text2);">${p.date}</td>
+        <td style="padding:2px 6px;">${p.monthly_bar_date||'—'}</td>
+        <td style="padding:2px 6px;color:${p.monthly_bar_closed?'var(--green)':'var(--red)'};">${p.monthly_bar_closed?'✓ OK':'✗ OPEN'}</td>
+        <td style="padding:2px 6px;">${p.weekly_bar_date||'—'}</td>
+        <td style="padding:2px 6px;color:${p.weekly_bar_closed?'var(--green)':'var(--red)'};">${p.weekly_bar_closed?'✓ OK':'✗ OPEN'}</td>
+      </tr>`).join('')}
+    </table></div></div>`;
+
+  const diagHTML=`<div style="background:var(--surface2);border-radius:6px;padding:8px;margin-bottom:8px;">
+    <div style="font-size:9px;font-weight:700;color:var(--teal);margin-bottom:6px;">3. BASE_FILTER — Diagnóstico</div>
+    <div style="display:flex;gap:20px;margin-bottom:8px;">
+      <div style="text-align:center;"><div style="font-size:8px;color:var(--text3);">Máx condiciones</div>
+        <div style="font-family:var(--mono);font-size:24px;font-weight:700;color:${maxCol};">${maxC}/9</div></div>
+      <div style="text-align:center;"><div style="font-size:8px;color:var(--text3);">Días 9/9</div>
+        <div style="font-family:var(--mono);font-size:24px;font-weight:700;color:${fd.n_eligible_days>0?'var(--green)':'var(--amber)'};">${fd.n_eligible_days??0}</div></div>
+      <div style="text-align:center;"><div style="font-size:8px;color:var(--text3);">Eventos</div>
+        <div style="font-family:var(--mono);font-size:24px;font-weight:700;">${er.n_events??0}</div></div>
+    </div>
+    <div style="font-size:8px;color:var(--amber);font-family:var(--mono);margin-bottom:8px;">${fd.note||''}</div>
+    ${(fd.near_misses_7plus||[]).length?`
+    <div style="font-size:8px;font-weight:700;color:var(--text3);margin-bottom:4px;">Near-misses ≥7/9:</div>
+    ${(fd.near_misses_7plus||[]).slice(0,10).map(nm=>{
+      const conds=['M_MACD','M_STOCH89','M_RSI14','M_STOCH8','M_MA10','W_MACD','W_STOCH89','W_RSI14','W_MA20'];
+      return`<div style="font-family:var(--mono);font-size:8px;margin-bottom:3px;">
+        <span style="color:var(--text2);">${nm.date}</span>
+        <span style="color:${nm.n_conditions>=9?'var(--green)':'var(--amber)'};"> ${nm.n_conditions}/9</span>
+        · M:[${conds.slice(0,5).map(c=>`<span style="color:${nm.conditions[c]?'var(--green)':'var(--red)'};">${nm.conditions[c]?'✓':'✗'}</span>`).join('')}]
+        · W:[${conds.slice(5).map(c=>`<span style="color:${nm.conditions[c]?'var(--green)':'var(--red)'};">${nm.conditions[c]?'✓':'✗'}</span>`).join('')}]
+      </div>`;}).join('')}`
+    :`<div style="font-size:8px;color:var(--red);font-family:var(--mono);">Ningún día alcanzó 7/9 — revisar cálculo</div>`}
+  </div>`;
+
+  const recentHTML=`<div style="background:var(--surface2);border-radius:6px;padding:8px;">
+    <div style="font-size:9px;font-weight:700;color:var(--teal);margin-bottom:4px;">4. Últimas sesiones — 9 condiciones individuales</div>
+    <div style="overflow-x:auto;"><table style="border-collapse:collapse;font-size:7px;font-family:var(--mono);">
+      <tr style="color:var(--text3);">${['Date','N','MACD_M','S89_M','RSI_M','S8_M','MA10_M','MACD_W','S89_W','RSI_W','MA20_W'].map(h=>`<th style="padding:1px 4px;border-bottom:1px solid var(--border);">${h}</th>`).join('')}</tr>
+      ${(fd.recent_30d_detail||[]).slice(-15).map(r=>`<tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
+        <td style="padding:1px 4px;color:var(--text2);">${r.date}</td>
+        <td style="padding:1px 4px;color:${r.n>=9?'var(--green)':r.n>=7?'var(--amber)':'var(--text3)'};">${r.n}</td>
+        ${['M_MACD','M_STOCH89','M_RSI14','M_STOCH8','M_MA10','W_MACD','W_STOCH89','W_RSI14','W_MA20'].map(c=>
+          `<td style="padding:1px 4px;text-align:center;color:${r[c]?'var(--green)':'var(--red)'};">${r[c]?'✓':'✗'}</td>`).join('')}
+      </tr>`).join('')}
+    </table></div></div>`;
+
+  return dataHTML+pitHTML+diagHTML+recentHTML;
 }
+

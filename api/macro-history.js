@@ -660,30 +660,148 @@ export default async function handler(req, res) {
   
   const traceMode = trace === 'true';
 
-  // ── TRACE mode: 1 ticker, log día a día ──────────────────────
+  // ── TRACE mode: diagnóstico completo ─────────────────────────
   if (type === 'rlab-trace' && ticker) {
     try {
-      const raw = await fetchOHLCV(ticker.toUpperCase());
-      const result = runTicker(ticker.toUpperCase(), raw, true);
+      const tk = ticker.toUpperCase();
+      const raw = await fetchOHLCV(tk);
+      const { timestamps, opens, highs, lows, closes, vols } = raw;
+      const n = closes.length;
+
+      const W = _resample(timestamps, opens, highs, lows, closes, vols, 'W');
+      const M = _resample(timestamps, opens, highs, lows, closes, vols, 'M');
+
+      // Indicadores completos
+      const ind = {
+        W, M, closes, opens, highs, lows, timestamps, vols,
+        m_macd: _macd(M.closes), m_s89: _stoch(M.highs,M.lows,M.closes,89),
+        m_s8:   _stoch(M.highs,M.lows,M.closes,8), m_rsi: _rsi(M.closes,14),
+        m_ema10:_ema(M.closes,10),
+        w_macd: _macd(W.closes), w_s89: _stoch(W.highs,W.lows,W.closes,89),
+        w_rsi:  _rsi(W.closes,14), w_ema20:_ema(W.closes,20),
+        w_ema10:_ema(W.closes,10), w_ema5: _ema(W.closes,5),
+        w_rsi5: _rsi(W.closes,5), w_stoch5:_stoch(W.highs,W.lows,W.closes,5),
+        d_macd: _macd(closes), d_rsi14:_rsi(closes,14),
+        d_rsi5: _rsi(closes,5), d_ema5: _ema(closes,5),
+        d_ema10:_ema(closes,10), d_ema20:_ema(closes,20),
+      };
+
+      // 1. Dataset
+      const dataset = {
+        ticker: tk,
+        first_date: new Date(timestamps[0]*1000).toISOString().slice(0,10),
+        last_date:  new Date(timestamps[n-1]*1000).toISOString().slice(0,10),
+        n_daily:    n,
+        n_weekly:   W.closes.length,
+        n_monthly:  M.closes.length,
+        ema_note:   'Función llamada "sma" en UI pero es EMA con k=2/(p+1)',
+      };
+
+      // 2. PIT sample — 12 fechas distribuidas
+      const pitSample = [];
+      const step = Math.floor(n / 12);
+      for (let i = 120; i < n; i += step) {
+        const ts = timestamps[i];
+        const mi = lastClosedMonthlyBar(ts, M);
+        const wi = lastClosedWeeklyBar(ts, W);
+        pitSample.push({
+          date: new Date(ts*1000).toISOString().slice(0,10),
+          daily_close: +closes[i].toFixed(2),
+          monthly_bar_idx: mi,
+          monthly_bar_date: mi>=0 ? M.dates[mi] : null,
+          monthly_bar_closed: mi>=0 && M.lastTs[mi]<ts,
+          weekly_bar_idx: wi,
+          weekly_bar_date: wi>=0 ? W.dates[wi] : null,
+          weekly_bar_closed: wi>=0 && W.lastTs[wi]<ts,
+        });
+      }
+
+      // 3. BASE_FILTER día a día — buscar near-misses y máximo score
+      const WARMUP = 120;
+      let maxConditions = 0;
+      const nearMisses = [];   // días con 7+ condiciones
+      const eligibleDays = []; // días con 9/9
+      const condDiag = [];     // muestra de 30 días recientes
+
+      for (let i = WARMUP; i < n; i++) {
+        const ts = timestamps[i];
+        const mi = lastClosedMonthlyBar(ts, M);
+        const wi = lastClosedWeeklyBar(ts, W);
+        if (mi < 0 || wi < 0) continue;
+
+        // 9 condiciones individuales
+        const c = {
+          M_MACD:   ind.m_macd.m[mi]!=null && ind.m_macd.m[mi]>0 && ind.m_macd.m[mi]>ind.m_macd.sl[mi],
+          M_STOCH89: ind.m_s89.k[mi]!=null && ((ind.m_s89.k[mi]>80&&ind.m_s89.k[mi]>ind.m_s89.d[mi])||ind.m_s89.k[mi]>92),
+          M_RSI14:   ind.m_rsi[mi]!=null && ind.m_rsi[mi]>65,
+          M_STOCH8:  ind.m_s8.k[mi]!=null && ind.m_s8.k[mi]>78,
+          M_MA10:    ind.m_ema10[mi]!=null && M.closes[mi]>ind.m_ema10[mi],
+          W_MACD:    ind.w_macd.m[wi]!=null && ind.w_macd.m[wi]>0 && ind.w_macd.m[wi]>ind.w_macd.sl[wi],
+          W_STOCH89: ind.w_s89.k[wi]!=null && ((ind.w_s89.k[wi]>85&&ind.w_s89.k[wi]>ind.w_s89.d[wi])||ind.w_s89.k[wi]>92),
+          W_RSI14:   ind.w_rsi[wi]!=null && ind.w_rsi[wi]>67,
+          W_MA20:    ind.w_ema20[wi]!=null && W.closes[wi]>ind.w_ema20[wi],
+        };
+        const nTrue = Object.values(c).filter(Boolean).length;
+        const date  = new Date(ts*1000).toISOString().slice(0,10);
+
+        if (nTrue > maxConditions) maxConditions = nTrue;
+        if (nTrue >= 7) nearMisses.push({ date, n_conditions: nTrue, conditions: c,
+          values: {
+            m_macd:  +ind.m_macd.m[mi]?.toFixed(3), m_s89k: +ind.m_s89.k[mi]?.toFixed(1),
+            m_rsi:   +ind.m_rsi[mi]?.toFixed(1),    m_s8k:  +ind.m_s8.k[mi]?.toFixed(1),
+            m_ema10: +ind.m_ema10[mi]?.toFixed(2),  m_close: +M.closes[mi]?.toFixed(2),
+            w_macd:  +ind.w_macd.m[wi]?.toFixed(3), w_s89k: +ind.w_s89.k[wi]?.toFixed(1),
+            w_rsi:   +ind.w_rsi[wi]?.toFixed(1),    w_ema20:+ind.w_ema20[wi]?.toFixed(2),
+          }
+        });
+        if (nTrue === 9) eligibleDays.push(date);
+
+        // Muestra reciente
+        if (i >= n-30) condDiag.push({ date, n:nTrue, ...c,
+          m_macd_v:  +ind.m_macd.m[mi]?.toFixed(3), m_s89k: +ind.m_s89.k[mi]?.toFixed(1),
+          m_rsi_v:   +ind.m_rsi[mi]?.toFixed(1),    m_s8k:  +ind.m_s8.k[mi]?.toFixed(1),
+          w_macd_v:  +ind.w_macd.m[wi]?.toFixed(3), w_s89k: +ind.w_s89.k[wi]?.toFixed(1),
+          w_rsi_v:   +ind.w_rsi[wi]?.toFixed(1),
+        });
+      }
+
+      // Top near-misses por nº condiciones
+      nearMisses.sort((a,b)=>b.n_conditions-a.n_conditions||b.date.localeCompare(a.date));
+
+      const result = runTicker(tk, raw, true);
+
       return res.status(200).json({
-        ticker: ticker.toUpperCase(),
-        meta: {
-          n_daily: raw.closes.length,
-          n_events: result.events.length,
-          n_event_entries: result.eventEntries.length,
-          n_trades: result.trades.length,
-          universe: 'TRACE_MODE',
-          survivorship_bias: true,
-          research_status: 'PIPELINE_VALIDATION',
-          note: 'EMA (no SMA) para m_ema10/w_ema20/w_ema5. E2 usa RSI14>59.',
+        ticker: tk,
+        dataset,
+        pit_sample: pitSample,
+        filter_diagnosis: {
+          max_conditions_ever: maxConditions,
+          n_eligible_days: eligibleDays.length,
+          eligible_days_sample: eligibleDays.slice(0,10),
+          near_misses_7plus: nearMisses.slice(0,20),
+          recent_30d_detail: condDiag,
+          note: maxConditions<9
+            ? `Máximo ${maxConditions}/9 condiciones simultáneas. Filtro MUY restrictivo o hay problema de cálculo.`
+            : `Filtro 9/9 alcanzado en ${eligibleDays.length} días.`,
         },
-        events: result.events.slice(0, 10),
-        eventEntries: result.eventEntries.slice(0, 20),
-        trades: result.trades.slice(0, 20),
-        traceLog: result.traceLog,
+        engine_result: {
+          n_events:  result.events.length,
+          n_trades:  result.trades.length,
+          events:    result.events.slice(0,5),
+          trades:    result.trades.slice(0,10),
+          traceLog:  result.traceLog.slice(0,20),
+        },
+        meta: {
+          filter_version: 'BASE_FILTER_V1',
+          ema_note: 'EMA k=2/(p+1), no SMA. Variables nombradas m_sma10/w_sma20 en backtest legacy.',
+          e2_note:  'E2 usa RSI14>59 (backtest legacy usaba 57)',
+          convention: 'señal Close(t) → ejecución Open(t+1)',
+          research_status: 'PIPELINE_VALIDATION',
+          survivorship_bias: true,
+        },
       });
     } catch(e) {
-      return res.status(500).json({ error: e.message });
+      return res.status(500).json({ error: e.message, ticker: ticker?.toUpperCase() });
     }
   }
 
