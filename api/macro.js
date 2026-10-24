@@ -450,6 +450,24 @@ async function calcGlobalM2(fredKey, manualChinaM2pct) {
 }
 
 // ── Helper: fetch Yahoo Finance chart (ticker codificado) ─────────────────
+// ── Helper: calcAgeDays estandarizado (UTC midnight) ─────────────────────
+// Acepta fecha ISO "YYYY-MM-DD" o timestamp Unix (segundos).
+// Resta siempre desde UTC 00:00 de la fecha dada, evitando desfases de zona.
+function calcAgeDays(dateOrTs) {
+  if (dateOrTs == null) return null;
+  let ms;
+  if (typeof dateOrTs === 'number') {
+    // Unix timestamp en segundos → fecha UTC midnight
+    const d = new Date(dateOrTs * 1000);
+    ms = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  } else {
+    const s = String(dateOrTs).slice(0, 10); // "YYYY-MM-DD"
+    const [y, m, dd] = s.split('-').map(Number);
+    ms = Date.UTC(y, m - 1, dd);
+  }
+  return Math.round((Date.now() - ms) / 86400000);
+}
+
 async function fetchYahooChart(ticker, range = '5y', label = ticker) {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=${range}`;
   const r = await fetch(url, {
@@ -479,7 +497,7 @@ function seriesMetrics(valid, label, source, freshnessThresholds = [3, 7]) {
   const firstTs  = times[0];
   const lastDate  = new Date(lastTs  * 1000).toISOString().slice(0, 10);
   const firstDate = new Date(firstTs * 1000).toISOString().slice(0, 10);
-  const ageDays   = Math.round((Date.now() - lastTs * 1000) / 86400000);
+  const ageDays   = calcAgeDays(lastTs);   // UTC midnight — consistente con FRED
   const [okDays, warnDays] = freshnessThresholds;
   const freshness = ageDays <= okDays ? 'ok' : ageDays <= warnDays ? 'warn' : 'stale';
   const stale = freshness === 'stale';
@@ -546,12 +564,10 @@ async function fetchVIX() {
   }
   const m = seriesMetrics(valid, 'VIX', 'Yahoo Finance ^VIX', [3, 7]);
   if (!m) return { error: 'VIX: seriesMetrics devolvió null', valid: false };
-  // Alias legado para sentimentScore y liquidez.js
   return {
     ...m,
-    value:       m.value,        // nivel actual
-    sma200:      m.mm200,        // alias legado
-    aboveSMA200: m.aboveMM200,   // alias legado
+    value:        m.value,
+    aboveSMA200:  m.aboveMM200,   // alias legado para sentimentScore (liquidez.js lo usa)
     sessionsUsed: m.nObs,
     valid: true,
     signal: m.aboveMM200 ? 'Alerta: VIX sobre MM200 — volatilidad elevada' : 'VIX bajo MM200 — volatilidad contenida',
@@ -924,7 +940,7 @@ export default async function handler(req, res) {
     // ── Nuevas series Fase 1 ──────────────────────────────────────────────
     fetchVIX3M(),                      // CBOE 3M Vol — para ratio VIX/VIX3M
     fetchDXY(),                        // ICE US Dollar Index — DX-Y.NYB
-    fred('DFII10',       key, 1300),   // 10Y Real Yield (TIPS) — 5Y de diarios aprox
+    fred('DFII10',       key, 1300),   // 10Y Real Yield TIPS — 5Y de diarios (≥756 para Z-score 3Y)
     fetchSP500Trend(),                 // Tendencia M10 diaria/semanal/mensual
   ]);
 
@@ -937,13 +953,35 @@ export default async function handler(req, res) {
   // ── Procesar series automáticas ───────────────
   let t10y = null, t2y = null, ffr = null, cpiYoY = null, cpiCoreYoY = null;
 
-  if (rDgs10.status === 'fulfilled' && rDgs10.value[0])
-    t10y = { value: rDgs10.value[0].value, date: rDgs10.value[0].date };
-  else errs.push('DGS10: ' + rDgs10.reason?.message);
+  // DGS10 — enriquecido con freshness, ageDays, chg1d/5d, percentile
+  if (rDgs10.status === 'fulfilled' && rDgs10.value[0]) {
+    const obs10 = rDgs10.value; // DESC, ya filtrado por fred()
+    const v10   = obs10[0].value;
+    const d10   = obs10[0].date;
+    const age10 = calcAgeDays(d10);
+    const fr10  = age10 <= 7 ? 'ok' : age10 <= 10 ? 'warn' : 'stale';
+    const vals10 = obs10.map(o => o.value);
+    t10y = {
+      value: v10, date: d10, ageDays: age10, freshness: fr10,
+      chg1d:  vals10.length > 1 ? +(v10 - vals10[1]).toFixed(3)  : null,
+      chg5d:  vals10.length > 4 ? +(v10 - vals10[4]).toFixed(3)  : null,
+    };
+  } else errs.push('DGS10: ' + rDgs10.reason?.message);
 
-  if (rDgs2.status === 'fulfilled' && rDgs2.value[0])
-    t2y = { value: rDgs2.value[0].value, date: rDgs2.value[0].date };
-  else errs.push('DGS2: ' + rDgs2.reason?.message);
+  // DGS2 — enriquecido con freshness, ageDays, chg1d/5d, percentile
+  if (rDgs2.status === 'fulfilled' && rDgs2.value[0]) {
+    const obs2  = rDgs2.value;
+    const v2    = obs2[0].value;
+    const d2    = obs2[0].date;
+    const age2  = calcAgeDays(d2);
+    const fr2   = age2 <= 7 ? 'ok' : age2 <= 10 ? 'warn' : 'stale';
+    const vals2 = obs2.map(o => o.value);
+    t2y = {
+      value: v2, date: d2, ageDays: age2, freshness: fr2,
+      chg1d:  vals2.length > 1 ? +(v2 - vals2[1]).toFixed(3)  : null,
+      chg5d:  vals2.length > 4 ? +(v2 - vals2[4]).toFixed(3)  : null,
+    };
+  } else errs.push('DGS2: ' + rDgs2.reason?.message);
 
   // FFR — FRED DFF (diario). Freshness: ≤7d OK | 8-14d WARN | >14d STALE
   let ffrMeta = null;
@@ -1317,7 +1355,7 @@ export default async function handler(req, res) {
     const current  = vals.at(-1);
     const lastDate = dates.at(-1);
     const firstDate = dates[0];
-    const ageDays  = lastDate ? Math.round((Date.now() - new Date(lastDate).getTime()) / 86400000) : null;
+    const ageDays  = lastDate ? calcAgeDays(lastDate) : null;
     const [okDays, warnDays] = freshnessThresholds;
     const freshness = ageDays == null ? 'missing' : ageDays <= okDays ? 'ok' : ageDays <= warnDays ? 'warn' : 'stale';
     const stale = freshness === 'stale' || freshness === 'missing';
@@ -1483,7 +1521,7 @@ export default async function handler(req, res) {
       const current  = +obs[obs.length - 1].value;
       const lastDate = obs[obs.length - 1].date;
       const firstDate= obs[0].date;
-      const ageDays  = Math.round((Date.now() - new Date(lastDate).getTime()) / 86400000);
+      const ageDays  = calcAgeDays(lastDate);
       const freshness= ageDays <= 3 ? 'ok' : ageDays <= 7 ? 'warn' : 'stale';
       const vals     = obs.map(o => +o.value);
       const n        = vals.length;
@@ -1793,17 +1831,17 @@ export default async function handler(req, res) {
       vix:         rVix.status === 'fulfilled' ? rVix.value : null,
       vix3m:       vix3mData  || null,
       vixTermRatio: vixTermRatio || null,
-      dxy:         dxyData    || null,
+      // dxy: ver condicionesFinancieras.dxy (eliminado aquí para evitar duplicado)
       sp500Trend:  sp500Trend || null,
       // Amplitud: NO DATA — pendiente de fuente robusta
       amplitud: { state: 'NO_DATA', note: 'Pendiente de fuente de breadth robusta (fase posterior)' },
     },
     condicionesFinancieras: {
-      t10y:       t10y      || null,  // DGS10 nominal
-      t2y:        t2y       || null,  // DGS2 nominal
+      t10y:       t10y      || null,  // DGS10 nominal con freshness+chg
+      t2y:        t2y       || null,  // DGS2 nominal con freshness+chg
       t10y2y:     seguimiento.t10y2y || null, // curva spread
       dfii10:     dfii10Data || null, // 10Y Real Yield TIPS (mercado)
-      dxy:        dxyData    || null, // DXY (alias de mercado.dxy)
+      dxy:        dxyData    || null, // ICE US Dollar Index — única referencia
       // tipoReal (FFR−CPI) sigue en coyuntura.tipoReal — NO se mueve aquí
     },
     alerts: alerts.length ? alerts : [],
