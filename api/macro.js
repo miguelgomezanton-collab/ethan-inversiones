@@ -962,7 +962,7 @@ export default async function handler(req, res) {
     const fr10  = age10 <= 7 ? 'ok' : age10 <= 10 ? 'warn' : 'stale';
     const vals10 = obs10.map(o => o.value);
     t10y = {
-      value: v10, date: d10, ageDays: age10, freshness: fr10,
+      value: v10, date: d10, ageDays: age10, freshness: fr10, stale: fr10 === 'stale',
       chg1d:  vals10.length > 1 ? +(v10 - vals10[1]).toFixed(3)  : null,
       chg5d:  vals10.length > 4 ? +(v10 - vals10[4]).toFixed(3)  : null,
     };
@@ -977,7 +977,7 @@ export default async function handler(req, res) {
     const fr2   = age2 <= 7 ? 'ok' : age2 <= 10 ? 'warn' : 'stale';
     const vals2 = obs2.map(o => o.value);
     t2y = {
-      value: v2, date: d2, ageDays: age2, freshness: fr2,
+      value: v2, date: d2, ageDays: age2, freshness: fr2, stale: fr2 === 'stale',
       chg1d:  vals2.length > 1 ? +(v2 - vals2[1]).toFixed(3)  : null,
       chg5d:  vals2.length > 4 ? +(v2 - vals2[4]).toFixed(3)  : null,
     };
@@ -1793,7 +1793,7 @@ export default async function handler(req, res) {
 
   return res.status(200).json({
     updatedAt: new Date().toISOString(),
-    _version: 'macro-v2026-08-22-breakeven-freshness-fix',
+    _version: 'macro-v2026-10-24-fase1-home-rewrite',
     scoreTotal,
     availableScore,
     coverage,
