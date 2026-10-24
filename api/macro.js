@@ -449,31 +449,201 @@ async function calcGlobalM2(fredKey, manualChinaM2pct) {
   };
 }
 
-// ── VIX con SMA200 ────────────────────────────
-async function fetchVIX() {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?interval=1d&range=2y`;
-  const r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-  if (!r.ok) throw new Error(`Yahoo VIX: ${r.status}`);
+// ── Helper: fetch Yahoo Finance chart (ticker codificado) ─────────────────
+async function fetchYahooChart(ticker, range = '5y', label = ticker) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=${range}`;
+  const r = await fetch(url, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ETHAN/1.0)' },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!r.ok) throw new Error(`Yahoo ${label}: HTTP ${r.status}`);
   const res = (await r.json()).chart?.result?.[0];
-  if (!res) throw new Error('Yahoo VIX: sin datos');
+  if (!res) throw new Error(`Yahoo ${label}: sin resultado`);
   const timestamps = res.timestamp || [];
-  const closes = res.indicators?.quote?.[0]?.close || [];
-  // Filtrar pares válidos (sin nulls)
-  const valid = timestamps.map((t, i) => ({ t, v: closes[i] })).filter(o => o.v != null);
-  if (valid.length < 200) {
-    return { error: `INVALID_HISTORY: solo ${valid.length} sesiones válidas (necesarias 200 para SMA200)`, valid: false };
+  const closes     = res.indicators?.quote?.[0]?.close || [];
+  const valid = timestamps
+    .map((t, i) => ({ t, v: closes[i] }))
+    .filter(o => o.v != null && isFinite(o.v));
+  return valid; // [{t: unix, v: float}]
+}
+
+// ── Helper: métricas de serie de precios/volatilidad ─────────────────────
+// Calcula MM100, MM200, cambios 1D/5D/20D, pendiente MM, percentil ventana
+function seriesMetrics(valid, label, source, freshnessThresholds = [3, 7]) {
+  if (!valid || valid.length < 2) return null;
+  const vals  = valid.map(o => o.v);
+  const times = valid.map(o => o.t);
+  const n     = vals.length;
+  const current  = vals[n - 1];
+  const lastTs   = times[n - 1];
+  const firstTs  = times[0];
+  const lastDate  = new Date(lastTs  * 1000).toISOString().slice(0, 10);
+  const firstDate = new Date(firstTs * 1000).toISOString().slice(0, 10);
+  const ageDays   = Math.round((Date.now() - lastTs * 1000) / 86400000);
+  const [okDays, warnDays] = freshnessThresholds;
+  const freshness = ageDays <= okDays ? 'ok' : ageDays <= warnDays ? 'warn' : 'stale';
+  const stale = freshness === 'stale';
+
+  // MM100 / MM200 — requieren exactamente esa cantidad de obs
+  const mm100 = n >= 100 ? +(vals.slice(-100).reduce((a, b) => a + b, 0) / 100).toFixed(4) : null;
+  const mm200 = n >= 200 ? +(vals.slice(-200).reduce((a, b) => a + b, 0) / 200).toFixed(4) : null;
+
+  // Pendientes: comparar MM actual vs MM hace 10 sesiones
+  let slopeMM100 = null, slopeMM200 = null;
+  if (n >= 110) {
+    const mm100_10ago = +(vals.slice(-110, -10).reduce((a, b) => a + b, 0) / 100).toFixed(4);
+    slopeMM100 = mm100 != null ? (mm100 > mm100_10ago ? 'up' : mm100 < mm100_10ago ? 'down' : 'flat') : null;
   }
-  const last = valid[valid.length - 1];
-  const current = last.v;
-  const date = new Date(last.t * 1000).toISOString().slice(0, 10);
-  const ageDays = Math.round((Date.now() - last.t * 1000) / 86400000);
-  const freshness = ageDays <= 3 ? 'ok' : ageDays <= 7 ? 'warn' : 'stale';
-  const sma200 = valid.slice(-200).reduce((a, b) => a + b.v, 0) / 200;
-  const aboveSMA200 = current > sma200;
+  if (n >= 210) {
+    const mm200_10ago = +(vals.slice(-210, -10).reduce((a, b) => a + b, 0) / 200).toFixed(4);
+    slopeMM200 = mm200 != null ? (mm200 > mm200_10ago ? 'up' : mm200 < mm200_10ago ? 'down' : 'flat') : null;
+  }
+
+  // Cambios 1D / 5D / 20D
+  const chg1d  = n >  1 ? +(current - vals[n -  2]).toFixed(4) : null;
+  const chg5d  = n >  5 ? +(current - vals[n -  6]).toFixed(4) : null;
+  const chg20d = n > 20 ? +(current - vals[n - 21]).toFixed(4) : null;
+
+  // Posición vs medias
+  const aboveMM100 = mm100 != null ? current > mm100 : null;
+  const aboveMM200 = mm200 != null ? current > mm200 : null;
+
+  // Percentil dentro de la ventana disponible (con etiqueta explícita de ventana)
+  const sorted = [...vals].sort((a, b) => a - b);
+  const rank   = sorted.filter(v => v <= current).length;
+  const percentile = +(rank / sorted.length * 100).toFixed(1);
+  const percentileWindow = `desde ${firstDate} hasta ${lastDate}`;
+
+  // Z-score rolling 3Y (≥756 sesiones)
+  const HAS_3Y = n >= 756;
+  let zscore3y = null;
+  if (HAS_3Y) {
+    const sl  = vals.slice(-756);
+    const m   = sl.reduce((a, b) => a + b, 0) / sl.length;
+    const sd  = Math.sqrt(sl.reduce((a, b) => a + (b - m) ** 2, 0) / sl.length);
+    zscore3y  = sd > 0 ? +((current - m) / sd).toFixed(2) : null;
+  }
+
   return {
-    value: +current.toFixed(2), sma200: +sma200.toFixed(2),
-    date, ageDays, freshness, aboveSMA200, sessionsUsed: valid.length, valid: true,
-    signal: aboveSMA200 ? 'Alerta: VIX sobre SMA200 — volatilidad elevada' : 'VIX bajo SMA200 — volatilidad contenida',
+    label, source,
+    value: +current.toFixed(4), date: lastDate, dateFrom: firstDate,
+    ageDays, freshness, stale,
+    nObs: n,
+    mm100, mm200, slopeMM100, slopeMM200,
+    aboveMM100, aboveMM200,
+    chg1d, chg5d, chg20d,
+    percentile, percentileWindow, insufficientHistory: !HAS_3Y,
+    zscore3y,
+  };
+}
+
+// ── VIX con SMA200 + métricas completas ──────────────────────────────────
+async function fetchVIX() {
+  // 5Y para tener ≥1250 sesiones → MM200 seguro y Z-score 3Y
+  const valid = await fetchYahooChart('%5EVIX', '5y', 'VIX');
+  if (valid.length < 200) {
+    return { error: `INVALID_HISTORY: solo ${valid.length} sesiones válidas (necesarias 200 para MM200)`, valid: false };
+  }
+  const m = seriesMetrics(valid, 'VIX', 'Yahoo Finance ^VIX', [3, 7]);
+  if (!m) return { error: 'VIX: seriesMetrics devolvió null', valid: false };
+  // Alias legado para sentimentScore y liquidez.js
+  return {
+    ...m,
+    value:       m.value,        // nivel actual
+    sma200:      m.mm200,        // alias legado
+    aboveSMA200: m.aboveMM200,   // alias legado
+    sessionsUsed: m.nObs,
+    valid: true,
+    signal: m.aboveMM200 ? 'Alerta: VIX sobre MM200 — volatilidad elevada' : 'VIX bajo MM200 — volatilidad contenida',
+  };
+}
+
+// ── VIX3M ─────────────────────────────────────────────────────────────────
+async function fetchVIX3M() {
+  // ^VIX3M: CBOE 3-Month Volatility Index (disponible en Yahoo Finance)
+  const valid = await fetchYahooChart('%5EVIX3M', '5y', 'VIX3M');
+  if (valid.length < 5) throw new Error(`VIX3M: solo ${valid.length} sesiones — NO DATA`);
+  return seriesMetrics(valid, 'VIX3M', 'Yahoo Finance ^VIX3M', [3, 7]);
+}
+
+// ── DXY ───────────────────────────────────────────────────────────────────
+async function fetchDXY() {
+  // DX-Y.NYB: ICE US Dollar Index (Spot) en Yahoo Finance
+  const valid = await fetchYahooChart('DX-Y.NYB', '5y', 'DXY');
+  if (valid.length < 5) throw new Error(`DXY: solo ${valid.length} sesiones — NO DATA`);
+  return seriesMetrics(valid, 'DXY', 'Yahoo Finance DX-Y.NYB (ICE US Dollar Index)', [3, 7]);
+}
+
+// ── S&P 500 — tendencia multitemporal M10 ─────────────────────────────────
+async function fetchSP500Trend() {
+  // ^GSPC: S&P 500 Index. Necesitamos cierre diario, semanal y mensual → 5Y de diarios
+  const daily = await fetchYahooChart('%5EGSPC', '5y', 'SP500');
+  if (daily.length < 20) throw new Error(`SP500: solo ${daily.length} sesiones — insuficiente`);
+
+  // Helper: M10 sobre un array de cierres (10 últimos periodos)
+  function m10State(closes, label) {
+    const n = closes.length;
+    if (n < 11) return { state: 'INSUFFICIENT_DATA', label, nObs: n, price: null, m10: null, slope: null };
+    const price = closes[n - 1];
+    const m10   = +(closes.slice(-10).reduce((a, b) => a + b, 0) / 10).toFixed(4);
+    // Pendiente: comparar M10 actual vs M10 hace 5 periodos
+    const m10prev = n >= 15 ? +(closes.slice(-15, -5).reduce((a, b) => a + b, 0) / 10).toFixed(4) : null;
+    const slope   = m10prev != null ? (m10 > m10prev ? 'up' : m10 < m10prev ? 'down' : 'flat') : null;
+    const aboveM10 = price > m10;
+    // Estado: alcista = precio sobre M10 Y M10 subiendo | bajista = precio bajo M10 Y M10 bajando | neutral = resto
+    let state;
+    if (aboveM10 && slope === 'up')   state = 'alcista';
+    else if (!aboveM10 && slope === 'down') state = 'bajista';
+    else state = 'neutral';
+    return { state, label, nObs: n, price: +price.toFixed(2), m10, slope, aboveM10 };
+  }
+
+  // Diario: usar cierres diarios directamente
+  const dailyCloses = daily.map(o => o.v);
+  const dailyDates  = daily.map(o => new Date(o.t * 1000).toISOString().slice(0, 10));
+  const dailyState  = { ...m10State(dailyCloses, 'Diario'), date: dailyDates[dailyDates.length - 1] };
+
+  // Semanal: agrupar por semana (cierre del viernes o último día de la semana)
+  const weeklyMap = new Map();
+  daily.forEach(o => {
+    const d   = new Date(o.t * 1000);
+    const yr  = d.getUTCFullYear();
+    const wk  = Math.floor((d - new Date(yr, 0, 1)) / 604800000);
+    const key = `${yr}-W${String(wk).padStart(2,'0')}`;
+    weeklyMap.set(key, o.v); // sobreescribe → queda el último día de cada semana
+  });
+  const weeklyCloses = [...weeklyMap.values()];
+  const weeklyDates  = [...weeklyMap.keys()];
+  const weeklyState  = { ...m10State(weeklyCloses, 'Semanal'), week: weeklyDates[weeklyDates.length - 1] };
+
+  // Mensual: agrupar por mes
+  const monthlyMap = new Map();
+  daily.forEach(o => {
+    const d   = new Date(o.t * 1000);
+    const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}`;
+    monthlyMap.set(key, o.v); // sobreescribe → queda el cierre de fin de mes
+  });
+  const monthlyCloses = [...monthlyMap.values()];
+  const monthlyDates  = [...monthlyMap.keys()];
+  const monthlyState  = { ...m10State(monthlyCloses, 'Mensual'), month: monthlyDates[monthlyDates.length - 1] };
+
+  // Resumen
+  const states = [monthlyState.state, weeklyState.state, dailyState.state];
+  let summary;
+  if (states.every(s => s === 'alcista'))                                     summary = 'Tendencia plenamente confirmada — alcista en los tres marcos';
+  else if (monthlyState.state === 'alcista' && weeklyState.state === 'alcista') summary = 'Corrección diaria dentro de tendencia alcista';
+  else if (monthlyState.state === 'alcista' && weeklyState.state !== 'alcista') summary = 'Deterioro intermedio — mensual alcista pero semanal debilitado';
+  else if (states.every(s => s === 'bajista'))                                summary = 'Régimen técnico bajista confirmado en los tres marcos';
+  else                                                                         summary = 'Señales mixtas — sin confirmación clara de tendencia';
+
+  return {
+    label: 'S&P 500 Tendencia Multitemporal', source: 'Yahoo Finance ^GSPC · M10',
+    daily: dailyState, weekly: weeklyState, monthly: monthlyState,
+    summary,
+    nObsDaily: daily.length,
+    dateLastClose: dailyDates[dailyDates.length - 1],
+    // Amplitud: NO DATA — pendiente de fuente robusta (batch SP500 components)
+    amplitud: { state: 'NO_DATA', note: 'Amplitud: NO DATA — pendiente de fuente de breadth robusta (batch SP500 components, fase posterior)' },
   };
 }
 
@@ -728,6 +898,7 @@ export default async function handler(req, res) {
     rHy, rBreakeven1y, rBreakeven5y, rBreakeven5yAlt,
     rWti, rBrent, rM2v, rWresbal,
     rLeiFreD, rTotll, rGdp, rMich,
+    rVix3m, rDxy, rDfii10, rSP500Trend,
   ] = await Promise.allSettled([
     fred('DGS10',        key, 5),
     fred('DGS2',         key, 5),
@@ -736,7 +907,7 @@ export default async function handler(req, res) {
     fred('CPIAUCSL',     key, 16),
     fred('CPILFESL',     key, 16),
     fetchFearGreed(),
-    fetchVIX(),
+    fetchVIX(),                        // 5Y de diarios → MM200 + Z-score 3Y
     fetchCurvaEUR(),
     fred('BAMLH0A0HYM2', key, 6500),  // diario — histórico completo desde ~2000 para percentil LT y Z-score 3Y
     fred('EXPINF1YR',    key, 10),   // Fed Cleveland 1Y inflation expectations
@@ -750,6 +921,11 @@ export default async function handler(req, res) {
     fred('TOTLL',        key, 70),
     fred('GDP',          key,  8),
     fred('MICH',         key, 10),   // Univ. Michigan 1Y inflation expectations (fallback)
+    // ── Nuevas series Fase 1 ──────────────────────────────────────────────
+    fetchVIX3M(),                      // CBOE 3M Vol — para ratio VIX/VIX3M
+    fetchDXY(),                        // ICE US Dollar Index — DX-Y.NYB
+    fred('DFII10',       key, 1300),   // 10Y Real Yield (TIPS) — 5Y de diarios aprox
+    fetchSP500Trend(),                 // Tendencia M10 diaria/semanal/mensual
   ]);
 
   // M2 Global en paralelo pero con timeout propio para no bloquear el resto
@@ -1281,6 +1457,189 @@ export default async function handler(req, res) {
     };
   } else errs.push('FearGreed: ' + rFg.reason?.message);
 
+  // ── Fase 1: Nuevas series — VIX3M, DXY, DFII10, SP500Trend ──────────────
+
+  // VIX3M
+  let vix3mData = null;
+  if (rVix3m.status === 'fulfilled' && rVix3m.value) {
+    vix3mData = rVix3m.value;
+  } else {
+    errs.push('VIX3M (^VIX3M Yahoo): ' + (rVix3m.reason?.message || 'NO DATA — no se sustituye por otra serie'));
+  }
+
+  // DXY
+  let dxyData = null;
+  if (rDxy.status === 'fulfilled' && rDxy.value) {
+    dxyData = rDxy.value;
+  } else {
+    errs.push('DXY (DX-Y.NYB Yahoo): ' + (rDxy.reason?.message || 'NO DATA — no se sustituye por otra serie'));
+  }
+
+  // DFII10 — 10Y Real Yield TIPS (diferente de tipoReal = FFR−CPI)
+  let dfii10Data = null;
+  if (rDfii10.status === 'fulfilled' && rDfii10.value?.length) {
+    const obs    = [...rDfii10.value].reverse().filter(o => o.value != null && !isNaN(+o.value));
+    if (obs.length >= 2) {
+      const current  = +obs[obs.length - 1].value;
+      const lastDate = obs[obs.length - 1].date;
+      const firstDate= obs[0].date;
+      const ageDays  = Math.round((Date.now() - new Date(lastDate).getTime()) / 86400000);
+      const freshness= ageDays <= 3 ? 'ok' : ageDays <= 7 ? 'warn' : 'stale';
+      const vals     = obs.map(o => +o.value);
+      const n        = vals.length;
+      const chg1d    = n >  1 ? +(current - vals[n -  2]).toFixed(3) : null;
+      const chg5d    = n >  5 ? +(current - vals[n -  6]).toFixed(3) : null;
+      const chg20d   = n > 20 ? +(current - vals[n - 21]).toFixed(3) : null;
+      const sorted   = [...vals].sort((a, b) => a - b);
+      const rank     = sorted.filter(v => v <= current).length;
+      const percentile = +(rank / sorted.length * 100).toFixed(1);
+      // Lectura de régimen
+      let regime;
+      if (current <= 0) regime = 'acomodaticio';
+      else if (current <= 1.0) regime = 'neutral-bajo';
+      else if (current <= 2.0) regime = 'neutral-alto';
+      else regime = 'restrictivo';
+      dfii10Data = {
+        label: '10Y Real Yield (TIPS)', source: 'FRED DFII10',
+        value: current, date: lastDate, dateFrom: firstDate,
+        ageDays, freshness, stale: freshness === 'stale',
+        nObs: n, chg1d, chg5d, chg20d,
+        percentile, percentileWindow: `desde ${firstDate} hasta ${lastDate}`,
+        insufficientHistory: n < 756,
+        regime,
+        note: 'Distinto de tipoReal (FFR−CPI). DFII10 = rendimiento real mercado TIPS 10Y.',
+      };
+    } else errs.push('DFII10: insuficientes obs válidas tras filtrar');
+  } else {
+    errs.push('DFII10 (FRED): ' + (rDfii10.reason?.message || 'sin datos'));
+  }
+
+  // SP500 Tendencia multitemporal
+  let sp500Trend = null;
+  if (rSP500Trend.status === 'fulfilled' && rSP500Trend.value) {
+    sp500Trend = rSP500Trend.value;
+  } else {
+    errs.push('SP500Trend (^GSPC Yahoo): ' + (rSP500Trend.reason?.message || 'NO DATA'));
+  }
+
+  // ── VIX Term Structure Ratio = VIX / VIX3M ───────────────────────────────
+  let vixTermRatio = null;
+  const vixVal  = rVix.status === 'fulfilled' ? rVix.value?.value : null;
+  const vix3mVal = vix3mData?.value ?? null;
+  if (vixVal != null && vix3mVal != null && vix3mVal > 0) {
+    const ratio = +(vixVal / vix3mVal).toFixed(4);
+    let ratioState;
+    if (ratio < 0.90)    ratioState = 'contango';
+    else if (ratio < 1.0) ratioState = 'tension-creciente';
+    else if (ratio < 1.10) ratioState = 'backwardation';
+    else                  ratioState = 'estres-severo';
+    vixTermRatio = {
+      ratio, vix: vixVal, vix3m: vix3mVal,
+      state: ratioState,
+      date: rVix.value?.date || null,
+    };
+  }
+
+  // ── HY OAS: añadir MM100/MM200 desde la serie completa ya cargada ────────
+  // hyOasMetrics ya tiene percentil LT y Z-score 3Y desde creditSpreadMetrics().
+  // Calculamos MM100/MM200 y cambios sobre la misma serie rHy.value
+  let hyOasEnhanced = hyOasMetrics ? { ...hyOasMetrics } : null;
+  if (hyOasMetrics && rHy.status === 'fulfilled' && rHy.value?.length) {
+    const hyObs = [...rHy.value].reverse().filter(o => !isNaN(+o.value));
+    const hyVals2 = hyObs.map(o => +o.value);
+    const hn = hyVals2.length;
+    const mm100 = hn >= 100 ? +(hyVals2.slice(-100).reduce((a,b) => a+b, 0) / 100).toFixed(4) : null;
+    const mm200 = hn >= 200 ? +(hyVals2.slice(-200).reduce((a,b) => a+b, 0) / 200).toFixed(4) : null;
+    let slopeMM100 = null, slopeMM200 = null;
+    if (hn >= 110) {
+      const prev = +(hyVals2.slice(-110, -10).reduce((a,b) => a+b,0)/100).toFixed(4);
+      slopeMM100 = mm100 > prev ? 'up' : mm100 < prev ? 'down' : 'flat';
+    }
+    if (hn >= 210) {
+      const prev = +(hyVals2.slice(-210, -10).reduce((a,b) => a+b,0)/200).toFixed(4);
+      slopeMM200 = mm200 > prev ? 'up' : mm200 < prev ? 'down' : 'flat';
+    }
+    const cur = hyOasMetrics.value;
+    const chg1d  = hn >  1 ? +(cur - hyVals2[hn -  2]).toFixed(4) : null;
+    const chg5d  = hn >  5 ? +(cur - hyVals2[hn -  6]).toFixed(4) : null;
+    const chg20d = hn > 20 ? +(cur - hyVals2[hn - 21]).toFixed(4) : null;
+    // Estado HY OAS según spec
+    const aboveMM100 = mm100 != null ? cur > mm100 : null;
+    const aboveMM200 = mm200 != null ? cur > mm200 : null;
+    let hyState;
+    if (!aboveMM100 && !aboveMM200 && (slopeMM100 !== 'up') && (chg20d == null || chg20d <= 0))
+      hyState = 'normal';
+    else if (aboveMM100 && slopeMM100 === 'up' && chg20d != null && chg20d > 0)
+      hyState = 'vigilancia';
+    else if (aboveMM100 && aboveMM200 && slopeMM100 === 'up' && slopeMM200 === 'up')
+      hyState = 'tension';
+    else
+      hyState = 'vigilancia';
+    // Alerta estrés: supera máximo de 6M (126 sesiones) + Z-score alto + BBB confirma
+    const max6m = hn >= 126 ? Math.max(...hyVals2.slice(-126)) : null;
+    const stressAlert = max6m != null && cur > max6m
+      && (hyOasMetrics.zscore3y ?? 0) > 1.5
+      && ind.bbb?.value != null && ind.bbb.value > (hyVals2.slice(-126).reduce((a,b)=>a+b,0)/Math.min(hn,126));
+    if (stressAlert) hyState = 'estres';
+    hyOasEnhanced = {
+      ...hyOasMetrics,
+      mm100, mm200, slopeMM100, slopeMM200,
+      aboveMM100, aboveMM200,
+      chg1d, chg5d, chg20d,
+      hyState,
+    };
+  }
+
+  // ── Motor de alertas combinadas ───────────────────────────────────────────
+  const alerts = [];
+  const now = new Date().toISOString().slice(0, 10);
+
+  // Alerta de crédito
+  if (hyOasEnhanced?.aboveMM100 && hyOasEnhanced?.chg20d > 0 && hyOasEnhanced?.slopeMM100 === 'up') {
+    alerts.push({ id: 'credito', label: 'Alerta de crédito', severity: 'warn', date: now,
+      triggers: ['HY OAS sobre MM100', `var20D +${hyOasEnhanced.chg20d?.toFixed(2)}pp`, 'MM100 ascendente'],
+      state: hyOasEnhanced.hyState });
+  }
+  // Alerta de volatilidad
+  const vixAboveMM100 = rVix.status === 'fulfilled' && rVix.value?.aboveMM100;
+  if (vixVal != null && vixVal > 20 && vixAboveMM100 && vixTermRatio?.ratio != null && vixTermRatio.ratio >= 0.9) {
+    alerts.push({ id: 'volatilidad', label: 'Alerta de volatilidad', severity: 'warn', date: now,
+      triggers: [`VIX ${vixVal?.toFixed(1)} > 20`, 'VIX sobre MM100', `ratio VIX/VIX3M ${vixTermRatio.ratio?.toFixed(3)} ≥ 0.90`],
+      state: vixTermRatio.state });
+  }
+  // Alerta de estrés
+  if (hyOasEnhanced?.hyState === 'tension' || hyOasEnhanced?.hyState === 'estres') {
+    if (vixVal != null && vixVal > 30 && vixTermRatio?.ratio != null && vixTermRatio.ratio > 1.0) {
+      alerts.push({ id: 'estres', label: 'Alerta de estrés', severity: 'error', date: now,
+        triggers: ['HY OAS en tensión o estrés', `VIX ${vixVal?.toFixed(1)} > 30`, `ratio VIX/VIX3M ${vixTermRatio.ratio?.toFixed(3)} > 1.0`],
+        state: 'estres' });
+    }
+  }
+  // Alerta de endurecimiento financiero
+  if (dxyData?.chg5d != null && dxyData.chg5d > 0.5
+    && dfii10Data?.chg5d != null && dfii10Data.chg5d > 0.05
+    && hyOasEnhanced?.chg5d != null && hyOasEnhanced.chg5d > 0.05) {
+    alerts.push({ id: 'endurecimiento', label: 'Alerta de endurecimiento financiero', severity: 'warn', date: now,
+      triggers: [`DXY +${dxyData.chg5d?.toFixed(2)} (5D)`, `DFII10 +${dfii10Data.chg5d?.toFixed(3)}pp (5D)`, `HY OAS +${hyOasEnhanced.chg5d?.toFixed(3)}pp (5D)`],
+      state: 'endurecimiento' });
+  }
+  // Corrección dentro de tendencia
+  if (sp500Trend?.monthly?.state === 'alcista' && sp500Trend?.weekly?.state === 'alcista'
+    && sp500Trend?.daily?.state !== 'alcista'
+    && (hyOasEnhanced?.hyState === 'normal' || hyOasEnhanced?.hyState === 'vigilancia')) {
+    alerts.push({ id: 'correccion', label: 'Corrección dentro de tendencia alcista', severity: 'info', date: now,
+      triggers: ['Mensual alcista', 'Semanal alcista', `Diario ${sp500Trend.daily.state}`, `HY OAS ${hyOasEnhanced?.hyState || '—'}`],
+      state: 'correccion' });
+  }
+  // Deterioro confirmado
+  if (sp500Trend?.weekly?.state === 'bajista' && sp500Trend?.daily?.state === 'bajista'
+    && (hyOasEnhanced?.chg5d ?? 0) > 0
+    && (vixTermRatio?.ratio ?? 0) >= 0.9) {
+    alerts.push({ id: 'deterioro', label: 'Deterioro confirmado', severity: 'error', date: now,
+      triggers: ['Semanal bajista', 'Diario bajista', 'Amplitud: NO DATA', `HY OAS chg5D +${hyOasEnhanced?.chg5d?.toFixed(3) ?? '—'}pp`, `ratio VIX/VIX3M ${vixTermRatio?.ratio?.toFixed(3) ?? '—'}`],
+      state: 'deterioro' });
+  }
+
   // ── Score total ───────────────────────────────
   // Solo indicadores con score != null contribuyen al numerador Y al denominador.
   // STALE/MISSING/ERROR quedan completamente excluidos de ambos.
@@ -1424,10 +1783,30 @@ export default async function handler(req, res) {
       impulso:  ind.impulso,
       velM2:    ind.velM2,
       reservas: ind.reservas,
-      bbb:      ind.bbb,        // BBB OAS — mantiene score para Liquidity Score
-      hyOas:    hyOasMetrics || null,   // HY OAS — sin score, solo diagnóstico
-      hyBbbGap: hyBbbGap    || null,   // HY–BBB Gap — calculado, sin score
+      bbb:      ind.bbb,              // BBB OAS — RESEARCH ONLY desde v3.9
+      hyOas:    hyOasEnhanced || null, // HY OAS con MM100/MM200/estados
+      hyBbbGap: hyBbbGap    || null,  // HY–BBB Gap — calculado, sin score
     },
+
+    // ── Fase 1: Condiciones financieras y mercado ─────────────────────────
+    mercado: {
+      vix:         rVix.status === 'fulfilled' ? rVix.value : null,
+      vix3m:       vix3mData  || null,
+      vixTermRatio: vixTermRatio || null,
+      dxy:         dxyData    || null,
+      sp500Trend:  sp500Trend || null,
+      // Amplitud: NO DATA — pendiente de fuente robusta
+      amplitud: { state: 'NO_DATA', note: 'Pendiente de fuente de breadth robusta (fase posterior)' },
+    },
+    condicionesFinancieras: {
+      t10y:       t10y      || null,  // DGS10 nominal
+      t2y:        t2y       || null,  // DGS2 nominal
+      t10y2y:     seguimiento.t10y2y || null, // curva spread
+      dfii10:     dfii10Data || null, // 10Y Real Yield TIPS (mercado)
+      dxy:        dxyData    || null, // DXY (alias de mercado.dxy)
+      // tipoReal (FFR−CPI) sigue en coyuntura.tipoReal — NO se mueve aquí
+    },
+    alerts: alerts.length ? alerts : [],
 
     // Todos los indicadores con score (para debug y Kelly)
     indicators: ind,
