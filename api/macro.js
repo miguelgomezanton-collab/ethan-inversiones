@@ -732,13 +732,13 @@ export default async function handler(req, res) {
     fred('DGS10',        key, 5),
     fred('DGS2',         key, 5),
     fred('DFF',          key, 100),   // diario — necesita ~91 obs para 3M de dirección
-    fred('BAMLC0A4CBBB', key, 320),   // diario — necesita >260 obs para SMA200 + var60
+    fred('BAMLC0A4CBBB', key, 5),
     fred('CPIAUCSL',     key, 16),
     fred('CPILFESL',     key, 16),
     fetchFearGreed(),
     fetchVIX(),
     fetchCurvaEUR(),
-    fred('BAMLH0A0HYM2', key, 320),   // diario — necesita >260 obs para SMA200 + var60
+    fred('BAMLH0A0HYM2', key, 5),
     fred('EXPINF1YR',    key, 10),   // Fed Cleveland 1Y inflation expectations
     fred('T5YIE',        key, 10),   // Breakeven 5Y
     fred('T5YIFR',       key, 10),   // Breakeven 5Y forward rate (alternativa)
@@ -1129,119 +1129,20 @@ export default async function handler(req, res) {
       score: scTipoReal(v), weight: 1 };
   }
 
-  // ── Helper: métricas enriquecidas para credit spreads (diagnóstico) ──────────
-  // freshnessThresholds: [okDays, warnDays] — para spreads diarios usar [3, 7]
-  function creditSpreadMetrics(obs, label, source, freshnessThresholds = [3, 7]) {
-    if (!obs || !obs.length) return null;
-    const asc  = [...obs].reverse();                                        // cronológico asc
-    const vals = asc.map(o => +o.value).filter(v => !isNaN(v));
-    if (!vals.length) return null;
-    const current  = vals.at(-1);
-    const lastDate = asc.at(-1)?.date;
-    const ageDays  = lastDate ? Math.round((Date.now() - new Date(lastDate).getTime()) / 86400000) : null;
-    const [okDays, warnDays] = freshnessThresholds;
-    const freshness = ageDays == null ? 'missing' : ageDays <= okDays ? 'ok' : ageDays <= warnDays ? 'warn' : 'stale';
-    const stale = freshness === 'stale' || freshness === 'missing';
-
-    // Percentil histórico sobre toda la serie disponible
-    const sorted = [...vals].sort((a, b) => a - b);
-    const rank   = sorted.filter(v => v <= current).length;
-    const pct    = +(rank / sorted.length * 100).toFixed(1);
-
-    // Z-score rolling 3 años (~756 sesiones diarias), mín 90% cobertura
-    const win3y   = Math.min(756, vals.length);
-    const slice3y = vals.slice(-win3y);
-    const mean3y  = slice3y.reduce((a, b) => a + b, 0) / slice3y.length;
-    const std3y   = Math.sqrt(slice3y.reduce((a, b) => a + (b - mean3y) ** 2, 0) / slice3y.length);
-    const zscore  = std3y > 0 ? +((current - mean3y) / std3y).toFixed(2) : null;
-
-    // Variación 20 y 60 sesiones
-    const var20 = vals.length > 20 ? +(current - vals.at(-21)).toFixed(3) : null;
-    const var60 = vals.length > 60 ? +(current - vals.at(-61)).toFixed(3) : null;
-
-    // SMA200 (mín 100 obs para calcular)
-    const sma200vals = vals.slice(-200);
-    const sma200     = sma200vals.length >= 100
-      ? +(sma200vals.reduce((a, b) => a + b, 0) / sma200vals.length).toFixed(3)
-      : null;
-    const trendVsSma200 = sma200 != null ? (current > sma200 ? 'above' : 'below') : null;
-
-    return {
-      label, source,
-      value:       +current.toFixed(3),
-      date:        lastDate,
-      ageDays,     freshness,   stale,
-      percentile:  pct,
-      zscore3y:    zscore,
-      mean3y:      +mean3y.toFixed(3),
-      var20,       var60,
-      sma200,      trendVsSma200,
-      nObs:        vals.length,
-      researchOnly: true,   // sin score, sin impacto en Liquidity Score
+  // 10. BBB Spread — ya implementado arriba
+  // Freshness diario: ≤7d OK | 8-10d WARN | >10d STALE
+  if (rBbb.status === 'fulfilled' && rBbb.value[0]) {
+    const v       = rBbb.value[0].value;
+    const date    = rBbb.value[0].date;
+    const ageDays = Math.round((Date.now() - new Date(date).getTime()) / 86400000);
+    const freshness = ageDays <= 7 ? 'ok' : ageDays <= 10 ? 'warn' : 'stale';
+    ind.bbb = {
+      label: 'BBB Corporate Spread', value: v, date,
+      ageDays, freshness,
+      score: freshness === 'stale' ? null : scBBB(v),
+      weight: 1, auto: true, stale: freshness === 'stale',
     };
-  }
-
-  // 10a. BBB Corporate Spread — enriquecido con métricas de diagnóstico
-  // Mantiene campo 'score' por compatibilidad con Liquidity Score existente
-  // Freshness diario: ≤3d OK | 4-7d WARN | >7d STALE  (mercado diario)
-  if (rBbb.status === 'fulfilled' && rBbb.value?.length) {
-    const bbbMetrics = creditSpreadMetrics(rBbb.value, 'BBB Corporate Spread', 'FRED BAMLC0A4CBBB', [3, 7]);
-    if (bbbMetrics) {
-      ind.bbb = {
-        ...bbbMetrics,
-        researchOnly: false,   // BBB SÍ tiene score — sobreescribir
-        score:  bbbMetrics.stale ? null : scBBB(bbbMetrics.value),
-        weight: 1, auto: true,
-      };
-    }
   } else errs.push('BBB: ' + rBbb.reason?.message);
-
-  // 10b. HY OAS — FRED BAMLH0A0HYM2 · solo diagnóstico, sin score
-  // Freshness diario: ≤3d OK | 4-7d WARN | >7d STALE
-  let hyOasMetrics = null;
-  if (rHy.status === 'fulfilled' && rHy.value?.length) {
-    hyOasMetrics = creditSpreadMetrics(rHy.value, 'High Yield OAS', 'FRED BAMLH0A0HYM2', [3, 7]);
-  }
-
-  // 10c. HY–BBB Gap — diferencia calculada; NO DATA si falta cualquiera de las dos
-  let hyBbbGap = null;
-  if (hyOasMetrics?.value != null && ind.bbb?.value != null) {
-    // Reconstruir arrays cronológicos para var20/var60/sma200 del gap
-    const hyVals  = rHy.value?.length  ? [...rHy.value].reverse().map(o => +o.value).filter(v => !isNaN(v))  : [];
-    const bbbVals = rBbb.value?.length ? [...rBbb.value].reverse().map(o => +o.value).filter(v => !isNaN(v)) : [];
-    const minLen  = Math.min(hyVals.length, bbbVals.length);
-    const gapVals = Array.from({ length: minLen }, (_, i) => +(hyVals.at(-(minLen - i)) - bbbVals.at(-(minLen - i))).toFixed(3));
-    const gapVal  = +(hyOasMetrics.value - ind.bbb.value).toFixed(3);
-    const gapVar20 = gapVals.length > 20 ? +(gapVal - gapVals.at(-21)).toFixed(3) : null;
-    const gapVar60 = gapVals.length > 60 ? +(gapVal - gapVals.at(-61)).toFixed(3) : null;
-    const gapSma200vals = gapVals.slice(-200);
-    const gapSma200     = gapSma200vals.length >= 100
-      ? +(gapSma200vals.reduce((a, b) => a + b, 0) / gapSma200vals.length).toFixed(3) : null;
-    const gapTrend = gapSma200 != null ? (gapVal > gapSma200 ? 'above' : 'below') : null;
-    // Percentil del gap
-    const gapSorted = [...gapVals].sort((a, b) => a - b);
-    const gapRank   = gapSorted.filter(v => v <= gapVal).length;
-    const gapPct    = +(gapRank / (gapSorted.length || 1) * 100).toFixed(1);
-    // Stale: stale si cualquiera de los dos subyacentes es stale
-    const gapStale = hyOasMetrics.stale || (ind.bbb?.stale ?? false);
-    const gapDate  = hyOasMetrics.date || ind.bbb?.date || null;
-
-    hyBbbGap = {
-      label:          'HY–BBB Gap',
-      source:         'calc: BAMLH0A0HYM2 − BAMLC0A4CBBB',
-      value:          gapVal,
-      date:           gapDate,
-      stale:          gapStale,
-      freshness:      gapStale ? 'stale' : 'ok',
-      percentile:     gapPct,
-      var20:          gapVar20,
-      var60:          gapVar60,
-      sma200:         gapSma200,
-      trendVsSma200:  gapTrend,
-      nObs:           gapVals.length,
-      researchOnly:   true,
-    };
-  }
 
   // 11. Fear & Greed — CNN (scraping) con freshness
   // F&G desacoplado del scoreTotal (decisión arquitectónica agosto 2026):
@@ -1297,10 +1198,16 @@ export default async function handler(req, res) {
     t10y2y: t10y && t2y ? { value: +(t10y.value - t2y.value).toFixed(2), date: t10y.date } : null,
     cpi:     cpiYoY    != null ? { value: cpiYoY,    date: rCpi.value?.[0]?.date }    : null,
     cpiCore: cpiCoreYoY != null ? { value: cpiCoreYoY, date: rCpiCore.value?.[0]?.date } : null,
-    bbb:      ind.bbb        || null,
-    hySpread: hyOasMetrics  || null,   // alias para sentimentScore (usa .value, .freshness)
-    hyOas:    hyOasMetrics  || null,   // campo canónico para liquidez.js
-    hyBbbGap: hyBbbGap      || null,
+    bbb:     ind.bbb   || null,
+    hySpread: (() => {
+      if (rHy.status === 'fulfilled' && rHy.value[0]) {
+        const o = rHy.value[0];
+        const ageDays = Math.round((Date.now() - new Date(o.date).getTime()) / 86400000);
+        const freshness = ageDays <= 7 ? 'ok' : ageDays <= 10 ? 'warn' : 'stale';
+        return { value: o.value, date: o.date, ageDays, freshness };
+      }
+      return null;
+    })(),
     breakeven1y: (() => {
       // EXPINF1YR — Fed Cleveland (mensual, no diaria → freshness ≤45d OK)
       if (rBreakeven1y.status === 'fulfilled') {
@@ -1406,16 +1313,14 @@ export default async function handler(req, res) {
     // 1.2 Seguimiento — automáticos sin score
     seguimiento,
 
-    // 1.3 Liquidez — indicadores con score (manuales) + crédito diagnóstico
+    // 1.3 Liquidez — indicadores con score (manuales)
     liquidez: {
       m2:       ind.m2,
       credito:  ind.credito,
       impulso:  ind.impulso,
       velM2:    ind.velM2,
       reservas: ind.reservas,
-      bbb:      ind.bbb,        // BBB OAS — mantiene score para Liquidity Score
-      hyOas:    hyOasMetrics || null,   // HY OAS   — sin score, solo diagnóstico
-      hyBbbGap: hyBbbGap    || null,   // HY–BBB Gap — calculado, sin score
+      bbb:      ind.bbb,
     },
 
     // Todos los indicadores con score (para debug y Kelly)
