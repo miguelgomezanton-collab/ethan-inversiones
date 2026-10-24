@@ -95,6 +95,114 @@ function manualInput(key, label, hint, unit, val) {
   </div>`;
 }
 
+// ── Helpers para subbloque "Condiciones de crédito" ──────────────────────────
+
+function fmtSpread(v) {
+  if (v == null || isNaN(v)) return '—';
+  const pct = Number(v).toFixed(2) + '%';
+  const pb  = Math.round(v * 100) + ' pb';
+  return `${pct} <span style="font-size:9px;color:var(--text3);font-family:var(--mono);">(${pb})</span>`;
+}
+
+function freshnessTag(freshness, ageDays, stale) {
+  if (stale || freshness === 'stale' || freshness === 'missing') {
+    return `<span style="background:var(--red);color:#fff;font-size:8px;font-weight:700;font-family:var(--mono);padding:2px 6px;border-radius:3px;letter-spacing:0.05em;">STALE ${ageDays != null ? ageDays + 'd' : ''}</span>`;
+  }
+  if (freshness === 'warn') {
+    return `<span style="background:var(--amber);color:#fff;font-size:8px;font-weight:700;font-family:var(--mono);padding:2px 6px;border-radius:3px;">${ageDays}d</span>`;
+  }
+  return `<span style="background:var(--green);color:#fff;font-size:8px;font-weight:700;font-family:var(--mono);padding:2px 6px;border-radius:3px;">✓ ${ageDays != null ? ageDays + 'd' : 'OK'}</span>`;
+}
+
+function metaRow(label, value) {
+  return `<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--border2);font-size:9px;"><span style="color:var(--text3);font-family:var(--mono);">${label}</span><span style="color:var(--text2);font-family:var(--mono);font-weight:600;">${value}</span></div>`;
+}
+
+function varColor(v) {
+  if (v == null) return 'var(--text3)';
+  return v > 0 ? 'var(--red)' : v < 0 ? 'var(--green)' : 'var(--text3)';
+  // para spreads: subida = rojo (peor), bajada = verde (mejor)
+}
+
+function creditCard(title, ind, subtitle, source, interpretation) {
+  if (!ind) return `<div class="co-liq-card" style="opacity:0.5;">
+    <div class="co-liq-card-header"><span class="co-liq-card-title">${title}</span></div>
+    <div style="font-size:28px;font-family:var(--serif);font-style:italic;color:var(--text3);padding:8px 0;">—</div>
+    <div style="font-size:9px;color:var(--text3);font-family:var(--mono);">Sin datos</div>
+  </div>`;
+
+  const staleHTML = (ind.stale || ind.freshness === 'stale')
+    ? `<span style="background:var(--red);color:#fff;font-size:8px;font-weight:700;font-family:var(--mono);padding:2px 6px;border-radius:3px;margin-left:6px;letter-spacing:0.05em;">STALE</span>`
+    : '';
+
+  const pctBar = ind.percentile != null
+    ? `<div style="position:relative;height:6px;background:var(--surface2);border-radius:3px;margin:10px 0 4px;">
+        <div style="position:absolute;left:0;width:${ind.percentile}%;height:100%;background:${ind.percentile > 75 ? 'var(--red)' : ind.percentile > 50 ? 'var(--amber)' : 'var(--green)'};border-radius:3px;"></div>
+        <div style="position:absolute;left:${ind.percentile}%;top:-3px;width:2px;height:12px;background:var(--text1);border-radius:1px;"></div>
+      </div>
+      <div style="font-size:8px;color:var(--text3);font-family:var(--mono);">Percentil hist. ${ind.percentile.toFixed(0)}%</div>`
+    : '';
+
+  const zLabel = ind.zscore3y != null
+    ? `<span style="color:${Math.abs(ind.zscore3y) > 1.5 ? 'var(--red)' : Math.abs(ind.zscore3y) > 0.5 ? 'var(--amber)' : 'var(--green)'};">Z 3Y: ${ind.zscore3y > 0 ? '+' : ''}${ind.zscore3y}</span>`
+    : '';
+
+  const trendLabel = ind.trendVsSma200
+    ? `<span style="color:${ind.trendVsSma200 === 'above' ? 'var(--red)' : 'var(--green)'};">▸ SMA200: ${ind.trendVsSma200 === 'above' ? 'encima ↑' : 'debajo ↓'}</span>`
+    : '';
+
+  const varRow = (ind.var20 != null || ind.var60 != null)
+    ? `<div style="font-size:9px;font-family:var(--mono);color:var(--text2);margin-top:6px;display:flex;gap:10px;">
+        ${ind.var20 != null ? `<span>20s: <span style="color:${varColor(ind.var20)}">${ind.var20 > 0 ? '+' : ''}${ind.var20.toFixed(2)}%</span></span>` : ''}
+        ${ind.var60 != null ? `<span>60s: <span style="color:${varColor(ind.var60)}">${ind.var60 > 0 ? '+' : ''}${ind.var60.toFixed(2)}%</span></span>` : ''}
+      </div>` : '';
+
+  return `<div class="co-liq-card">
+    <div class="co-liq-card-header">
+      <span class="co-liq-card-title">${title} ${staleHTML}</span>
+      <span style="font-size:9px;color:var(--text3);font-family:var(--mono);">${ind.date || '—'}</span>
+    </div>
+    <div style="font-family:var(--serif);font-size:28px;font-weight:600;font-style:italic;color:${ind.stale ? 'var(--text3)' : ind.percentile > 75 ? 'var(--red)' : ind.percentile > 40 ? 'var(--amber)' : 'var(--green)'};">
+      ${fmtSpread(ind.value)}
+    </div>
+    ${pctBar}
+    <div style="font-size:9px;font-family:var(--mono);color:var(--text2);margin-top:4px;display:flex;gap:10px;flex-wrap:wrap;">
+      ${zLabel} ${trendLabel}
+    </div>
+    ${varRow}
+    <div class="audit-toggle" onclick="this.classList.toggle('open')" style="margin-top:10px;">
+      <span class="audit-lbl">Detalles ▾</span>
+      <div class="audit-body">
+        ${metaRow('Fuente', source)}
+        ${ind.nObs != null ? metaRow('N obs.', ind.nObs) : ''}
+        ${ind.percentile != null ? metaRow('Pct. hist.', ind.percentile.toFixed(1) + '%') : ''}
+        ${ind.zscore3y != null ? metaRow('Z-score 3Y', (ind.zscore3y > 0 ? '+' : '') + ind.zscore3y) : ''}
+        ${ind.mean3y != null ? metaRow('Media 3Y', ind.mean3y.toFixed(2) + '%') : ''}
+        ${ind.sma200 != null ? metaRow('SMA 200', ind.sma200.toFixed(2) + '%') : ''}
+        ${ind.var20 != null ? metaRow('Var. 20s', (ind.var20 > 0 ? '+' : '') + ind.var20.toFixed(3) + '%') : ''}
+        ${ind.var60 != null ? metaRow('Var. 60s', (ind.var60 > 0 ? '+' : '') + ind.var60.toFixed(3) + '%') : ''}
+        ${metaRow('Freshness', freshnessTag(ind.freshness, ind.ageDays, ind.stale))}
+        <div style="margin-top:6px;font-size:9px;color:var(--text3);font-style:italic;">${interpretation}</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function hyBbbGapCard(gap, bbb, hy) {
+  // Si falta cualquiera de los dos subyacentes → NO DATA
+  if (!gap || gap.value == null || !bbb?.value || !hy?.value) {
+    return `<div class="co-liq-card" style="opacity:0.55;">
+      <div class="co-liq-card-header"><span class="co-liq-card-title">📐 HY–BBB Gap</span></div>
+      <div style="font-size:13px;font-family:var(--mono);color:var(--text3);padding:14px 0;">NO DATA</div>
+      <div style="font-size:9px;color:var(--text3);font-family:var(--mono);">Requiere HY OAS y BBB OAS disponibles</div>
+    </div>`;
+  }
+  return creditCard('📐 HY–BBB Gap', gap, null,
+    'calc: BAMLH0A0HYM2 − BAMLC0A4CBBB',
+    `Diferencia HY OAS − BBB OAS. Cuanto mayor la brecha, mayor el estrés en crédito especulativo vs investment grade. Percentil calculado sobre histórico del spread de spreads.`
+  );
+}
+
 export async function render(container, { actionsSlot }) {
   actionsSlot.innerHTML = `
     <button class="btn" id="liq-edit">✎ Editar manuales</button>
@@ -309,6 +417,25 @@ export async function render(container, { actionsSlot }) {
         </div>` : ''}
       </div>
 
+      <!-- SUBBLOQUE: CONDICIONES DE CRÉDITO -->
+      <div style="margin-top:20px;">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+          <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:0.08em;">📉 Condiciones de crédito</div>
+          <span style="background:var(--amber);color:#1a1a1a;font-size:8px;font-weight:700;font-family:var(--mono);padding:2px 8px;border-radius:3px;letter-spacing:0.06em;">RESEARCH / DIAGNOSTIC ONLY</span>
+          <span style="font-size:9px;color:var(--text3);font-family:var(--mono);">Sin impacto en Liquidity Score</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;">
+          ${creditCard('📊 BBB OAS', liq.bbb, null, 'FRED BAMLC0A4CBBB · ICE BofA',
+            'Spread investment grade BBB. Nivel elevado = coste de crédito alto para empresas IG. Thresholds de scoring en uso arriba.')}
+          ${creditCard('⚡ High Yield OAS', liq.hyOas, null, 'FRED BAMLH0A0HYM2 · ICE BofA',
+            'Spread high yield (HY). Nivel elevado = estrés en crédito especulativo, riesgo de contagio a IG.')}
+          ${hyBbbGapCard(liq.hyBbbGap, liq.bbb, liq.hyOas)}
+        </div>
+        <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:8px;padding:8px 10px;background:var(--surface);border-radius:6px;border-left:3px solid var(--amber);">
+          ⚠ Indicadores de diagnóstico · STALE si dato &gt;3 días hábiles (~5 días naturales) · No generan señal de trading · Útiles para contexto de spreads y condiciones de financiación
+        </div>
+      </div>
+
       <!-- IMPLICACIONES -->
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px 22px;margin-top:16px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
@@ -330,11 +457,17 @@ export async function render(container, { actionsSlot }) {
             </div>
           </div>
           <div style="background:var(--surface2);border-radius:8px;padding:12px 14px;">
-            <div style="font-size:10px;font-weight:700;color:var(--amber);margin-bottom:6px;text-transform:uppercase;">Renta Fija</div>
+            <div style="font-size:10px;font-weight:700;color:var(--amber);margin-bottom:6px;text-transform:uppercase;">Crédito</div>
             <div style="font-size:11px;color:var(--text2);line-height:1.5;">
               ${liq.bbb?.value != null
-                ? `BBB OAS: ${f2(liq.bbb.value)}% — ${liq.bbb.value <= 1.0 ? 'spreads contenidos, mercado tranquilo.' : liq.bbb.value <= 1.5 ? 'spreads moderados, zona neutral.' : 'spreads elevados, estrés crediticio.'}`
-                : 'BBB Spread no disponible.'}
+                ? `BBB: ${f2(liq.bbb.value)}% — ${liq.bbb.value <= 1.0 ? 'spreads contenidos.' : liq.bbb.value <= 1.5 ? 'spreads moderados.' : 'estrés crediticio.'}`
+                : 'BBB OAS no disponible.'}
+              ${liq.hyOas?.value != null
+                ? ` HY: ${f2(liq.hyOas.value)}% (pct. ${liq.hyOas.percentile != null ? liq.hyOas.percentile.toFixed(0) + '%' : '—'}).`
+                : ''}
+              ${liq.hyBbbGap?.value != null
+                ? ` Gap HY–BBB: ${f2(liq.hyBbbGap.value)}%.`
+                : ''}
               <span style="color:var(--text3);font-style:italic;"> Scoring provisional.</span>
             </div>
           </div>
@@ -353,7 +486,7 @@ export async function render(container, { actionsSlot }) {
         </div>
       </div>
 
-      <div class="co-footer" style="margin-top:16px;">Fuentes: FRED (M2SL, M2V, WRESBAL, BAMLC0A4CBBB, TOTLL, GDP, USALOLITOAASTSAM) · ECB (M2 EUR, Curva EUR) · BOJ vía Cloudflare Worker proxy (M2 JPN) · ChinaData.live PBoC (M2 CHN — pendiente automatización)</div>
+      <div class="co-footer" style="margin-top:16px;">Fuentes: FRED (M2SL, M2V, WRESBAL, BAMLC0A4CBBB, BAMLH0A0HYM2, TOTLL, GDP, USALOLITOAASTSAM) · ECB (M2 EUR, Curva EUR) · BOJ vía Cloudflare Worker proxy (M2 JPN) · ChinaData.live PBoC (M2 CHN — pendiente automatización) · BBB/HY OAS: ICE BofA via FRED — RESEARCH/DIAGNOSTIC ONLY, sin impacto en scoring</div>
     `;
 
     // Eventos manuales
