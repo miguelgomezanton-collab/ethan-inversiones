@@ -69,104 +69,221 @@ const STATE_LABELS = {
 };
 function stateLabel(s) { return STATE_LABELS[s] || (s || '—').toUpperCase(); }
 
-// ─── Canvas chart helpers ─────────────────────────────────────────────────────
-// Dibuja una serie de puntos en un canvas 2D.
-// series: [{vals: number[], color, width, dash}]
-// hLines: [{y, color, dash, label}]
-// bands: [{yMin, yMax, color}]
-function drawChart(canvas, series, opts = {}) {
-  const { hLines = [], bands = [], yMin: forceYMin, yMax: forceYMax, padding = { t: 12, r: 8, b: 20, l: 36 } } = opts;
+// ─── Canvas chart: gráfico financiero de líneas con eje X temporal real ──────
+//
+// seriesData: Array de { dates: string[], vals: number[], color, width, dash, fill, label }
+//   - dates: ISO strings 'YYYY-MM-DD' ordenados ASC (mismo length que vals)
+//   - vals: valores numéricos (null = hueco, no se dibuja ni se une)
+// opts: {
+//   hLines: [{y, color, dash, label, width}],
+//   bands:  [{yMin, yMax, color}],
+//   xRange: { fromDate: 'YYYY-MM-DD', toDate: 'YYYY-MM-DD' },   // filtro de rango
+//   padding: { t, r, b, l },
+//   GAP_DAYS: número de días para considerar hueco temporal (no unir)
+// }
+//
+// VALIDACIÓN OBLIGATORIA (ejecutada internamente antes de dibujar):
+//   1. Filtra valores no finitos y no numéricos
+//   2. Verifica que valores < 50 (evita mezclar pb con %)
+//   3. Auto escala Y: margen 10% sobre min y max visible
+//   4. Si < 2 pts válidos → muestra "INSUFFICIENT DATA"
+//   5. No une segmentos con hueco > GAP_DAYS días
+
+function drawLineChart(canvas, seriesData, opts = {}) {
+  const {
+    hLines = [], bands = [],
+    xRange = null,
+    padding = { t: 14, r: 10, b: 22, l: 42 },
+    GAP_DAYS = 10,
+    unitMaxValue = 50,  // valores > esto se rechazan (evita mezclar pb con %)
+  } = opts;
+
   const ctx = canvas.getContext('2d');
-  const W = canvas.width, H = canvas.height;
-  const P = padding;
-  const cW = W - P.l - P.r, cH = H - P.t - P.b;
-
-  // Calcular rango Y
-  let allVals = [];
-  series.forEach(s => allVals.push(...(s.vals || []).filter(v => v != null)));
-  if (!allVals.length) { ctx.clearRect(0, 0, W, H); return; }
-
-  let yMin = forceYMin != null ? forceYMin : Math.min(...allVals);
-  let yMax = forceYMax != null ? forceYMax : Math.max(...allVals);
-  hLines.forEach(l => { yMin = Math.min(yMin, l.y); yMax = Math.max(yMax, l.y); });
-  bands.forEach(b => { yMin = Math.min(yMin, b.yMin); yMax = Math.max(yMax, b.yMax); });
-  const pad = (yMax - yMin) * 0.08;
-  if (forceYMin == null) yMin -= pad;
-  if (forceYMax == null) yMax += pad;
-  if (yMin === yMax) { yMin -= 1; yMax += 1; }
-
-  const toX = (i, n) => P.l + (i / (n - 1)) * cW;
-  const toY = (v) => P.t + cH - ((v - yMin) / (yMax - yMin)) * cH;
+  const dpr = window.devicePixelRatio || 1;
+  const W   = canvas.width, H = canvas.height;
+  const P   = padding;
+  const cW  = W - P.l - P.r;
+  const cH  = H - P.t - P.b;
 
   ctx.clearRect(0, 0, W, H);
 
-  // Bands
-  bands.forEach(b => {
-    ctx.fillStyle = b.color;
-    const bY1 = toY(b.yMax), bY2 = toY(b.yMin);
-    ctx.fillRect(P.l, bY1, cW, bY2 - bY1);
+  // ── 1. Validar y preparar series ──────────────────────────────────────────
+  const prepared = seriesData.map(s => {
+    const dates = s.dates || [];
+    const rawVals = s.vals || [];
+    // Construir pares válidos
+    const pts = [];
+    for (let i = 0; i < Math.min(dates.length, rawVals.length); i++) {
+      const d = String(dates[i]).slice(0, 10);
+      const v = Number(rawVals[i]);
+      if (!isFinite(v) || isNaN(v)) continue;          // no finito
+      if (unitMaxValue != null && v > unitMaxValue) continue; // unidad incorrecta (pb en vez de %)
+      pts.push({ d, v, ms: new Date(d).getTime() });
+    }
+    // Ordenar ASC por fecha
+    pts.sort((a, b) => a.ms - b.ms);
+    return { ...s, pts };
   });
 
-  // Y axis labels (3)
-  ctx.fillStyle = 'rgba(180,180,180,0.5)';
+  // ── 2. Filtrar por xRange ─────────────────────────────────────────────────
+  let fromMs = -Infinity, toMs = Infinity;
+  if (xRange?.fromDate) fromMs = new Date(xRange.fromDate).getTime();
+  if (xRange?.toDate)   toMs   = new Date(xRange.toDate).getTime();
+
+  const filtered = prepared.map(s => ({
+    ...s,
+    pts: s.pts.filter(p => p.ms >= fromMs && p.ms <= toMs),
+  }));
+
+  // ── 3. Calcular rango X global ────────────────────────────────────────────
+  const allMs = filtered.flatMap(s => s.pts.map(p => p.ms));
+  if (allMs.length === 0) {
+    // Sin datos: mostrar mensaje
+    ctx.fillStyle = 'rgba(140,140,140,0.5)';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('INSUFFICIENT DATA', W / 2, H / 2);
+    return;
+  }
+  const xMin = Math.min(...allMs), xMax = Math.max(...allMs);
+  const xSpan = xMax - xMin || 1;
+
+  // ── 4. Calcular rango Y (solo valores visibles de la serie primaria) ───────
+  const allVis = filtered.flatMap(s => s.pts.map(p => p.v));
+  const hLineVals = hLines.map(l => l.y).filter(v => isFinite(v));
+  const allForScale = [...allVis, ...hLineVals];
+  if (allForScale.length === 0) return;
+
+  let yMin = Math.min(...allForScale);
+  let yMax = Math.max(...allForScale);
+  const ySpan = yMax - yMin || 1;
+  const yPad  = ySpan * 0.10;
+  yMin -= yPad;
+  yMax += yPad;
+
+  // ── 5. Funciones de proyección ────────────────────────────────────────────
+  const toX = ms  => P.l + ((ms - xMin) / xSpan) * cW;
+  const toY = v   => P.t + cH - ((v - yMin) / (yMax - yMin)) * cH;
+
+  // ── 6. Bandas de fondo ────────────────────────────────────────────────────
+  bands.forEach(b => {
+    const by1 = Math.max(P.t, toY(Math.min(b.yMax, yMax)));
+    const by2 = Math.min(P.t + cH, toY(Math.max(b.yMin, yMin)));
+    if (by2 > by1) {
+      ctx.fillStyle = b.color;
+      ctx.fillRect(P.l, by1, cW, by2 - by1);
+    }
+  });
+
+  // ── 7. Grid Y (4 líneas) ──────────────────────────────────────────────────
+  const nGrid = 4;
   ctx.font = '8px monospace';
   ctx.textAlign = 'right';
-  [yMin, (yMin + yMax) / 2, yMax].forEach(v => {
+  ctx.textBaseline = 'middle';
+  for (let i = 0; i <= nGrid; i++) {
+    const v = yMin + (yMax - yMin) * (i / nGrid);
     const y = toY(v);
-    ctx.fillStyle = 'rgba(160,160,160,0.4)';
-    ctx.beginPath(); ctx.moveTo(P.l, y); ctx.lineTo(W - P.r, y);
-    ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 0.5; ctx.stroke();
-    ctx.fillStyle = 'rgba(140,140,140,0.7)';
-    ctx.fillText(v.toFixed(1), P.l - 2, y + 3);
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+    ctx.lineWidth = 0.5;
+    ctx.setLineDash([]);
+    ctx.beginPath(); ctx.moveTo(P.l, y); ctx.lineTo(W - P.r, y); ctx.stroke();
+    ctx.fillStyle = 'rgba(140,140,140,0.65)';
+    ctx.fillText(v.toFixed(2), P.l - 3, y);
+  }
+
+  // ── 8. Labels eje X (3 puntos: inicio, medio, fin) ───────────────────────
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = 'rgba(140,140,140,0.55)';
+  ctx.font = '8px monospace';
+  const xLabels = [xMin, (xMin + xMax) / 2, xMax];
+  xLabels.forEach((ms, i) => {
+    const x = toX(ms);
+    const label = new Date(ms).toISOString().slice(0, 7); // YYYY-MM
+    const align = i === 0 ? 'left' : i === 2 ? 'right' : 'center';
+    ctx.textAlign = align;
+    ctx.fillText(label, x, P.t + cH + 3);
   });
 
-  // H-Lines
+  // ── 9. H-Lines (niveles de referencia, p.ej. VIX 20 y 30) ───────────────
   hLines.forEach(l => {
+    if (!isFinite(l.y)) return;
     const y = toY(l.y);
     ctx.save();
-    if (l.dash) ctx.setLineDash(l.dash);
+    ctx.setLineDash(l.dash || [3, 3]);
     ctx.strokeStyle = l.color || 'rgba(255,255,255,0.3)';
-    ctx.lineWidth = l.width || 1;
+    ctx.lineWidth   = l.width || 0.8;
     ctx.beginPath(); ctx.moveTo(P.l, y); ctx.lineTo(W - P.r, y); ctx.stroke();
     if (l.label) {
-      ctx.fillStyle = l.color || 'rgba(255,255,255,0.5)';
+      ctx.fillStyle = l.color || 'rgba(255,255,255,0.4)';
       ctx.font = '8px monospace';
       ctx.textAlign = 'left';
-      ctx.fillText(l.label, P.l + 3, y - 2);
+      ctx.textBaseline = 'bottom';
+      ctx.fillText(l.label, P.l + 3, y - 1);
     }
     ctx.restore();
   });
 
-  // Series
-  series.forEach(s => {
-    const vals = s.vals || [];
-    const n = vals.length;
-    if (n < 2) return;
+  // ── 10. Dibujar series ────────────────────────────────────────────────────
+  const GAP_MS = GAP_DAYS * 86400000;
+
+  filtered.forEach(s => {
+    const pts = s.pts;
+    if (pts.length < 2) return;
+
     ctx.save();
-    if (s.dash) ctx.setLineDash(s.dash);
+    ctx.setLineDash(s.dash || []);
     ctx.strokeStyle = s.color || 'rgba(255,255,255,0.8)';
-    ctx.lineWidth = s.width || 1.5;
-    ctx.lineJoin = 'round';
+    ctx.lineWidth   = s.width || 1.5;
+    ctx.lineJoin    = 'round';
+    ctx.lineCap     = 'round';
+
+    // Trazar segmentos separados por huecos
     ctx.beginPath();
-    let started = false;
-    vals.forEach((v, i) => {
-      if (v == null) return;
-      const x = toX(i, n), y = toY(v);
-      if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
-    });
+    let penDown = false;
+    let lastFillX = null, lastFillY = null;
+    const fillPts = [];
+
+    for (let i = 0; i < pts.length; i++) {
+      const { ms, v } = pts[i];
+      const x = toX(ms), y = toY(v);
+      const gap = i > 0 && (ms - pts[i-1].ms) > GAP_MS;
+      if (!penDown || gap) {
+        ctx.moveTo(x, y);
+        penDown = true;
+      } else {
+        ctx.lineTo(x, y);
+      }
+      if (s.fill) fillPts.push({ x, y });
+    }
     ctx.stroke();
 
-    // Fill bajo la línea principal
-    if (s.fill) {
-      ctx.globalAlpha = 0.08;
+    // Fill bajo la primera serie
+    if (s.fill && fillPts.length >= 2) {
+      ctx.globalAlpha = 0.07;
       ctx.fillStyle = s.color || 'rgba(255,255,255,0.1)';
-      ctx.lineTo(toX(n - 1, n), P.t + cH);
-      ctx.lineTo(P.l, P.t + cH);
+      ctx.beginPath();
+      ctx.moveTo(fillPts[0].x, fillPts[0].y);
+      fillPts.forEach(p => ctx.lineTo(p.x, p.y));
+      ctx.lineTo(fillPts[fillPts.length - 1].x, P.t + cH);
+      ctx.lineTo(fillPts[0].x, P.t + cH);
       ctx.closePath();
       ctx.fill();
       ctx.globalAlpha = 1;
     }
+
     ctx.restore();
+  });
+}
+
+// ─── Sparkline mini (sin ejes, usa drawLineChart simplificado) ───────────────
+function drawSparklineLine(canvas, dates, vals, color = '#40d9c0') {
+  if (!canvas || !dates || !vals || dates.length < 2) return;
+  drawLineChart(canvas, [{ dates, vals, color, width: 1.5 }], {
+    padding: { t: 2, r: 2, b: 2, l: 2 },
+    GAP_DAYS: 90,
+    unitMaxValue: null,  // sparklines pueden tener cualquier rango
   });
 }
 
@@ -501,9 +618,9 @@ export async function render(container, { actionsSlot }) {
             </div>
           </div>
 
-          <!-- Selector rango -->
+          <!-- Selector rango HY OAS -->
           <div style="display:flex;gap:4px;margin-bottom:6px;" id="hy-range-btns">
-            ${['3M','1A','3A','Máx.'].map((r,i)=>`<button data-range="${r}" style="font-family:var(--mono);font-size:8px;padding:2px 6px;border-radius:3px;border:1px solid var(--border);background:${i===1?'var(--surface2)':'transparent'};color:${i===1?'var(--text1)':'var(--text3)'};cursor:pointer;" onclick="window._hyRange='${r}';window._hyRedraw&&window._hyRedraw();">${r}</button>`).join('')}
+            ${['3M','1A','3A','Máx'].map((r,i)=>`<button data-range="${r}" style="font-family:var(--mono);font-size:8px;padding:2px 6px;border-radius:3px;border:1px solid var(--border);background:${i===1?'var(--teal)':'transparent'};color:${i===1?'#000':'var(--text3)'};font-weight:${i===1?'700':'400'};cursor:pointer;">${r}</button>`).join('')}
           </div>
 
           <!-- Canvas gráfico -->
@@ -555,6 +672,11 @@ export async function render(container, { actionsSlot }) {
             </div>
           </div>
 
+          <!-- Selector rango VIX -->
+          <div style="display:flex;gap:4px;margin-bottom:6px;" id="vix-range-btns">
+            ${['3M','1A','3A','Máx'].map((r,i)=>`<button data-range="${r}" style="font-family:var(--mono);font-size:8px;padding:2px 6px;border-radius:3px;border:1px solid var(--border);background:${i===1?'#f47174':'transparent'};color:${i===1?'#000':'var(--text3)'};font-weight:${i===1?'700':'400'};cursor:pointer;">${r}</button>`).join('')}
+          </div>
+
           <!-- Canvas VIX -->
           <canvas id="vix-chart" width="340" height="110" style="width:100%;height:110px;display:block;border-radius:4px;background:var(--surface2);"></canvas>
 
@@ -602,7 +724,16 @@ export async function render(container, { actionsSlot }) {
             }).join('')}
           </div>
 
-          <!-- 3 minigráficos -->
+          <!-- Tabs timeframe SP500 -->
+          <div style="display:flex;gap:0;margin-bottom:8px;border-bottom:1px solid var(--border);">
+            ${['monthly','weekly','daily'].map((tf, i) => {
+              const label = ['Mensual','Semanal','Diario'][i];
+              const active = tf === 'daily';
+              return `<button class="sp-tf-tab" data-tf="${tf}" style="font-family:var(--mono);font-size:9px;padding:4px 10px;background:${active?'var(--surface2)':'transparent'};color:${active?'var(--text1)':'var(--text3)'};border:none;border-bottom:${active?'1px solid var(--teal)':'1px solid transparent'};cursor:pointer;margin-bottom:-1px;">${label}</button>`;
+            }).join('')}
+          </div>
+
+          <!-- Gráfico SP500 + info timeframe activo -->
           <div style="display:flex;flex-direction:column;gap:6px;">
             ${['monthly','weekly','daily'].map((tf, i) => {
               const label = ['Mensual','Semanal','Diario'][i];
@@ -611,16 +742,17 @@ export async function render(container, { actionsSlot }) {
               const sc = stateColor(d.state);
               const distPct = d.price && d.m10 ? (((d.price - d.m10) / d.m10) * 100).toFixed(1) : null;
               const slopeIcon = d.slope === 'up' ? '↑' : d.slope === 'down' ? '↓' : '→';
-              return `<div style="background:var(--surface2);border-radius:6px;padding:6px 8px;">
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+              const hidden = tf !== 'daily';
+              return `<div data-sp-panel="${tf}" style="background:var(--surface2);border-radius:6px;padding:6px 8px;display:${hidden?'none':'block'};">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
                   <span style="font-family:var(--mono);font-size:9px;color:var(--text2);">${label}</span>
-                  <div style="display:flex;gap:6px;align-items:center;">
+                  <div style="display:flex;gap:8px;align-items:center;">
                     <span style="font-family:var(--mono);font-size:9px;color:var(--text1);">P: ${f2(d.price)}</span>
                     <span style="font-family:var(--mono);font-size:9px;color:${sc};">M10: ${f2(d.m10)} ${slopeIcon}</span>
                     ${distPct != null ? `<span style="font-family:var(--mono);font-size:8px;color:${parseFloat(distPct)>0?'var(--green)':'var(--red)'};">${parseFloat(distPct)>0?'+':''}${distPct}%</span>` : ''}
                   </div>
                 </div>
-                <canvas id="sp-${tf}-chart" width="300" height="36" style="width:100%;height:36px;display:block;border-radius:3px;"></canvas>
+                <canvas id="sp-${tf}-chart" width="300" height="90" style="width:100%;height:90px;display:block;border-radius:3px;"></canvas>
               </div>`;
             }).filter(Boolean).join('')}
           </div>
@@ -721,119 +853,239 @@ export async function render(container, { actionsSlot }) {
 
     // ── Dibujar gráficos tras render del DOM ─────────────────────────────────
     requestAnimationFrame(() => {
-      // HY OAS chart
-      const hyCanvas = document.getElementById('hy-chart');
-      if (hyCanvas && hy) {
-        const hyBands = [
-          { yMin: 6,   yMax: 99,  color: 'rgba(244,113,116,0.06)' }, // estrés
-          { yMin: 4.5, yMax: 6,   color: 'rgba(251,191,36,0.06)'  }, // tensión
-          { yMin: 3.5, yMax: 4.5, color: 'rgba(64,217,192,0.04)'  }, // vigilancia
-          { yMin: 0,   yMax: 3.5, color: 'rgba(74,222,128,0.04)'  }, // normal
-        ];
-        // Construir series desde los últimos N obs (usamos history si existe, sino mockeo con value+mm)
-        const nObs = 252; // 1 año por defecto
-        const hyVals  = Array(nObs).fill(null); hyVals[nObs-1] = hy.value;
-        if (hy.chg1d != null && nObs > 1)  hyVals[nObs-2] = hy.value - hy.chg1d;
-        if (hy.chg5d != null && nObs > 5)  hyVals[nObs-6] = hy.value - hy.chg5d;
-        if (hy.chg20d != null && nObs > 20) hyVals[nObs-21] = hy.value - hy.chg20d;
 
-        // Interpolación lineal simple entre puntos conocidos
-        function interp(arr) {
-          const out = [...arr];
-          let lastKnown = null, lastIdx = -1;
-          for (let i = 0; i < out.length; i++) {
-            if (out[i] != null) {
-              if (lastKnown != null && i - lastIdx > 1) {
-                for (let j = lastIdx + 1; j < i; j++) {
-                  out[j] = lastKnown + (out[i] - lastKnown) * ((j - lastIdx) / (i - lastIdx));
-                }
-              }
-              lastKnown = out[i]; lastIdx = i;
-            }
-          }
-          // rellenar inicio si aún null
-          for (let i = 0; i < out.length; i++) { if (out[i] == null) out[i] = out.find(v=>v!=null) || 0; else break; }
-          return out;
-        }
-
-        const hyInterp = interp(hyVals);
-        // MM aproximadas (constante de snapshot)
-        const mm100Vals = Array(nObs).fill(hy.mm100);
-        const mm200Vals = Array(nObs).fill(hy.mm200);
-
-        drawChart(hyCanvas, [
-          { vals: hyInterp,  color: '#40d9c0', width: 2, fill: true },
-          { vals: mm100Vals, color: '#fbbf24', width: 1, dash: [4,3] },
-          { vals: mm200Vals, color: 'rgba(255,255,255,0.35)', width: 1, dash: [2,4] },
-        ], { bands: hyBands, yMin: 0 });
-
-        // Range switcher
-        window._hyRange = '1A';
-        window._hyRedraw = () => {
-          document.querySelectorAll('#hy-range-btns button').forEach(b => {
-            const active = b.dataset.range === window._hyRange;
-            b.style.background = active ? 'var(--surface2)' : 'transparent';
-            b.style.color = active ? 'var(--text1)' : 'var(--text3)';
-          });
-          // (En producción: refetch slice histórico)
-        };
+      // ─── Helper: filtrar y ordenar history [{date, v}] ──────────────────
+      function prepHist(arr) {
+        if (!Array.isArray(arr) || arr.length === 0) return { dates: [], vals: [] };
+        const pts = arr
+          .filter(o => o && typeof o.date === 'string' && isFinite(Number(o.v)))
+          .map(o => ({ date: o.date.slice(0, 10), v: Number(o.v) }))
+          .sort((a, b) => a.date < b.date ? -1 : 1);
+        return { dates: pts.map(p => p.date), vals: pts.map(p => p.v) };
       }
 
-      // VIX chart
-      const vixCanvas = document.getElementById('vix-chart');
-      if (vixCanvas && vix) {
-        const n = 252;
-        const vixVals  = Array(n).fill(null); vixVals[n-1]  = vix.value;
-        if (vix.chg1d != null)  vixVals[n-2]  = vix.value - vix.chg1d;
-        if (vix.chg5d != null)  vixVals[n-6]  = vix.value - vix.chg5d;
-        if (vix.chg20d != null) vixVals[n-21] = vix.value - vix.chg20d;
-        const vix3Vals = Array(n).fill(null);
-        if (vix3) {
-          vix3Vals[n-1] = vix3.value;
-          if (vix3.chg1d != null) vix3Vals[n-2] = vix3.value - vix3.chg1d;
-          if (vix3.chg5d != null) vix3Vals[n-6] = vix3.value - vix3.chg5d;
-        }
-        function interp2(arr) {
-          const out = [...arr];
-          const known = out.map((v,i)=>v!=null?i:-1).filter(i=>i>=0);
-          for (let k = 0; k < known.length-1; k++) {
-            const i0=known[k], i1=known[k+1];
-            for (let i=i0+1;i<i1;i++) out[i]=out[i0]+(out[i1]-out[i0])*((i-i0)/(i1-i0));
-          }
-          for (let i=0;i<out.length;i++){if(out[i]==null)out[i]=out.find(v=>v!=null)||15;else break;}
-          return out;
-        }
-        const mm200Vals = Array(n).fill(vix.mm200);
-        drawChart(vixCanvas, [
-          { vals: interp2(vixVals),  color: '#f47174', width: 2 },
-          { vals: vix3 ? interp2(vix3Vals) : [], color: '#fbbf24', width: 1.5, dash: [4,3] },
-          { vals: mm200Vals, color: 'rgba(255,255,255,0.3)', width: 1, dash: [2,4] },
-        ], {
-          hLines: [
-            { y: 20, color: 'rgba(251,191,36,0.5)', dash: [3,3], label: '20', width: 0.8 },
-            { y: 30, color: 'rgba(244,113,116,0.5)', dash: [3,3], label: '30', width: 0.8 },
-          ],
-          yMin: 0,
+      // ─── Helper: calcular MM rolling desde una serie de vals ────────────
+      function rollingMA(vals, n) {
+        return vals.map((_, i) => {
+          if (i < n - 1) return null;
+          const slice = vals.slice(i - n + 1, i + 1);
+          if (slice.some(v => v == null || !isFinite(v))) return null;
+          return slice.reduce((a, b) => a + b, 0) / n;
         });
       }
 
-      // SP500 mini-charts (sparklines por timeframe)
-      ['monthly','weekly','daily'].forEach(tf => {
-        const c = document.getElementById(`sp-${tf}-chart`);
-        if (!c || !sp?.[tf]) return;
-        const d = sp[tf];
-        // Construir mini sparkline precio vs M10
-        const n = 20;
-        const priceVals = Array(n).fill(null); priceVals[n-1] = d.price;
-        const m10Vals   = Array(n).fill(d.m10);
-        const color = d.state === 'alcista' ? '#4ade80' : d.state === 'bajista' ? '#f47174' : '#fbbf24';
-        drawChart(c, [
-          { vals: priceVals, color, width: 1.5 },
-          { vals: m10Vals, color: 'rgba(255,255,255,0.3)', width: 1, dash: [2,3] },
-        ], { padding: { t: 4, r: 4, b: 4, l: 4 }, yMin: undefined, yMax: undefined });
-      });
+      // ─── Helper: calcular fromDate según rango string ────────────────────
+      function rangeFromDate(rangeKey) {
+        const now = new Date();
+        const map = { '3M': 90, '1A': 365, '3A': 365*3 };
+        const days = map[rangeKey];
+        if (!days) return null; // 'Máx' → sin filtro
+        const d = new Date(now.getTime() - days * 86400000);
+        return d.toISOString().slice(0, 10);
+      }
 
-      // Sparklines condiciones financieras (usando chg1d/5d/20d para construir mini serie)
+      // ════════════════════════════════════════════════════════════════
+      // A. HY OAS — gráfico con historia real + MM100 + MM200 + bandas
+      // ════════════════════════════════════════════════════════════════
+      const hyCanvas = document.getElementById('hy-chart');
+      if (hyCanvas && hy) {
+        const hyBands = [
+          { yMin: 6,   yMax: 25,  color: 'rgba(244,113,116,0.07)' }, // estrés
+          { yMin: 4.5, yMax: 6,   color: 'rgba(251,191,36,0.06)'  }, // tensión
+          { yMin: 3.5, yMax: 4.5, color: 'rgba(64,217,192,0.05)'  }, // vigilancia
+          { yMin: 0,   yMax: 3.5, color: 'rgba(74,222,128,0.04)'  }, // normal
+        ];
+
+        // Estado de rango (persiste en closure)
+        let hyActiveRange = '1A';
+
+        function hyRedraw() {
+          // Actualizar estilo botones
+          document.querySelectorAll('#hy-range-btns button').forEach(b => {
+            const active = b.dataset.range === hyActiveRange;
+            b.style.background = active ? 'var(--teal)' : 'transparent';
+            b.style.color = active ? '#000' : 'var(--text3)';
+            b.style.fontWeight = active ? '700' : '400';
+          });
+
+          // Obtener datos históricos de la API (hy.history: [{date, v}] ASC)
+          const rawHist = hy.history || [];
+          const { dates: allDates, vals: allVals } = prepHist(rawHist);
+
+          if (allDates.length < 5) {
+            // Sin historia: mostrar solo snapshot
+            drawLineChart(hyCanvas, [], { bands: hyBands });
+            return;
+          }
+
+          // Validar unidad: si el último valor > 20 → probablemente son pb → dividir por 100
+          const lastRaw = allVals[allVals.length - 1];
+          const scaleFactor = (lastRaw != null && lastRaw > 20) ? 0.01 : 1;
+          const scaledVals = allVals.map(v => v * scaleFactor);
+
+          // Calcular MM100 y MM200 sobre la serie completa antes de filtrar rango
+          const mm100Full = rollingMA(scaledVals, 100);
+          const mm200Full = rollingMA(scaledVals, 200);
+
+          // Filtrar por rango
+          const fromDate = rangeFromDate(hyActiveRange);
+          const xRange = fromDate ? { fromDate, toDate: allDates[allDates.length - 1] } : null;
+
+          drawLineChart(hyCanvas, [
+            { dates: allDates, vals: scaledVals,  color: '#40d9c0', width: 2,   fill: true, label: 'HY OAS' },
+            { dates: allDates, vals: mm100Full,   color: '#fbbf24', width: 1,   dash: [4,3], label: 'MM100' },
+            { dates: allDates, vals: mm200Full,   color: 'rgba(255,255,255,0.35)', width: 1, dash: [2,4], label: 'MM200' },
+          ], { bands: hyBands, xRange, GAP_DAYS: 10, unitMaxValue: null });
+        }
+
+        hyRedraw();
+
+        // Binding botones de rango
+        document.querySelectorAll('#hy-range-btns button').forEach(b => {
+          b.addEventListener('click', () => {
+            hyActiveRange = b.dataset.range;
+            hyRedraw();
+          });
+        });
+      }
+
+      // ════════════════════════════════════════════════════════════════
+      // B. VIX — gráfico con historia real + VIX3M + MM200 + niveles
+      // ════════════════════════════════════════════════════════════════
+      const vixCanvas = document.getElementById('vix-chart');
+      if (vixCanvas && vix) {
+        let vixActiveRange = '1A';
+
+        function vixRedraw() {
+          document.querySelectorAll('#vix-range-btns button').forEach(b => {
+            const active = b.dataset.range === vixActiveRange;
+            b.style.background = active ? '#f47174' : 'transparent';
+            b.style.color = active ? '#000' : 'var(--text3)';
+            b.style.fontWeight = active ? '700' : '400';
+          });
+
+          const { dates: vDates, vals: vVals } = prepHist(vix.history || []);
+          const { dates: v3Dates, vals: v3Vals } = prepHist(vix3?.history || []);
+
+          if (vDates.length < 5) {
+            drawLineChart(vixCanvas, [], {});
+            return;
+          }
+
+          // MM200 sobre VIX
+          const mm200Vix = rollingMA(vVals, 200);
+
+          const fromDate = rangeFromDate(vixActiveRange);
+          const xRange = fromDate ? { fromDate, toDate: vDates[vDates.length - 1] } : null;
+
+          drawLineChart(vixCanvas, [
+            { dates: vDates,  vals: vVals,    color: '#f47174', width: 2,   label: 'VIX'   },
+            { dates: v3Dates, vals: v3Vals,   color: '#fbbf24', width: 1.5, dash: [4,3], label: 'VIX3M' },
+            { dates: vDates,  vals: mm200Vix, color: 'rgba(255,255,255,0.3)', width: 1, dash: [2,4], label: 'MM200' },
+          ], {
+            hLines: [
+              { y: 20, color: 'rgba(251,191,36,0.55)',   dash: [3,3], label: '20', width: 0.8 },
+              { y: 30, color: 'rgba(244,113,116,0.55)',  dash: [3,3], label: '30', width: 0.8 },
+            ],
+            xRange,
+            GAP_DAYS: 10,
+            unitMaxValue: null,
+          });
+        }
+
+        vixRedraw();
+
+        document.querySelectorAll('#vix-range-btns button').forEach(b => {
+          b.addEventListener('click', () => {
+            vixActiveRange = b.dataset.range;
+            vixRedraw();
+          });
+        });
+      }
+
+      // ════════════════════════════════════════════════════════════════
+      // C. SP500 — gráfico por timeframe (tabs Mensual/Semanal/Diario)
+      //    Cada timeframe tiene history: [{date, price, m10}]
+      // ════════════════════════════════════════════════════════════════
+      if (sp) {
+        let spActiveTf = 'daily';
+
+        // Los canvas ya existen en el DOM (uno por timeframe)
+        function spRedraw() {
+          // Actualizar estilos de tabs
+          document.querySelectorAll('.sp-tf-tab').forEach(b => {
+            const active = b.dataset.tf === spActiveTf;
+            b.style.background = active ? 'var(--surface2)' : 'transparent';
+            b.style.color = active ? 'var(--text1)' : 'var(--text3)';
+            b.style.borderBottom = active ? '1px solid var(--teal)' : '1px solid transparent';
+          });
+
+          ['monthly','weekly','daily'].forEach(tf => {
+            const c = document.getElementById(`sp-${tf}-chart`);
+            if (!c) return;
+            if (tf !== spActiveTf) return;
+
+            const d = sp[tf];
+            if (!d?.history?.length) {
+              drawLineChart(c, [], {});
+              return;
+            }
+
+            // history: [{date, price, m10}]
+            const hist = d.history
+              .filter(o => o && typeof o.date === 'string' && isFinite(Number(o.price)))
+              .sort((a, b) => a.date < b.date ? -1 : 1);
+
+            const dates      = hist.map(o => o.date.slice(0, 10));
+            const prices     = hist.map(o => Number(o.price));
+            const m10s       = hist.map(o => (o.m10 != null && isFinite(Number(o.m10))) ? Number(o.m10) : null);
+
+            const color = d.state === 'alcista' ? '#4ade80'
+                        : d.state === 'bajista' ? '#f47174'
+                        : '#fbbf24';
+
+            const gapDays = tf === 'monthly' ? 60 : tf === 'weekly' ? 14 : 7;
+
+            drawLineChart(c, [
+              { dates, vals: prices, color, width: 1.8, fill: true, label: 'Precio' },
+              { dates, vals: m10s,   color: 'rgba(255,255,255,0.4)', width: 1.2, dash: [4,3], label: 'M10' },
+            ], { GAP_DAYS: gapDays, unitMaxValue: null });
+          });
+        }
+
+        // La visibilidad la maneja directamente spRedraw a través de data-sp-panel
+        function spRedrawFull() {
+          // Actualizar tabs
+          document.querySelectorAll('.sp-tf-tab').forEach(b => {
+            const active = b.dataset.tf === spActiveTf;
+            b.style.background = active ? 'var(--surface2)' : 'transparent';
+            b.style.color = active ? 'var(--text1)' : 'var(--text3)';
+            b.style.borderBottom = active ? '1px solid var(--teal)' : '1px solid transparent';
+          });
+          // Mostrar/ocultar paneles
+          ['monthly','weekly','daily'].forEach(tf => {
+            const panel = document.querySelector(`[data-sp-panel="${tf}"]`);
+            if (panel) panel.style.display = tf === spActiveTf ? 'block' : 'none';
+          });
+          // Dibujar solo el activo
+          spRedraw();
+        }
+
+        spRedrawFull();
+
+        // Binding tabs SP500
+        document.querySelectorAll('.sp-tf-tab').forEach(b => {
+          b.addEventListener('click', () => {
+            spActiveTf = b.dataset.tf;
+            spRedrawFull();
+          });
+        });
+      }
+
+      // ════════════════════════════════════════════════════════════════
+      // D. Sparklines condiciones financieras (chg1d/5d/20d — mini)
+      //    Estas se mantienen con la función drawSparkline original
+      // ════════════════════════════════════════════════════════════════
       function buildSpark(cur, chg1, chg5, chg20) {
         if (cur == null) return [];
         const vals = [null, null, null, null, null];
@@ -841,13 +1093,12 @@ export async function render(container, { actionsSlot }) {
         if (chg1  != null) vals[3] = cur - chg1;
         if (chg5  != null) vals[1] = cur - chg5;
         if (chg20 != null) vals[0] = cur - chg20;
-        // interp simple
         const out = [...vals];
         for (let i = 0; i < out.length; i++) {
           if (out[i] == null) {
-            const prev = out.slice(0,i).reverse().find(v=>v!=null);
-            const next = out.slice(i+1).find(v=>v!=null);
-            if (prev != null && next != null) out[i] = (prev+next)/2;
+            const prev = out.slice(0, i).reverse().find(v => v != null);
+            const next = out.slice(i + 1).find(v => v != null);
+            if (prev != null && next != null) out[i] = (prev + next) / 2;
             else if (prev != null) out[i] = prev;
             else if (next != null) out[i] = next;
           }
@@ -856,21 +1107,13 @@ export async function render(container, { actionsSlot }) {
       }
 
       const dxyS = document.getElementById('sp-dxy-spark');
-      if (dxyS && dxy) {
-        const vals = buildSpark(dxy.value, dxy.chg1d, dxy.chg5d, dxy.chg20d);
-        drawSparkline(dxyS, vals, '#40d9c0');
-      }
+      if (dxyS && dxy) drawSparkline(dxyS, buildSpark(dxy.value, dxy.chg1d, dxy.chg5d, dxy.chg20d), '#40d9c0');
+
       const cvS = document.getElementById('sp-cv-spark');
-      if (cvS && cv?.value != null) {
-        // Para la curva usamos t10 y t2 chg acumulado como proxy
-        const vals = buildSpark(cv.value, null, null, null);
-        drawSparkline(cvS, vals, cv.value >= 0 ? '#4ade80' : '#f47174');
-      }
+      if (cvS && cv?.value != null) drawSparkline(cvS, buildSpark(cv.value, null, null, null), cv.value >= 0 ? '#4ade80' : '#f47174');
+
       const dfS = document.getElementById('sp-df-spark');
-      if (dfS && df) {
-        const vals = buildSpark(df.value, df.chg1d, df.chg5d, df.chg20d);
-        drawSparkline(dfS, vals, df.value > 0 ? '#f47174' : '#4ade80');
-      }
+      if (dfS && df) drawSparkline(dfS, buildSpark(df.value, df.chg1d, df.chg5d, df.chg20d), df.value > 0 ? '#f47174' : '#4ade80');
     });
 
     // Botón detalle HY

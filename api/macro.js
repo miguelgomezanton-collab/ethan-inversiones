@@ -555,6 +555,19 @@ function seriesMetrics(valid, label, source, freshnessThresholds = [3, 7]) {
   };
 }
 
+// ── Helper: subsamplea serie a máximo N puntos para el frontend ──────────
+function subsampleHistory(valid, maxPts = 756) {
+  if (!valid || valid.length === 0) return [];
+  // valid: [{t: unix, v: float}] ordenado ascendente
+  if (valid.length <= maxPts) return valid.map(o => ({ date: new Date(o.t * 1000).toISOString().slice(0, 10), v: +o.v.toFixed(4) }));
+  const step = Math.ceil(valid.length / maxPts);
+  const out = [];
+  for (let i = 0; i < valid.length; i += step) out.push(valid[i]);
+  // Siempre incluir el último punto
+  if (out[out.length - 1] !== valid[valid.length - 1]) out.push(valid[valid.length - 1]);
+  return out.map(o => ({ date: new Date(o.t * 1000).toISOString().slice(0, 10), v: +o.v.toFixed(4) }));
+}
+
 // ── VIX con SMA200 + métricas completas ──────────────────────────────────
 async function fetchVIX() {
   // 5Y para tener ≥1250 sesiones → MM200 seguro y Z-score 3Y
@@ -571,6 +584,7 @@ async function fetchVIX() {
     sessionsUsed: m.nObs,
     valid: true,
     signal: m.aboveMM200 ? 'Alerta: VIX sobre MM200 — volatilidad elevada' : 'VIX bajo MM200 — volatilidad contenida',
+    history: subsampleHistory(valid, 756),  // ≤756 puntos (3Y de diarios) para el gráfico
   };
 }
 
@@ -579,7 +593,8 @@ async function fetchVIX3M() {
   // ^VIX3M: CBOE 3-Month Volatility Index (disponible en Yahoo Finance)
   const valid = await fetchYahooChart('%5EVIX3M', '5y', 'VIX3M');
   if (valid.length < 5) throw new Error(`VIX3M: solo ${valid.length} sesiones — NO DATA`);
-  return seriesMetrics(valid, 'VIX3M', 'Yahoo Finance ^VIX3M', [3, 7]);
+  const m = seriesMetrics(valid, 'VIX3M', 'Yahoo Finance ^VIX3M', [3, 7]);
+  return { ...m, history: subsampleHistory(valid, 756) };
 }
 
 // ── DXY ───────────────────────────────────────────────────────────────────
@@ -652,9 +667,31 @@ async function fetchSP500Trend() {
   else if (states.every(s => s === 'bajista'))                                summary = 'Régimen técnico bajista confirmado en los tres marcos';
   else                                                                         summary = 'Señales mixtas — sin confirmación clara de tendencia';
 
+  // Construir historiales para el gráfico (date + price + m10 móvil punto a punto)
+  function buildM10History(closes, dates, maxPts) {
+    const n = closes.length;
+    const pts = [];
+    for (let i = 9; i < n; i++) {
+      const m10i = +(closes.slice(i - 9, i + 1).reduce((a, b) => a + b, 0) / 10).toFixed(2);
+      pts.push({ date: String(dates[i]).slice(0, 10), price: +closes[i].toFixed(2), m10: m10i });
+    }
+    if (pts.length <= maxPts) return pts;
+    const step = Math.ceil(pts.length / maxPts);
+    const out = [];
+    for (let i = 0; i < pts.length; i += step) out.push(pts[i]);
+    if (out[out.length - 1] !== pts[pts.length - 1]) out.push(pts[pts.length - 1]);
+    return out;
+  }
+
+  const dailyHistory   = buildM10History(dailyCloses, dailyDates, 756);
+  const weeklyHistory  = buildM10History(weeklyCloses, weeklyDates, 260);
+  const monthlyHistory = buildM10History(monthlyCloses, monthlyDates, 120);
+
   return {
     label: 'S&P 500 Tendencia Multitemporal', source: 'Yahoo Finance ^GSPC · M10',
-    daily: dailyState, weekly: weeklyState, monthly: monthlyState,
+    daily:   { ...dailyState,   history: dailyHistory },
+    weekly:  { ...weeklyState,  history: weeklyHistory },
+    monthly: { ...monthlyState, history: monthlyHistory },
     summary,
     nObsDaily: daily.length,
     dateLastClose: dailyDates[dailyDates.length - 1],
@@ -1619,12 +1656,23 @@ export default async function handler(req, res) {
       && (hyOasMetrics.zscore3y ?? 0) > 1.5
       && ind.bbb?.value != null && ind.bbb.value > (hyVals2.slice(-126).reduce((a,b)=>a+b,0)/Math.min(hn,126));
     if (stressAlert) hyState = 'estres';
+    // Historia para gráfico: últimos 3Y (≈756 obs diarias) en orden ASC
+    const hyHistory = (() => {
+      // hyObs ya está en ASC (tras .reverse()), filtrado de NaN
+      const hyDatesAsc = [...rHy.value].reverse().filter(o => !isNaN(+o.value));
+      const maxPts = 756;
+      const src = hyDatesAsc.length <= maxPts ? hyDatesAsc
+        : hyDatesAsc.slice(-maxPts); // últimos 3Y
+      return src.map(o => ({ date: String(o.date).slice(0, 10), v: +o.value }));
+    })();
+
     hyOasEnhanced = {
       ...hyOasMetrics,
       mm100, mm200, slopeMM100, slopeMM200,
       aboveMM100, aboveMM200,
       chg1d, chg5d, chg20d,
       hyState,
+      history: hyHistory,
     };
   }
 
@@ -1793,7 +1841,7 @@ export default async function handler(req, res) {
 
   return res.status(200).json({
     updatedAt: new Date().toISOString(),
-    _version: 'macro-v2026-10-24-fase1-home-rewrite',
+    _version: 'macro-v2026-10-24-v5e-history',
     scoreTotal,
     availableScore,
     coverage,
