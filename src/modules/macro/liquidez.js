@@ -35,15 +35,21 @@ function varColor(v) {
   return v > 0 ? 'var(--red)' : v < 0 ? 'var(--green)' : 'var(--text3)';
 }
 
-function creditCard(title, ind) {
-  if (!ind) return `<div class="co-liq-card" style="display:flex;align-items:center;justify-content:center;min-height:120px;">
-    <span style="font-size:10px;color:var(--text3);font-family:var(--mono);">Sin datos</span>
+function creditCard(title, ind, noDataMsg = 'NO DATA — HY OAS unavailable') {
+  if (!ind) return `<div class="co-liq-card" style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:120px;gap:6px;">
+    <span style="font-size:11px;color:var(--text3);font-family:var(--mono);">${noDataMsg}</span>
+    <span style="font-size:9px;color:var(--text3);font-family:var(--mono);">Verificar FRED BAMLH0A0HYM2</span>
   </div>`;
 
-  const staleTag = freshnessTag(ind.freshness, ind.ageDays);
-  const pctColor = ind.percentile != null
+  const staleTag  = freshnessTag(ind.freshness, ind.ageDays);
+  const pctColor  = ind.percentile != null
     ? (ind.percentile >= 75 ? 'var(--red)' : ind.percentile >= 40 ? 'var(--amber)' : 'var(--green)')
     : 'var(--text3)';
+  const insufHist = ind.insufficientHistory === true;
+  const zVal      = !insufHist && ind.zscore3y != null
+    ? `<span style="color:${ind.zscore3y > 1.5 ? 'var(--red)' : ind.zscore3y < -1 ? 'var(--green)' : 'var(--text2)'};">${ind.zscore3y.toFixed(2)}</span>`
+    : `<span style="color:var(--text3);font-size:8px;">INSUFFICIENT HISTORY</span>`;
+  const windowStr = ind.dateFrom && ind.date ? `${ind.dateFrom} → ${ind.date}` : (ind.date || '—');
 
   return `<div class="co-liq-card">
     <div class="co-liq-card-header">
@@ -53,14 +59,16 @@ function creditCard(title, ind) {
     <div style="font-family:var(--serif);font-size:28px;font-weight:600;font-style:italic;color:var(--text1);margin:6px 0 2px;">
       ${ind.stale ? '<span style="font-size:14px;color:var(--text3);">STALE</span>' : fmtSpread(ind.value)}
     </div>
-    <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:8px;">${ind.date || '—'} · ${ind.source || '—'}</div>
+    <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:4px;">${ind.source || '—'}</div>
+    <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:8px;">
+      ${windowStr} · <span style="color:var(--text2);">${ind.nObs != null ? ind.nObs + ' obs' : '—'}</span>
+    </div>
     <div style="display:flex;flex-direction:column;gap:1px;">
-      ${metaRow('Pct. histórico', ind.percentile != null ? `<span style="color:${pctColor};font-weight:700;">${ind.percentile}%</span>` : '—')}
-      ${metaRow('Z-score 3Y', ind.zscore3y != null ? ind.zscore3y.toFixed(2) : '—')}
+      ${metaRow('Pct. LT', ind.percentile != null ? `<span style="color:${pctColor};font-weight:700;">${ind.percentile}%</span>` : '—')}
+      ${metaRow('Z-score 3Y', zVal)}
       ${metaRow('Var 20s', ind.var20 != null ? `<span style="color:${varColor(ind.var20)}">${ind.var20 >= 0 ? '+' : ''}${ind.var20.toFixed(2)}%</span>` : '—')}
       ${metaRow('Var 60s', ind.var60 != null ? `<span style="color:${varColor(ind.var60)}">${ind.var60 >= 0 ? '+' : ''}${ind.var60.toFixed(2)}%</span>` : '—')}
       ${metaRow('vs SMA200', ind.trendVsSma200 != null ? `<span style="color:${ind.trendVsSma200 === 'above' ? 'var(--red)' : 'var(--green)'}">${ind.trendVsSma200 === 'above' ? '▲ Por encima' : '▼ Por debajo'}</span>` : '—')}
-      ${metaRow('Obs.', ind.nObs != null ? ind.nObs : '—')}
     </div>
     <div style="margin-top:6px;font-size:8px;color:var(--amber);font-family:var(--mono);font-weight:700;">RESEARCH / DIAGNOSTIC ONLY</div>
   </div>`;
@@ -68,17 +76,22 @@ function creditCard(title, ind) {
 
 function hyBbbGapCard(gap, bbb, hy) {
   if (!gap) {
-    const missing = !bbb ? 'BBB' : !hy ? 'HY' : 'ambos';
+    const missingLabel = !bbb && !hy ? 'BBB + HY OAS' : !hy ? 'HY OAS (BAMLH0A0HYM2)' : 'BBB OAS (BAMLC0A4CBBB)';
     return `<div class="co-liq-card" style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:120px;gap:6px;">
-      <span style="font-size:11px;color:var(--text3);font-family:var(--mono);">NO DATA</span>
-      <span style="font-size:9px;color:var(--text3);font-family:var(--mono);">Falta ${missing}</span>
+      <span style="font-size:11px;color:var(--text3);font-family:var(--mono);">NO DATA — Gap no calculable</span>
+      <span style="font-size:9px;color:var(--text3);font-family:var(--mono);">Falta: ${missingLabel}</span>
     </div>`;
   }
 
-  const staleTag = freshnessTag(gap.freshness, null);
-  const pctColor = gap.percentile != null
+  const staleTag  = freshnessTag(gap.freshness, null);
+  const pctColor  = gap.percentile != null
     ? (gap.percentile >= 75 ? 'var(--red)' : gap.percentile >= 40 ? 'var(--amber)' : 'var(--green)')
     : 'var(--text3)';
+  const gapWindowStr = gap.dateFrom && gap.date ? `${gap.dateFrom} → ${gap.date}` : (gap.date || '—');
+  const insufGap  = gap.insufficientHistory === true;
+  const zGapVal   = !insufGap && gap.zscore3y != null
+    ? `<span style="color:${gap.zscore3y > 1.5 ? 'var(--red)' : gap.zscore3y < -1 ? 'var(--green)' : 'var(--text2)'};">${gap.zscore3y.toFixed(2)}</span>`
+    : `<span style="color:var(--text3);font-size:8px;">INSUFFICIENT HISTORY</span>`;
 
   return `<div class="co-liq-card">
     <div class="co-liq-card-header">
@@ -88,13 +101,16 @@ function hyBbbGapCard(gap, bbb, hy) {
     <div style="font-family:var(--serif);font-size:28px;font-weight:600;font-style:italic;color:var(--text1);margin:6px 0 2px;">
       ${gap.stale ? '<span style="font-size:14px;color:var(--text3);">STALE</span>' : fmtSpread(gap.value)}
     </div>
-    <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:8px;">${gap.date || '—'} · calc: HY − BBB</div>
+    <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:4px;">calc: BAMLH0A0HYM2 − BAMLC0A4CBBB</div>
+    <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:8px;">
+      ${gapWindowStr} · <span style="color:var(--text2);">${gap.nObs != null ? gap.nObs + ' obs' : '—'}</span>
+    </div>
     <div style="display:flex;flex-direction:column;gap:1px;">
-      ${metaRow('Pct. histórico', gap.percentile != null ? `<span style="color:${pctColor};font-weight:700;">${gap.percentile}%</span>` : '—')}
+      ${metaRow('Pct. LT', gap.percentile != null ? `<span style="color:${pctColor};font-weight:700;">${gap.percentile}%</span>` : '—')}
+      ${metaRow('Z-score 3Y', zGapVal)}
       ${metaRow('Var 20s', gap.var20 != null ? `<span style="color:${varColor(gap.var20)}">${gap.var20 >= 0 ? '+' : ''}${gap.var20.toFixed(2)}%</span>` : '—')}
       ${metaRow('Var 60s', gap.var60 != null ? `<span style="color:${varColor(gap.var60)}">${gap.var60 >= 0 ? '+' : ''}${gap.var60.toFixed(2)}%</span>` : '—')}
       ${metaRow('vs SMA200', gap.trendVsSma200 != null ? `<span style="color:${gap.trendVsSma200 === 'above' ? 'var(--red)' : 'var(--green)'}">${gap.trendVsSma200 === 'above' ? '▲ Por encima' : '▼ Por debajo'}</span>` : '—')}
-      ${metaRow('Obs. gap', gap.nObs != null ? gap.nObs : '—')}
     </div>
     <div style="margin-top:6px;font-size:8px;color:var(--amber);font-family:var(--mono);font-weight:700;">RESEARCH / DIAGNOSTIC ONLY</div>
   </div>`;
@@ -102,7 +118,8 @@ function hyBbbGapCard(gap, bbb, hy) {
 
 function regime(liq) {
   // Liquidity Score propio — independiente del macro.scoreTotal
-  // Indicadores: M2 Global (±3), Impulso Crediticio (±2), Velocidad M2 (±2), Reservas (±1/−2), BBB Spread (±1)
+  // Indicadores: M2 Global (±3), Crédito vs PIB (±3), Impulso Crediticio (±2), Velocidad M2 (±2), Reservas (±1/−2)
+  // BBB OAS retirado del score — RESEARCH/DIAGNOSTIC ONLY desde v3.9
   // PROVISIONAL — pesos y thresholds pendientes de calibración
   let rawScore = 0, maxAvailable = 0;
   const MAX_POSSIBLE = 12; // M2×3 + Crédito×3 + Impulso×2 + VelM2×2 + Reservas×1 + BBB×1
@@ -382,27 +399,6 @@ export async function render(container, { actionsSlot }) {
             ? `<strong style="color:var(--amber)">−1 pt.</strong> Reservas $${v}T — zona media. Scoring provisional.`
             : `<strong style="color:var(--red)">${s!=null?s:'—'} pts.</strong> Reservas ${v!=null?'$'+v+'T':'—'}. Scoring provisional.`)}
 
-        ${liq.bbb ? `<div class="co-liq-card">
-          <div class="co-liq-card-header"><span class="co-liq-card-title">📊 BBB Spread</span><span style="font-size:9px;color:var(--text3);font-family:var(--mono);">${liq.bbb.date||'—'}</span></div>
-          <div style="font-family:var(--serif);font-size:32px;font-weight:600;font-style:italic;color:${col(liq.bbb.score)};">${f2(liq.bbb.value)}%</div>
-          <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:4px;">≤1.00%→+1  ·  >1.00% y ≤1.50%→0  ·  >1.50%→−1  ·  PROVISIONAL · peso ×1</div>
-          <div class="co-ind-bar-track" style="margin:8px 0 4px;"><div class="co-ind-bar-fill" style="width:${Math.min(liq.bbb.value/4*100,100)}%;background:${col(liq.bbb.score)};"></div></div>
-          <div style="font-size:10px;color:var(--text2);line-height:1.5;margin-top:8px;">
-            ${liq.bbb.score>0?'<strong style="color:var(--green)">+1 pt.</strong> ≤1.00% — spreads contenidos, mercado tranquilo.':
-              liq.bbb.score===0?'<strong style="color:var(--amber)">0 pts.</strong> >1.00% y ≤1.50% — neutral, coste de crédito moderado.':
-              liq.bbb.score!=null?'<strong style="color:var(--red)">−1 pt.</strong> >1.50% — estrés crediticio, prima de riesgo elevada.':
-              '<strong style="color:var(--text3)">— pts.</strong> Dato obsoleto o no disponible.'}
-          </div>
-          <div class="audit-toggle" onclick="this.classList.toggle('open')">
-            <span class="audit-lbl">Metodología ▾</span>
-            <div class="audit-body">
-              Fuente: FRED BAMLC0A4CBBB (ICE BofA BBB OAS) · Frecuencia: diaria<br>
-              Fecha: ${liq.bbb.date||'—'} | Valor: ${liq.bbb.value!=null?liq.bbb.value.toFixed(2)+'%':'—'}<br>
-              Antigüedad: ${liq.bbb.ageDays!=null?liq.bbb.ageDays+'d':'—'} · ${liq.bbb.freshness==='ok'?'✓ OK':liq.bbb.freshness==='warn'?'⚠ WARN':'✗ STALE'}<br>
-              Score: ${liq.bbb.score!=null?liq.bbb.score:'bloqueado'}${liq.bbb.stale?' · STALE':''} · Peso ×1 · [PROVISIONAL]
-            </div>
-          </div>
-        </div>` : ''}
       </div>
 
       <!-- SUBBLOQUE: CONDICIONES DE CRÉDITO -->
@@ -413,8 +409,8 @@ export async function render(container, { actionsSlot }) {
           <span style="font-size:9px;color:var(--text3);font-family:var(--mono);">Sin impacto en Liquidity Score</span>
         </div>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;">
-          ${creditCard('📊 BBB OAS', liq.bbb)}
-          ${creditCard('⚡ High Yield OAS', liq.hyOas)}
+          ${creditCard('📊 BBB OAS', liq.bbb, 'NO DATA — BBB OAS unavailable')}
+          ${creditCard('⚡ High Yield OAS', liq.hyOas, 'NO DATA — HY OAS unavailable')}
           ${hyBbbGapCard(liq.hyBbbGap, liq.bbb, liq.hyOas)}
         </div>
         <div style="margin-top:8px;font-size:9px;color:var(--text3);font-family:var(--mono);line-height:1.6;">

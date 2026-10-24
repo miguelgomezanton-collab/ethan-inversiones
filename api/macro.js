@@ -732,13 +732,13 @@ export default async function handler(req, res) {
     fred('DGS10',        key, 5),
     fred('DGS2',         key, 5),
     fred('DFF',          key, 100),   // diario — necesita ~91 obs para 3M de dirección
-    fred('BAMLC0A4CBBB', key, 320),   // diario — necesita >260 obs para SMA200 + var60
+    fred('BAMLC0A4CBBB', key, 6500),  // diario — histórico completo desde ~2000 para percentil LT y Z-score 3Y
     fred('CPIAUCSL',     key, 16),
     fred('CPILFESL',     key, 16),
     fetchFearGreed(),
     fetchVIX(),
     fetchCurvaEUR(),
-    fred('BAMLH0A0HYM2', key, 320),   // diario — necesita >260 obs para SMA200 + var60
+    fred('BAMLH0A0HYM2', key, 6500),  // diario — histórico completo desde ~2000 para percentil LT y Z-score 3Y
     fred('EXPINF1YR',    key, 10),   // Fed Cleveland 1Y inflation expectations
     fred('T5YIE',        key, 10),   // Breakeven 5Y
     fred('T5YIFR',       key, 10),   // Breakeven 5Y forward rate (alternativa)
@@ -1132,82 +1132,124 @@ export default async function handler(req, res) {
   // ── Helper: métricas enriquecidas para spreads de crédito ──────────────────
   function creditSpreadMetrics(obs, label, source, freshnessThresholds = [3, 7]) {
     if (!obs || !obs.length) return null;
-    const asc  = [...obs].reverse();
-    const vals = asc.map(o => +o.value).filter(v => !isNaN(v));
-    if (!vals.length) return null;
+    // obs llega en orden DESC (más reciente primero) — invertir para cálculos
+    const asc   = [...obs].reverse();
+    const valid = asc.filter(o => !isNaN(+o.value) && o.value != null);
+    if (!valid.length) return null;
+    const vals     = valid.map(o => +o.value);
+    const dates    = valid.map(o => o.date);
     const current  = vals.at(-1);
-    const lastDate = asc.at(-1)?.date;
+    const lastDate = dates.at(-1);
+    const firstDate = dates[0];
     const ageDays  = lastDate ? Math.round((Date.now() - new Date(lastDate).getTime()) / 86400000) : null;
     const [okDays, warnDays] = freshnessThresholds;
     const freshness = ageDays == null ? 'missing' : ageDays <= okDays ? 'ok' : ageDays <= warnDays ? 'warn' : 'stale';
     const stale = freshness === 'stale' || freshness === 'missing';
+
+    // Percentil — serie histórica completa (todas las observaciones disponibles)
     const sorted = [...vals].sort((a, b) => a - b);
     const rank   = sorted.filter(v => v <= current).length;
-    const pct    = +(rank / sorted.length * 100).toFixed(1);
-    const win3y   = Math.min(756, vals.length);
-    const slice3y = vals.slice(-win3y);
-    const mean3y  = slice3y.reduce((a, b) => a + b, 0) / slice3y.length;
-    const std3y   = Math.sqrt(slice3y.reduce((a, b) => a + (b - mean3y) ** 2, 0) / slice3y.length);
-    const zscore  = std3y > 0 ? +((current - mean3y) / std3y).toFixed(2) : null;
+    const percentile = +(rank / sorted.length * 100).toFixed(1);
+
+    // Z-score rolling 3Y (~756 sesiones) — null si no hay 756 obs completas
+    const HAS_3Y = vals.length >= 756;
+    let zscore3y = null;
+    let mean3y   = null;
+    if (HAS_3Y) {
+      const slice3y = vals.slice(-756);
+      mean3y  = slice3y.reduce((a, b) => a + b, 0) / slice3y.length;
+      const std3y = Math.sqrt(slice3y.reduce((a, b) => a + (b - mean3y) ** 2, 0) / slice3y.length);
+      zscore3y = std3y > 0 ? +((current - mean3y) / std3y).toFixed(2) : null;
+      mean3y   = +mean3y.toFixed(3);
+    }
+
     const var20 = vals.length > 20 ? +(current - vals.at(-21)).toFixed(3) : null;
     const var60 = vals.length > 60 ? +(current - vals.at(-61)).toFixed(3) : null;
     const sma200vals = vals.slice(-200);
     const sma200     = sma200vals.length >= 100
       ? +(sma200vals.reduce((a, b) => a + b, 0) / sma200vals.length).toFixed(3) : null;
     const trendVsSma200 = sma200 != null ? (current > sma200 ? 'above' : 'below') : null;
+
     return {
       label, source,
-      value: +current.toFixed(3), date: lastDate, ageDays, freshness, stale,
-      percentile: pct, zscore3y: zscore, mean3y: +mean3y.toFixed(3),
-      var20, var60, sma200, trendVsSma200, nObs: vals.length,
+      value: +current.toFixed(3), date: lastDate, dateFrom: firstDate, ageDays, freshness, stale,
+      nObs: vals.length,
+      // Percentil calculado sobre todo el histórico disponible
+      percentile,
+      // Z-score solo si hay ≥756 sesiones; si no → insufficientHistory: true
+      zscore3y,
+      mean3y,
+      insufficientHistory: !HAS_3Y,
+      var20, var60, sma200, trendVsSma200,
       researchOnly: true,
     };
   }
 
-  // 10a. BBB Corporate Spread — enriquecido con métricas de diagnóstico
+  // 10a. BBB Corporate Spread — RESEARCH/DIAGNOSTIC ONLY (retirado del Liquidity Score)
+  // researchOnly: true → sin score, sin weight → no contribuye al scoreTotal ni al MAX_POSSIBLE
   if (rBbb.status === 'fulfilled' && rBbb.value?.length) {
     const bbbMetrics = creditSpreadMetrics(rBbb.value, 'BBB Corporate Spread', 'FRED BAMLC0A4CBBB', [3, 7]);
     if (bbbMetrics) {
-      ind.bbb = {
-        ...bbbMetrics,
-        researchOnly: false,   // BBB SÍ tiene score — mantiene compatibilidad con Liquidity Score
-        score:  bbbMetrics.stale ? null : scBBB(bbbMetrics.value),
-        weight: 1, auto: true,
-      };
+      ind.bbb = { ...bbbMetrics, researchOnly: true, auto: true };
+      // score y weight quedan undefined → el loop scoreTotal los ignora
     }
-  } else errs.push('BBB: ' + rBbb.reason?.message);
+  } else errs.push('BBB OAS: FRED BAMLC0A4CBBB — ' + (rBbb.reason?.message || 'sin datos'));
 
   // 10b. HY OAS — solo diagnóstico, sin score
   let hyOasMetrics = null;
   if (rHy.status === 'fulfilled' && rHy.value?.length) {
     hyOasMetrics = creditSpreadMetrics(rHy.value, 'High Yield OAS', 'FRED BAMLH0A0HYM2', [3, 7]);
+    if (!hyOasMetrics) errs.push('HY OAS: FRED BAMLH0A0HYM2 retornó ' + rHy.value.length + ' obs pero creditSpreadMetrics devolvió null');
+  } else if (rHy.status === 'rejected') {
+    errs.push('HY OAS: FRED BAMLH0A0HYM2 — ' + (rHy.reason?.message || 'fetch rejected'));
+  } else if (rHy.status === 'fulfilled' && !rHy.value?.length) {
+    errs.push('HY OAS: FRED BAMLH0A0HYM2 — array vacío tras filtrar "." (0 observaciones válidas)');
   }
 
   // 10c. HY–BBB Gap — calculado, solo diagnóstico
   let hyBbbGap = null;
   if (hyOasMetrics?.value != null && ind.bbb?.value != null) {
-    const hyVals  = rHy.value?.length  ? [...rHy.value].reverse().map(o => +o.value).filter(v => !isNaN(v))  : [];
-    const bbbVals = rBbb.value?.length ? [...rBbb.value].reverse().map(o => +o.value).filter(v => !isNaN(v)) : [];
+    // Reconstruir series válidas ascendentes (ya filtradas de ".")
+    const hyVals  = rHy.value?.length  ? [...rHy.value].reverse().filter(o => !isNaN(+o.value)).map(o => +o.value)  : [];
+    const hyDates = rHy.value?.length  ? [...rHy.value].reverse().filter(o => !isNaN(+o.value)).map(o => o.date)    : [];
+    const bbbVals = rBbb.value?.length ? [...rBbb.value].reverse().filter(o => !isNaN(+o.value)).map(o => +o.value) : [];
+    const bbbDates= rBbb.value?.length ? [...rBbb.value].reverse().filter(o => !isNaN(+o.value)).map(o => o.date)   : [];
+    // Gap sobre el solapamiento de ambas series (mínimo común)
     const minLen  = Math.min(hyVals.length, bbbVals.length);
-    const gapVals = Array.from({ length: minLen }, (_, i) => +(hyVals.at(-(minLen - i)) - bbbVals.at(-(minLen - i))).toFixed(3));
+    const gapVals = Array.from({ length: minLen }, (_, i) =>
+      +(hyVals.at(-(minLen - i)) - bbbVals.at(-(minLen - i))).toFixed(3));
     const gapVal  = +(hyOasMetrics.value - ind.bbb.value).toFixed(3);
+    // Fechas de ventana
+    const gapDateFrom = hyDates.at(-minLen) || bbbDates.at(-minLen) || null;
+    const gapDate     = hyOasMetrics.date || ind.bbb?.date || null;
+    // Percentil LT sobre serie de gaps completa
+    const gapSorted = [...gapVals].sort((a, b) => a - b);
+    const gapRank   = gapSorted.filter(v => v <= gapVal).length;
+    const gapPct    = +(gapRank / (gapSorted.length || 1) * 100).toFixed(1);
+    // Z-score 3Y del gap (≥756 obs solapadas)
+    const GAP_HAS_3Y = gapVals.length >= 756;
+    let gapZscore = null;
+    if (GAP_HAS_3Y) {
+      const sl  = gapVals.slice(-756);
+      const m   = sl.reduce((a, b) => a + b, 0) / sl.length;
+      const sd  = Math.sqrt(sl.reduce((a, b) => a + (b - m) ** 2, 0) / sl.length);
+      gapZscore = sd > 0 ? +((gapVal - m) / sd).toFixed(2) : null;
+    }
     const gapVar20 = gapVals.length > 20 ? +(gapVal - gapVals.at(-21)).toFixed(3) : null;
     const gapVar60 = gapVals.length > 60 ? +(gapVal - gapVals.at(-61)).toFixed(3) : null;
     const gapSma200vals = gapVals.slice(-200);
     const gapSma200 = gapSma200vals.length >= 100
       ? +(gapSma200vals.reduce((a, b) => a + b, 0) / gapSma200vals.length).toFixed(3) : null;
     const gapTrend = gapSma200 != null ? (gapVal > gapSma200 ? 'above' : 'below') : null;
-    const gapSorted = [...gapVals].sort((a, b) => a - b);
-    const gapRank = gapSorted.filter(v => v <= gapVal).length;
-    const gapPct = +(gapRank / (gapSorted.length || 1) * 100).toFixed(1);
     const gapStale = hyOasMetrics.stale || (ind.bbb?.stale ?? false);
-    const gapDate  = hyOasMetrics.date || ind.bbb?.date || null;
     hyBbbGap = {
       label: 'HY–BBB Gap', source: 'calc: BAMLH0A0HYM2 − BAMLC0A4CBBB',
-      value: gapVal, date: gapDate, stale: gapStale,
+      value: gapVal, date: gapDate, dateFrom: gapDateFrom, stale: gapStale,
       freshness: gapStale ? 'stale' : 'ok',
-      percentile: gapPct, var20: gapVar20, var60: gapVar60,
-      sma200: gapSma200, trendVsSma200: gapTrend, nObs: gapVals.length,
+      nObs: gapVals.length, insufficientHistory: !GAP_HAS_3Y,
+      percentile: gapPct, zscore3y: gapZscore,
+      var20: gapVar20, var60: gapVar60,
+      sma200: gapSma200, trendVsSma200: gapTrend,
       researchOnly: true,
     };
   }
@@ -1244,7 +1286,7 @@ export default async function handler(req, res) {
   // STALE/MISSING/ERROR quedan completamente excluidos de ambos.
   let scoreTotal = 0, availableScore = 0;
   const scoreDetail = {};
-  const MAX_POSSIBLE = 16; // curvaUSD×1 + curvaEUR×1 + lei×1 + m2×3 + credito×3 + impulso×2 + velM2×2 + reservas×1 + bbb×1 + tipoReal×1. F&G excluido (LIVE_ONLY)
+  const MAX_POSSIBLE = 15; // curvaUSD×1 + curvaEUR×1 + lei×1 + m2×3 + credito×3 + impulso×2 + velM2×2 + reservas×1 + tipoReal×1. BBB retirado (RESEARCH ONLY). F&G excluido (LIVE_ONLY)
   Object.entries(ind).forEach(([k, i]) => {
     if (i.score != null) {
       scoreTotal    += i.score;
