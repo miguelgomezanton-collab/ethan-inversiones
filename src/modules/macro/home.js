@@ -918,10 +918,28 @@ export async function render(container, { actionsSlot }) {
         </div>
         <!-- Canvas SP500 (único, redibujado al cambiar tab) -->
         <canvas id="sp-main-chart" width="900" height="460" class="chart-canvas-main"></canvas>
-        <!-- Leyenda SP500 -->
-        <div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap;">
-          <div style="display:flex;align-items:center;gap:4px;"><div style="width:14px;height:2px;background:var(--teal);"></div><span style="font-size:8px;color:var(--text3);font-family:var(--mono);">Precio</span></div>
-          <div style="display:flex;align-items:center;gap:4px;"><div style="width:14px;height:1px;border-top:1px dashed var(--amber);"></div><span style="font-size:8px;color:var(--text3);font-family:var(--mono);">M10</span></div>
+        <!-- Leyenda SP500 con toggles (MM100/MM200 solo visibles en Diario) -->
+        <div id="sp-legend" style="display:flex;gap:14px;margin-top:8px;flex-wrap:wrap;align-items:center;">
+          <label style="display:flex;align-items:center;gap:5px;cursor:pointer;user-select:none;">
+            <input type="checkbox" id="sp-tog-price" checked style="accent-color:#22d3ee;">
+            <div style="width:14px;height:2px;background:#22d3ee;"></div>
+            <span style="font-size:8px;color:var(--text3);font-family:var(--mono);">Precio</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:5px;cursor:pointer;user-select:none;">
+            <input type="checkbox" id="sp-tog-m10" checked style="accent-color:#fbbf24;">
+            <div style="width:14px;height:1px;border-top:2px dashed #fbbf24;"></div>
+            <span style="font-size:8px;color:var(--text3);font-family:var(--mono);">M10</span>
+          </label>
+          <label id="sp-tog-mm100-wrap" style="display:none;align-items:center;gap:5px;cursor:pointer;user-select:none;">
+            <input type="checkbox" id="sp-tog-mm100" checked style="accent-color:#60a5fa;">
+            <div style="width:14px;height:1px;border-top:2px solid #60a5fa;"></div>
+            <span style="font-size:8px;color:var(--text3);font-family:var(--mono);">MM100</span>
+          </label>
+          <label id="sp-tog-mm200-wrap" style="display:none;align-items:center;gap:5px;cursor:pointer;user-select:none;">
+            <input type="checkbox" id="sp-tog-mm200" checked style="accent-color:rgba(200,200,210,0.7);">
+            <div style="width:14px;height:1px;border-top:2px dashed rgba(200,200,210,0.7);"></div>
+            <span style="font-size:8px;color:var(--text3);font-family:var(--mono);">MM200</span>
+          </label>
         </div>
         ${sp?.summary ? `<div style="margin-top:8px;font-size:9px;color:var(--text2);line-height:1.5;font-style:italic;">${sp.summary}</div>` : ''}
       </div>
@@ -1199,14 +1217,46 @@ export async function render(container, { actionsSlot }) {
           const headerEl = document.getElementById('sp-header-metrics');
           if (!headerEl || !d) return;
           const sc = stateColor(d.state);
-          const distPct = d.price && d.m10 ? (((d.price - d.m10) / d.m10) * 100).toFixed(1) : null;
           const slopeIcon = d.slope === 'up' ? '↑' : d.slope === 'down' ? '↓' : '→';
+
+          // Distancias relativas
+          const distM10  = d.price && d.m10    ? (((d.price - d.m10)    / d.m10)    * 100) : null;
+          const distMM100 = (spActiveTf === 'daily' && d.price && d._mm100Last)
+                            ? (((d.price - d._mm100Last) / d._mm100Last) * 100) : null;
+          const distMM200 = (spActiveTf === 'daily' && d.price && d._mm200Last)
+                            ? (((d.price - d._mm200Last) / d._mm200Last) * 100) : null;
+
+          function distSpan(val, label, refColor) {
+            if (val == null) return '';
+            const sign = val > 0 ? '+' : '';
+            const col  = val > 0 ? 'var(--green)' : 'var(--red)';
+            return `<span style="font-family:var(--mono);font-size:9px;color:var(--text3);">${label} <span style="color:${col};">${sign}${val.toFixed(1)}%</span></span>`;
+          }
+
+          // Pendientes MM100 / MM200 (solo diario)
+          const slopeMM100 = d._slopeMM100 === 'up' ? '↑' : d._slopeMM100 === 'down' ? '↓' : d._slopeMM100 ? '→' : '';
+          const slopeMM200 = d._slopeMM200 === 'up' ? '↑' : d._slopeMM200 === 'down' ? '↓' : d._slopeMM200 ? '→' : '';
+
           headerEl.innerHTML = `
             <span style="font-size:20px;font-weight:800;color:${sc};">${f2(d.price)}</span>
             <span style="font-family:var(--mono);font-size:9px;color:${sc};">M10: ${f2(d.m10)} ${slopeIcon}</span>
-            ${distPct != null ? `<span style="font-family:var(--mono);font-size:9px;color:${parseFloat(distPct)>0?'var(--green)':'var(--red)'};">${parseFloat(distPct)>0?'+':''}${distPct}%</span>` : ''}
+            ${distM10 != null ? distSpan(distM10, 'vs M10', '#fbbf24') : ''}
+            ${distMM100 != null ? `<span style="font-family:var(--mono);font-size:9px;color:#60a5fa;">MM100: ${f2(d._mm100Last)} ${slopeMM100}</span>` : ''}
+            ${distMM100 != null ? distSpan(distMM100, 'vs MM100', '#60a5fa') : ''}
+            ${distMM200 != null ? `<span style="font-family:var(--mono);font-size:9px;color:rgba(200,200,210,0.8);">MM200: ${f2(d._mm200Last)} ${slopeMM200}</span>` : ''}
+            ${distMM200 != null ? distSpan(distMM200, 'vs MM200', 'rgba(200,200,210,0.8)') : ''}
             ${chip(stateLabel(d.state), sc)}
           `;
+        }
+
+        // Leer estado de toggles
+        function spToggles() {
+          return {
+            price : document.getElementById('sp-tog-price')?.checked  ?? true,
+            m10   : document.getElementById('sp-tog-m10')?.checked    ?? true,
+            mm100 : document.getElementById('sp-tog-mm100')?.checked  ?? true,
+            mm200 : document.getElementById('sp-tog-mm200')?.checked  ?? true,
+          };
         }
 
         function spRedraw() {
@@ -1218,12 +1268,18 @@ export async function render(container, { actionsSlot }) {
             b.style.borderBottom = active ? '2px solid var(--teal)' : '2px solid transparent';
           });
 
-          updateSpHeader();
+          // Mostrar/ocultar controles MM100/MM200 (solo Diario)
+          const isDaily = spActiveTf === 'daily';
+          const mm100Wrap = document.getElementById('sp-tog-mm100-wrap');
+          const mm200Wrap = document.getElementById('sp-tog-mm200-wrap');
+          if (mm100Wrap) mm100Wrap.style.display = isDaily ? 'flex' : 'none';
+          if (mm200Wrap) mm200Wrap.style.display = isDaily ? 'flex' : 'none';
 
           if (!spMainCanvas) return;
           const d = sp[spActiveTf];
           if (!d?.history?.length) {
             drawLineChart(spMainCanvas, [], {});
+            updateSpHeader();
             return;
           }
 
@@ -1234,19 +1290,50 @@ export async function render(container, { actionsSlot }) {
 
           const dates  = hist.map(o => o.date.slice(0, 10));
           const prices = hist.map(o => Number(o.price));
-          // m10 puede ser null durante las primeras 9 obs (semanal) o 9 obs (mensual)
+          // m10 viene del backend (null durante warmup)
           const m10s   = hist.map(o => (o.m10 != null && isFinite(Number(o.m10))) ? Number(o.m10) : null);
 
-          const color = d.state === 'alcista' ? '#4ade80'
-                      : d.state === 'bajista' ? '#f47174'
-                      : '#fbbf24';
+          // ── Medias móviles diarias (calculadas sobre TODO el histórico, luego se recorta en drawLineChart) ──
+          let mm100 = null, mm200 = null;
+          if (isDaily) {
+            mm100 = rollingMA(prices, 100);
+            mm200 = rollingMA(prices, 200);
+
+            // Guardar último valor disponible para cabecera
+            const lastMM100 = [...mm100].reverse().find(v => v != null);
+            const lastMM200 = [...mm200].reverse().find(v => v != null);
+            d._mm100Last = lastMM100 ?? null;
+            d._mm200Last = lastMM200 ?? null;
+
+            // Pendiente simple: comparar últimos 5 días
+            function slopeDir(arr) {
+              const valid = arr.filter(v => v != null);
+              if (valid.length < 6) return null;
+              const prev = valid[valid.length - 6];
+              const last = valid[valid.length - 1];
+              if (last > prev * 1.001) return 'up';
+              if (last < prev * 0.999) return 'down';
+              return 'flat';
+            }
+            d._slopeMM100 = slopeDir(mm100);
+            d._slopeMM200 = slopeDir(mm200);
+          }
+
+          const priceColor = d.state === 'alcista' ? '#22d3ee'
+                           : d.state === 'bajista' ? '#f47174'
+                           : '#22d3ee';
 
           const gapDays = spActiveTf === 'monthly' ? 60 : spActiveTf === 'weekly' ? 14 : 7;
+          const tog = spToggles();
 
-          drawLineChart(spMainCanvas, [
-            { dates, vals: prices, color, width: 1.8, fill: true, label: 'Precio' },
-            { dates, vals: m10s,   color: 'rgba(255,255,255,0.5)', width: 1.5, dash: [4,3], label: 'M10' },
-          ], { GAP_DAYS: gapDays, unitMaxValue: null });
+          const series = [];
+          if (tog.price) series.push({ dates, vals: prices, color: priceColor, width: 1.8, fill: true, label: 'Precio' });
+          if (tog.m10)   series.push({ dates, vals: m10s,   color: '#fbbf24', width: 1.5, dash: [4,3], label: 'M10' });
+          if (isDaily && tog.mm100 && mm100) series.push({ dates, vals: mm100, color: '#60a5fa', width: 1.2, label: 'MM100' });
+          if (isDaily && tog.mm200 && mm200) series.push({ dates, vals: mm200, color: 'rgba(200,200,210,0.6)', width: 1, dash: [3,4], label: 'MM200' });
+
+          drawLineChart(spMainCanvas, series, { GAP_DAYS: gapDays, unitMaxValue: null });
+          updateSpHeader();
         }
 
         spRedraw();
@@ -1257,6 +1344,11 @@ export async function render(container, { actionsSlot }) {
             spActiveTf = b.dataset.tf;
             spRedraw();
           });
+        });
+
+        // Binding toggles SP500
+        ['sp-tog-price','sp-tog-m10','sp-tog-mm100','sp-tog-mm200'].forEach(id => {
+          document.getElementById(id)?.addEventListener('change', spRedraw);
         });
       }
 
