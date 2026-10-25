@@ -89,193 +89,390 @@ function stateLabel(s) { return STATE_LABELS[s] || (s || '—').toUpperCase(); }
 //   4. Si < 2 pts válidos → muestra "INSUFFICIENT DATA"
 //   5. No une segmentos con hueco > GAP_DAYS días
 
+// ─── Helpers de formato de fecha para eje X ──────────────────────────────────
+const _MESES_CORTO = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+
+function _fmtXLabel(ms, spanDays) {
+  const d = new Date(ms);
+  const yy = String(d.getUTCFullYear()).slice(2);
+  const mon = _MESES_CORTO[d.getUTCMonth()];
+  const day = d.getUTCDate();
+  if (spanDays <= 100)       return `${day} ${mon}`;           // 3M  → "15 ene"
+  if (spanDays <= 400)       return `${day} ${mon}`;           // 1A  → "1 feb"
+  if (spanDays <= 1200)      return `${mon} ${yy}`;            // 3A  → "ene 26"
+  return String(d.getUTCFullYear());                            // Máx → "2024"
+}
+
+// Genera los ms de los ticks principales para el eje X, adaptados al rango
+function _xTicks(xMin, xMax, targetN) {
+  const spanMs   = xMax - xMin;
+  const spanDays = spanMs / 86400000;
+
+  // Candidatos de intervalo (en ms): semana, 2sem, mes, 2mes, 3mes, 6mes, año, 2años, 5años
+  const candidates = [
+    7, 14, 30, 60, 91, 182, 365, 730, 1825
+  ].map(d => d * 86400000);
+
+  // Elegir intervalo que produzca ~targetN ticks
+  let best = candidates[candidates.length - 1];
+  for (const iv of candidates) {
+    if (spanMs / iv <= targetN + 2) { best = iv; break; }
+  }
+
+  // Alinear al inicio de unidad natural (mes, semana, año)
+  const ticks = [];
+  const d0 = new Date(xMin);
+
+  let cursor;
+  if (best >= 365 * 86400000) {
+    // Alinear a 1 enero
+    cursor = Date.UTC(d0.getUTCFullYear(), 0, 1);
+    if (cursor < xMin) cursor = Date.UTC(d0.getUTCFullYear() + 1, 0, 1);
+  } else if (best >= 28 * 86400000) {
+    // Alinear a primer día del mes
+    cursor = Date.UTC(d0.getUTCFullYear(), d0.getUTCMonth(), 1);
+    if (cursor < xMin) {
+      const nm = d0.getUTCMonth() + 1;
+      cursor = Date.UTC(d0.getUTCFullYear() + Math.floor(nm / 12), nm % 12, 1);
+    }
+  } else {
+    // Alinear a lunes
+    const dow = d0.getUTCDay(); // 0=dom
+    const daysToMon = (dow === 0 ? 1 : (8 - dow) % 7 || 7);
+    cursor = xMin + daysToMon * 86400000;
+    cursor = Math.floor(cursor / (7 * 86400000)) * (7 * 86400000);
+    if (cursor < xMin) cursor += 7 * 86400000;
+  }
+
+  // Avanzar según step (meses o ms fijo)
+  const stepMonths = best >= 28 * 86400000 ? Math.round(best / (30.44 * 86400000)) : 0;
+
+  let safety = 0;
+  while (cursor <= xMax && safety++ < 100) {
+    if (cursor >= xMin) ticks.push(cursor);
+    if (stepMonths > 0) {
+      const td = new Date(cursor);
+      const nm = td.getUTCMonth() + stepMonths;
+      cursor = Date.UTC(td.getUTCFullYear() + Math.floor(nm / 12), nm % 12, 1);
+    } else {
+      cursor += best;
+    }
+  }
+
+  return { ticks, spanDays };
+}
+
 function drawLineChart(canvas, seriesData, opts = {}) {
   const {
     hLines = [], bands = [],
     xRange = null,
-    padding = { t: 14, r: 10, b: 22, l: 42 },
+    padding = { t: 14, r: 10, b: 28, l: 46 },
     GAP_DAYS = 10,
     unitMaxValue = 50,  // valores > esto se rechazan (evita mezclar pb con %)
   } = opts;
 
   const ctx = canvas.getContext('2d');
-  const dpr = window.devicePixelRatio || 1;
   const W   = canvas.width, H = canvas.height;
   const P   = padding;
   const cW  = W - P.l - P.r;
   const cH  = H - P.t - P.b;
 
-  ctx.clearRect(0, 0, W, H);
+  // Número de ticks X según ancho del canvas (móvil vs desktop)
+  const targetTicks = cW < 400 ? 5 : 10;
 
-  // ── 1. Validar y preparar series ──────────────────────────────────────────
-  const prepared = seriesData.map(s => {
-    const dates = s.dates || [];
-    const rawVals = s.vals || [];
-    // Construir pares válidos
-    const pts = [];
-    for (let i = 0; i < Math.min(dates.length, rawVals.length); i++) {
-      if (rawVals[i] == null) continue;                 // null = hueco explícito (warmup de MM)
-      const d = String(dates[i]).slice(0, 10);
-      const v = Number(rawVals[i]);
-      if (!isFinite(v) || isNaN(v)) continue;          // no finito
-      if (unitMaxValue != null && v > unitMaxValue) continue; // unidad incorrecta (pb en vez de %)
-      pts.push({ d, v, ms: new Date(d).getTime() });
-    }
-    // Ordenar ASC por fecha
-    pts.sort((a, b) => a.ms - b.ms);
-    return { ...s, pts };
-  });
+  // Función de dibujado base (sin crosshair) — se llama al montar y en cada repaint
+  function _drawStatic(crosshairX = null) {
+    ctx.clearRect(0, 0, W, H);
 
-  // ── 2. Filtrar por xRange ─────────────────────────────────────────────────
-  let fromMs = -Infinity, toMs = Infinity;
-  if (xRange?.fromDate) fromMs = new Date(xRange.fromDate).getTime();
-  if (xRange?.toDate)   toMs   = new Date(xRange.toDate).getTime();
-
-  const filtered = prepared.map(s => ({
-    ...s,
-    pts: s.pts.filter(p => p.ms >= fromMs && p.ms <= toMs),
-  }));
-
-  // ── 3. Calcular rango X global ────────────────────────────────────────────
-  const allMs = filtered.flatMap(s => s.pts.map(p => p.ms));
-  if (allMs.length === 0) {
-    // Sin datos: mostrar mensaje
-    ctx.fillStyle = 'rgba(140,140,140,0.5)';
-    ctx.font = '10px monospace';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('INSUFFICIENT DATA', W / 2, H / 2);
-    return;
-  }
-  const xMin = Math.min(...allMs), xMax = Math.max(...allMs);
-  const xSpan = xMax - xMin || 1;
-
-  // ── 4. Calcular rango Y (solo valores visibles de la serie primaria) ───────
-  const allVis = filtered.flatMap(s => s.pts.map(p => p.v));
-  const hLineVals = hLines.map(l => l.y).filter(v => isFinite(v));
-  const allForScale = [...allVis, ...hLineVals];
-  if (allForScale.length === 0) return;
-
-  let yMin = Math.min(...allForScale);
-  let yMax = Math.max(...allForScale);
-  const ySpan = yMax - yMin || 1;
-  const yPad  = ySpan * 0.10;
-  yMin -= yPad;
-  yMax += yPad;
-
-  // ── 5. Funciones de proyección ────────────────────────────────────────────
-  const toX = ms  => P.l + ((ms - xMin) / xSpan) * cW;
-  const toY = v   => P.t + cH - ((v - yMin) / (yMax - yMin)) * cH;
-
-  // ── 6. Bandas de fondo ────────────────────────────────────────────────────
-  bands.forEach(b => {
-    const by1 = Math.max(P.t, toY(Math.min(b.yMax, yMax)));
-    const by2 = Math.min(P.t + cH, toY(Math.max(b.yMin, yMin)));
-    if (by2 > by1) {
-      ctx.fillStyle = b.color;
-      ctx.fillRect(P.l, by1, cW, by2 - by1);
-    }
-  });
-
-  // ── 7. Grid Y (4 líneas) ──────────────────────────────────────────────────
-  const nGrid = 4;
-  ctx.font = '8px monospace';
-  ctx.textAlign = 'right';
-  ctx.textBaseline = 'middle';
-  for (let i = 0; i <= nGrid; i++) {
-    const v = yMin + (yMax - yMin) * (i / nGrid);
-    const y = toY(v);
-    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
-    ctx.lineWidth = 0.5;
-    ctx.setLineDash([]);
-    ctx.beginPath(); ctx.moveTo(P.l, y); ctx.lineTo(W - P.r, y); ctx.stroke();
-    ctx.fillStyle = 'rgba(140,140,140,0.65)';
-    ctx.fillText(v.toFixed(2), P.l - 3, y);
-  }
-
-  // ── 8. Labels eje X (3 puntos: inicio, medio, fin) ───────────────────────
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'top';
-  ctx.fillStyle = 'rgba(140,140,140,0.55)';
-  ctx.font = '8px monospace';
-  const xLabels = [xMin, (xMin + xMax) / 2, xMax];
-  xLabels.forEach((ms, i) => {
-    const x = toX(ms);
-    const label = new Date(ms).toISOString().slice(0, 7); // YYYY-MM
-    const align = i === 0 ? 'left' : i === 2 ? 'right' : 'center';
-    ctx.textAlign = align;
-    ctx.fillText(label, x, P.t + cH + 3);
-  });
-
-  // ── 9. H-Lines (niveles de referencia, p.ej. VIX 20 y 30) ───────────────
-  hLines.forEach(l => {
-    if (!isFinite(l.y)) return;
-    const y = toY(l.y);
-    ctx.save();
-    ctx.setLineDash(l.dash || [3, 3]);
-    ctx.strokeStyle = l.color || 'rgba(255,255,255,0.3)';
-    ctx.lineWidth   = l.width || 0.8;
-    ctx.beginPath(); ctx.moveTo(P.l, y); ctx.lineTo(W - P.r, y); ctx.stroke();
-    if (l.label) {
-      ctx.fillStyle = l.color || 'rgba(255,255,255,0.4)';
-      ctx.font = '8px monospace';
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'bottom';
-      ctx.fillText(l.label, P.l + 3, y - 1);
-    }
-    ctx.restore();
-  });
-
-  // ── 10. Dibujar series ────────────────────────────────────────────────────
-  const GAP_MS = GAP_DAYS * 86400000;
-
-  filtered.forEach(s => {
-    const pts = s.pts;
-    if (pts.length < 2) return;
-
-    ctx.save();
-    ctx.setLineDash(s.dash || []);
-    ctx.strokeStyle = s.color || 'rgba(255,255,255,0.8)';
-    ctx.lineWidth   = s.width || 1.5;
-    ctx.lineJoin    = 'round';
-    ctx.lineCap     = 'round';
-
-    // Trazar segmentos separados por huecos
-    ctx.beginPath();
-    let penDown = false;
-    let lastFillX = null, lastFillY = null;
-    const fillPts = [];
-
-    for (let i = 0; i < pts.length; i++) {
-      const { ms, v } = pts[i];
-      const x = toX(ms), y = toY(v);
-      const gap = i > 0 && (ms - pts[i-1].ms) > GAP_MS;
-      if (!penDown || gap) {
-        ctx.moveTo(x, y);
-        penDown = true;
-      } else {
-        ctx.lineTo(x, y);
+    // ── 1. Validar y preparar series ────────────────────────────────────────
+    const prepared = seriesData.map(s => {
+      const dates = s.dates || [];
+      const rawVals = s.vals || [];
+      const pts = [];
+      for (let i = 0; i < Math.min(dates.length, rawVals.length); i++) {
+        if (rawVals[i] == null) continue;
+        const d = String(dates[i]).slice(0, 10);
+        const v = Number(rawVals[i]);
+        if (!isFinite(v) || isNaN(v)) continue;
+        if (unitMaxValue != null && v > unitMaxValue) continue;
+        pts.push({ d, v, ms: new Date(d).getTime() });
       }
-      if (s.fill) fillPts.push({ x, y });
-    }
-    ctx.stroke();
+      pts.sort((a, b) => a.ms - b.ms);
+      return { ...s, pts };
+    });
 
-    // Fill bajo la primera serie
-    if (s.fill && fillPts.length >= 2) {
-      ctx.globalAlpha = 0.07;
-      ctx.fillStyle = s.color || 'rgba(255,255,255,0.1)';
+    // ── 2. Filtrar por xRange ──────────────────────────────────────────────
+    let fromMs = -Infinity, toMs = Infinity;
+    if (xRange?.fromDate) fromMs = new Date(xRange.fromDate).getTime();
+    if (xRange?.toDate)   toMs   = new Date(xRange.toDate).getTime();
+
+    const filtered = prepared.map(s => ({
+      ...s,
+      pts: s.pts.filter(p => p.ms >= fromMs && p.ms <= toMs),
+    }));
+
+    // ── 3. Rango X global ──────────────────────────────────────────────────
+    const allMs = filtered.flatMap(s => s.pts.map(p => p.ms));
+    if (allMs.length === 0) {
+      ctx.fillStyle = 'rgba(140,140,140,0.5)';
+      ctx.font = '10px monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('INSUFFICIENT DATA', W / 2, H / 2);
+      return null;
+    }
+    const xMin = Math.min(...allMs), xMax = Math.max(...allMs);
+    const xSpan = xMax - xMin || 1;
+
+    // ── 4. Rango Y ────────────────────────────────────────────────────────
+    const allVis = filtered.flatMap(s => s.pts.map(p => p.v));
+    const hLineVals = hLines.map(l => l.y).filter(v => isFinite(v));
+    const allForScale = [...allVis, ...hLineVals];
+    if (allForScale.length === 0) return null;
+
+    let yMin = Math.min(...allForScale);
+    let yMax = Math.max(...allForScale);
+    const ySpan = yMax - yMin || 1;
+    const yPad  = ySpan * 0.10;
+    yMin -= yPad;
+    yMax += yPad;
+
+    // ── 5. Proyección ─────────────────────────────────────────────────────
+    const toX = ms => P.l + ((ms - xMin) / xSpan) * cW;
+    const toY = v  => P.t + cH - ((v - yMin) / (yMax - yMin)) * cH;
+
+    // ── 6. Bandas ─────────────────────────────────────────────────────────
+    bands.forEach(b => {
+      const by1 = Math.max(P.t, toY(Math.min(b.yMax, yMax)));
+      const by2 = Math.min(P.t + cH, toY(Math.max(b.yMin, yMin)));
+      if (by2 > by1) { ctx.fillStyle = b.color; ctx.fillRect(P.l, by1, cW, by2 - by1); }
+    });
+
+    // ── 7. Ticks X — calcular posiciones ──────────────────────────────────
+    const { ticks: rawTicks, spanDays } = _xTicks(xMin, xMax, targetTicks);
+
+    // Siempre incluir primer y último punto; filtrar los que caen fuera
+    const ticksMs = [...new Set([xMin, ...rawTicks.filter(t => t > xMin && t < xMax), xMax])];
+
+    // Calcular labels y posiciones X
+    const FONT_SIZE = 8;
+    ctx.font = `${FONT_SIZE}px monospace`;
+    const labelW = ctx.measureText('ene 26 ').width; // ancho de referencia
+
+    // Anti-solapamiento: eliminar ticks demasiado cercanos excepto el primero y el último
+    const kept = [];
+    for (let i = 0; i < ticksMs.length; i++) {
+      const x = toX(ticksMs[i]);
+      if (i === 0 || i === ticksMs.length - 1) { kept.push(ticksMs[i]); continue; }
+      const prevX = toX(kept[kept.length - 1]);
+      const nextX = toX(ticksMs[ticksMs.length - 1]);
+      if (x - prevX >= labelW * 1.5 && nextX - x >= labelW * 1.5) kept.push(ticksMs[i]);
+    }
+
+    // ── 8. Grid vertical X (tenue) + Labels eje X ─────────────────────────
+    ctx.setLineDash([]);
+    kept.forEach((ms, i) => {
+      const x = toX(ms);
+      // Grid vertical
+      ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+      ctx.lineWidth = 0.5;
+      ctx.beginPath(); ctx.moveTo(x, P.t); ctx.lineTo(x, P.t + cH); ctx.stroke();
+
+      // Label
+      const label = _fmtXLabel(ms, spanDays);
+      ctx.fillStyle = 'rgba(140,140,140,0.65)';
+      ctx.font = `${FONT_SIZE}px monospace`;
+      ctx.textBaseline = 'top';
+      const align = i === 0 ? 'left' : i === kept.length - 1 ? 'right' : 'center';
+      ctx.textAlign = align;
+      ctx.fillText(label, x, P.t + cH + 4);
+    });
+
+    // ── 9. Grid Y (4 líneas) ──────────────────────────────────────────────
+    const nGrid = 4;
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.font = `${FONT_SIZE}px monospace`;
+    for (let i = 0; i <= nGrid; i++) {
+      const v = yMin + (yMax - yMin) * (i / nGrid);
+      const y = toY(v);
+      ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+      ctx.lineWidth = 0.5;
+      ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(P.l, y); ctx.lineTo(W - P.r, y); ctx.stroke();
+      ctx.fillStyle = 'rgba(140,140,140,0.65)';
+      ctx.fillText(v.toFixed(2), P.l - 3, y);
+    }
+
+    // ── 10. H-Lines ───────────────────────────────────────────────────────
+    hLines.forEach(l => {
+      if (!isFinite(l.y)) return;
+      const y = toY(l.y);
+      ctx.save();
+      ctx.setLineDash(l.dash || [3, 3]);
+      ctx.strokeStyle = l.color || 'rgba(255,255,255,0.3)';
+      ctx.lineWidth   = l.width || 0.8;
+      ctx.beginPath(); ctx.moveTo(P.l, y); ctx.lineTo(W - P.r, y); ctx.stroke();
+      if (l.label) {
+        ctx.fillStyle = l.color || 'rgba(255,255,255,0.4)';
+        ctx.font = '8px monospace';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(l.label, P.l + 3, y - 1);
+      }
+      ctx.restore();
+    });
+
+    // ── 11. Dibujar series ────────────────────────────────────────────────
+    const GAP_MS = GAP_DAYS * 86400000;
+    filtered.forEach(s => {
+      const pts = s.pts;
+      if (pts.length < 2) return;
+      ctx.save();
+      ctx.setLineDash(s.dash || []);
+      ctx.strokeStyle = s.color || 'rgba(255,255,255,0.8)';
+      ctx.lineWidth   = s.width || 1.5;
+      ctx.lineJoin    = 'round';
+      ctx.lineCap     = 'round';
       ctx.beginPath();
-      ctx.moveTo(fillPts[0].x, fillPts[0].y);
-      fillPts.forEach(p => ctx.lineTo(p.x, p.y));
-      ctx.lineTo(fillPts[fillPts.length - 1].x, P.t + cH);
-      ctx.lineTo(fillPts[0].x, P.t + cH);
-      ctx.closePath();
-      ctx.fill();
-      ctx.globalAlpha = 1;
+      let penDown = false;
+      const fillPts = [];
+      for (let i = 0; i < pts.length; i++) {
+        const { ms, v } = pts[i];
+        const x = toX(ms), y = toY(v);
+        const gap = i > 0 && (ms - pts[i-1].ms) > GAP_MS;
+        if (!penDown || gap) { ctx.moveTo(x, y); penDown = true; }
+        else ctx.lineTo(x, y);
+        if (s.fill) fillPts.push({ x, y });
+      }
+      ctx.stroke();
+      if (s.fill && fillPts.length >= 2) {
+        ctx.globalAlpha = 0.07;
+        ctx.fillStyle = s.color || 'rgba(255,255,255,0.1)';
+        ctx.beginPath();
+        ctx.moveTo(fillPts[0].x, fillPts[0].y);
+        fillPts.forEach(p => ctx.lineTo(p.x, p.y));
+        ctx.lineTo(fillPts[fillPts.length - 1].x, P.t + cH);
+        ctx.lineTo(fillPts[0].x, P.t + cH);
+        ctx.closePath();
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+      ctx.restore();
+    });
+
+    // ── 12. Crosshair ─────────────────────────────────────────────────────
+    if (crosshairX !== null) {
+      ctx.save();
+      ctx.setLineDash([3, 3]);
+      ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.moveTo(crosshairX, P.t);
+      ctx.lineTo(crosshairX, P.t + cH);
+      ctx.stroke();
+      ctx.restore();
     }
 
-    ctx.restore();
-  });
+    return { filtered, toX, toY, xMin, xMax, xSpan, yMin, yMax, spanDays };
+  }
+
+  // Primer dibujado
+  let _state = _drawStatic(null);
+
+  // ── Crosshair y tooltip via mousemove ─────────────────────────────────────
+  // Eliminar listeners anteriores (por si se redibujan)
+  if (canvas._chartCleanup) canvas._chartCleanup();
+
+  if (!_state) return; // sin datos, no montar listeners
+
+  // Tooltip DOM (uno reutilizable por canvas)
+  let _tt = canvas._tooltip;
+  if (!_tt) {
+    _tt = document.createElement('div');
+    _tt.style.cssText = [
+      'position:absolute;pointer-events:none;z-index:200',
+      'background:rgba(18,22,30,0.93)',
+      'border:1px solid rgba(255,255,255,0.13)',
+      'border-radius:5px',
+      'padding:5px 9px',
+      'font-family:monospace',
+      'font-size:10px',
+      'color:#d4d4d8',
+      'white-space:nowrap',
+      'display:none',
+      'box-shadow:0 2px 8px rgba(0,0,0,0.5)',
+    ].join(';');
+    // Insertar junto al canvas (necesita padre con position:relative)
+    const parent = canvas.parentElement;
+    if (parent) {
+      if (getComputedStyle(parent).position === 'static') parent.style.position = 'relative';
+      parent.appendChild(_tt);
+    }
+    canvas._tooltip = _tt;
+  }
+
+  function _onMove(e) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = W / rect.width;
+    const cx = (e.clientX - rect.left) * scaleX;
+    if (cx < P.l || cx > P.l + cW) { _tt.style.display = 'none'; _drawStatic(null); return; }
+
+    _drawStatic(cx);
+
+    // Fecha del cursor
+    const { xMin, xMax, xSpan, filtered, spanDays } = _state || {};
+    if (!filtered) return;
+    const hoverMs = xMin + ((cx - P.l) / cW) * xSpan;
+    const hoverDate = new Date(hoverMs);
+    const isoDate = hoverDate.toISOString().slice(0, 10);
+    const dayStr  = `${hoverDate.getUTCDate()} ${_MESES_CORTO[hoverDate.getUTCMonth()]} ${hoverDate.getUTCFullYear()}`;
+
+    // Valor de cada serie en ese punto (interpolación lineal)
+    const lines = filtered.map(s => {
+      if (!s.pts.length || !s.label) return null;
+      // Buscar el punto más cercano
+      let lo = null, hi = null;
+      for (const p of s.pts) {
+        if (p.ms <= hoverMs) lo = p;
+        else if (hi === null) hi = p;
+      }
+      let val = null;
+      if (lo && hi) {
+        const t = (hoverMs - lo.ms) / (hi.ms - lo.ms);
+        val = lo.v + t * (hi.v - lo.v);
+      } else if (lo) val = lo.v;
+      else if (hi) val = hi.v;
+      if (val === null) return null;
+      return `<span style="color:${s.color || '#fff'}">${s.label}</span> <b>${val.toFixed(2)}</b>`;
+    }).filter(Boolean);
+
+    _tt.innerHTML = `<div style="color:rgba(180,180,180,0.7);margin-bottom:3px;font-size:9px;">${dayStr}</div>${lines.join('<br>')}`;
+    _tt.style.display = 'block';
+
+    // Posición del tooltip
+    const ttW = _tt.offsetWidth || 120;
+    const ttH = _tt.offsetHeight || 60;
+    const relX = e.clientX - rect.left;
+    const relY = e.clientY - rect.top;
+    const flipX = relX + ttW + 14 > rect.width;
+    _tt.style.left  = `${flipX ? relX - ttW - 8 : relX + 10}px`;
+    _tt.style.top   = `${Math.max(0, relY - ttH / 2)}px`;
+  }
+
+  function _onLeave() {
+    _tt.style.display = 'none';
+    _drawStatic(null);
+  }
+
+  canvas.addEventListener('mousemove', _onMove);
+  canvas.addEventListener('mouseleave', _onLeave);
+
+  canvas._chartCleanup = () => {
+    canvas.removeEventListener('mousemove', _onMove);
+    canvas.removeEventListener('mouseleave', _onLeave);
+    if (canvas._tooltip) { canvas._tooltip.remove(); canvas._tooltip = null; }
+  };
 }
 
 // ─── Sparkline mini (sin ejes, usa drawLineChart simplificado) ───────────────
