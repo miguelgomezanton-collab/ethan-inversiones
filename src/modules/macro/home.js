@@ -877,12 +877,28 @@ export async function render(container, { actionsSlot }) {
         </div>
         <!-- Canvas VIX -->
         <canvas id="vix-chart" width="900" height="460" class="chart-canvas-main"></canvas>
-        <!-- Leyenda -->
-        <div style="display:flex;gap:10px;margin-top:8px;flex-wrap:wrap;">
-          <div style="display:flex;align-items:center;gap:4px;"><div style="width:14px;height:2px;background:var(--red);"></div><span style="font-size:8px;color:var(--text3);font-family:var(--mono);">VIX</span></div>
-          <div style="display:flex;align-items:center;gap:4px;"><div style="width:14px;height:1px;background:var(--amber);"></div><span style="font-size:8px;color:var(--text3);font-family:var(--mono);">VIX3M</span></div>
-          <div style="display:flex;align-items:center;gap:4px;"><div style="width:14px;height:1px;border-top:1px dashed var(--amber);"></div><span style="font-size:8px;color:var(--text3);font-family:var(--mono);">MM100</span></div>
-          <div style="display:flex;align-items:center;gap:4px;"><div style="width:14px;height:1px;border-top:1px dashed rgba(255,255,255,0.3);"></div><span style="font-size:8px;color:var(--text3);font-family:var(--mono);">MM200</span></div>
+        <!-- Leyenda VIX con toggles -->
+        <div style="display:flex;gap:14px;margin-top:8px;flex-wrap:wrap;align-items:center;">
+          <label style="display:flex;align-items:center;gap:5px;cursor:pointer;user-select:none;">
+            <input type="checkbox" id="vix-tog-vix" checked style="accent-color:#e2e8f0;">
+            <div style="width:14px;height:2px;background:#e2e8f0;"></div>
+            <span style="font-size:8px;color:var(--text3);font-family:var(--mono);">VIX</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:5px;cursor:pointer;user-select:none;">
+            <input type="checkbox" id="vix-tog-vix3m" checked style="accent-color:#f97316;">
+            <div style="width:14px;height:1px;border-top:2px dashed #f97316;"></div>
+            <span style="font-size:8px;color:var(--text3);font-family:var(--mono);">VIX3M</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:5px;cursor:pointer;user-select:none;">
+            <input type="checkbox" id="vix-tog-mm100" checked style="accent-color:#60a5fa;">
+            <div style="width:14px;height:1px;border-top:2px dashed #60a5fa;"></div>
+            <span style="font-size:8px;color:var(--text3);font-family:var(--mono);">MM100</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:5px;cursor:pointer;user-select:none;">
+            <input type="checkbox" id="vix-tog-mm200" checked style="accent-color:#a78bfa;">
+            <div style="width:14px;height:1px;border-top:2px dashed #a78bfa;"></div>
+            <span style="font-size:8px;color:var(--text3);font-family:var(--mono);">MM200</span>
+          </label>
         </div>
       </div>
 
@@ -1161,7 +1177,7 @@ export async function render(container, { actionsSlot }) {
         function vixRedraw() {
           document.querySelectorAll('#vix-range-btns button').forEach(b => {
             const active = b.dataset.range === vixActiveRange;
-            b.style.background = active ? '#f47174' : 'transparent';
+            b.style.background = active ? '#e2e8f0' : 'transparent';
             b.style.color = active ? '#000' : 'var(--text3)';
             b.style.fontWeight = active ? '700' : '400';
           });
@@ -1174,22 +1190,31 @@ export async function render(container, { actionsSlot }) {
             return;
           }
 
-          // MM100 y MM200 sobre VIX (null durante warmup → no se unen)
+          // MM100 y MM200 sobre VIX — calculadas sobre histórico completo, sin recortar
           const mm100Vix = rollingMA(vVals, 100);
           const mm200Vix = rollingMA(vVals, 200);
 
           const fromDate = rangeFromDate(vixActiveRange);
           const xRange = fromDate ? { fromDate, toDate: vDates[vDates.length - 1] } : null;
 
-          drawLineChart(vixCanvas, [
-            { dates: vDates,  vals: vVals,    color: '#f47174', width: 2,   label: 'VIX'   },
-            { dates: v3Dates, vals: v3Vals,   color: '#fbbf24', width: 1.5, dash: [4,3], label: 'VIX3M' },
-            { dates: vDates,  vals: mm100Vix, color: 'rgba(251,191,36,0.6)', width: 1, dash: [3,3], label: 'MM100' },
-            { dates: vDates,  vals: mm200Vix, color: 'rgba(255,255,255,0.3)', width: 1, dash: [2,4], label: 'MM200' },
-          ], {
+          // Leer toggles
+          const tog = {
+            vix   : document.getElementById('vix-tog-vix')?.checked   ?? true,
+            vix3m : document.getElementById('vix-tog-vix3m')?.checked  ?? true,
+            mm100 : document.getElementById('vix-tog-mm100')?.checked  ?? true,
+            mm200 : document.getElementById('vix-tog-mm200')?.checked  ?? true,
+          };
+
+          const series = [];
+          if (tog.vix)   series.push({ dates: vDates,  vals: vVals,    color: '#e2e8f0', width: 2,   label: 'VIX'   });
+          if (tog.vix3m) series.push({ dates: v3Dates, vals: v3Vals,   color: '#f97316', width: 1.5, dash: [4,3], label: 'VIX3M' });
+          if (tog.mm100) series.push({ dates: vDates,  vals: mm100Vix, color: '#60a5fa', width: 1.2, dash: [3,3], label: 'MM100' });
+          if (tog.mm200) series.push({ dates: vDates,  vals: mm200Vix, color: '#a78bfa', width: 1,   dash: [2,4], label: 'MM200' });
+
+          drawLineChart(vixCanvas, series, {
             hLines: [
-              { y: 20, color: 'rgba(251,191,36,0.55)',   dash: [3,3], label: '20', width: 0.8 },
-              { y: 30, color: 'rgba(244,113,116,0.55)',  dash: [3,3], label: '30', width: 0.8 },
+              { y: 20, color: 'rgba(251,191,36,0.45)',  dash: [3,3], label: '20', width: 0.8 },
+              { y: 30, color: 'rgba(244,113,116,0.45)', dash: [3,3], label: '30', width: 0.8 },
             ],
             xRange,
             GAP_DAYS: 10,
@@ -1201,6 +1226,11 @@ export async function render(container, { actionsSlot }) {
 
         document.querySelectorAll('#vix-range-btns button').forEach(b => {
           b.addEventListener('click', () => { vixActiveRange = b.dataset.range; vixRedraw(); });
+        });
+
+        // Binding toggles VIX
+        ['vix-tog-vix','vix-tog-vix3m','vix-tog-mm100','vix-tog-mm200'].forEach(id => {
+          document.getElementById(id)?.addEventListener('change', vixRedraw);
         });
       }
 
