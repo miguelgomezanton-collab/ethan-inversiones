@@ -114,6 +114,7 @@ function drawLineChart(canvas, seriesData, opts = {}) {
     // Construir pares válidos
     const pts = [];
     for (let i = 0; i < Math.min(dates.length, rawVals.length); i++) {
+      if (rawVals[i] == null) continue;                 // null = hueco explícito (warmup de MM)
       const d = String(dates[i]).slice(0, 10);
       const v = Number(rawVals[i]);
       if (!isFinite(v) || isNaN(v)) continue;          // no finito
@@ -595,170 +596,137 @@ export async function render(container, { actionsSlot }) {
         }).join('')}
       </div>` : ''}
 
-      <!-- ══ 3. TRES TARJETAS VISUALES ══ -->
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:14px;">
+      <!-- ══ 3. GRÁFICOS APILADOS ══ -->
+      <style>
+        .chart-canvas-main { width:100%; height:clamp(320px,50vw,480px); display:block; border-radius:4px; background:var(--surface2); }
+        @media(min-width:768px){ .chart-canvas-main { height:460px; } }
+      </style>
 
-        <!-- ─ A. HY OAS ─ -->
-        <div class="mac-card" style="padding:14px;">
-          <!-- Header -->
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-            <div>
-              <div style="font-family:var(--mono);font-size:8px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text3);">Crédito · HY OAS</div>
-              <div style="display:flex;align-items:baseline;gap:8px;margin-top:2px;">
-                <span style="font-size:22px;font-weight:700;color:${hy ? stateColor(hy.hyState) : 'var(--text3)'};">${hy ? f2(hy.value) : '—'}<span style="font-size:11px;color:var(--text3);margin-left:2px;">%</span></span>
-              </div>
-              <div style="display:flex;gap:8px;margin-top:3px;">
-                ${hy ? `<span style="font-family:var(--mono);font-size:9px;color:${chgColor(hy.chg1d,'up-bad')};">${hy.chg1d != null ? (hy.chg1d>0?'+':'')+f2(hy.chg1d) : '—'}pp <span style="color:var(--text3);">1D</span></span>` : ''}
-                ${hy ? `<span style="font-family:var(--mono);font-size:9px;color:${chgColor(hy.chg5d,'up-bad')};">${hy.chg5d != null ? (hy.chg5d>0?'+':'')+f2(hy.chg5d) : '—'}pp <span style="color:var(--text3);">5D</span></span>` : ''}
-              </div>
-            </div>
-            <div style="text-align:right;">
-              ${hy ? chip(stateLabel(hy.hyState), stateColor(hy.hyState)) : ''}
-              ${hy ? `<div style="margin-top:4px;">${freshDot(hy.freshness)}<span style="font-family:var(--mono);font-size:8px;color:var(--text3);margin-left:3px;">${hy.ageDays}d</span></div>` : ''}
-            </div>
+      <!-- ─ A. HIGH YIELD OAS ─ -->
+      <div class="mac-card" style="padding:14px 16px;margin-bottom:14px;">
+        <!-- Cabecera compacta -->
+        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:10px;">
+          <div style="font-family:var(--mono);font-size:8px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text3);min-width:90px;">HIGH YIELD OAS</div>
+          <span style="font-size:20px;font-weight:800;color:${hy ? stateColor(hy.hyState) : 'var(--text3)'};">${hy ? f2(hy.value) : '—'}<span style="font-size:10px;color:var(--text3);margin-left:2px;">%</span></span>
+          <div style="display:flex;gap:8px;">
+            ${hy ? `<span style="font-family:var(--mono);font-size:9px;color:${chgColor(hy.chg1d,'up-bad')};">${hy.chg1d!=null?(hy.chg1d>0?'+':'')+f2(hy.chg1d):'—'}pp <span style="color:var(--text3);">1D</span></span>` : ''}
+            ${hy ? `<span style="font-family:var(--mono);font-size:9px;color:${chgColor(hy.chg5d,'up-bad')};">${hy.chg5d!=null?(hy.chg5d>0?'+':'')+f2(hy.chg5d):'—'}pp <span style="color:var(--text3);">5D</span></span>` : ''}
+            ${hy ? `<span style="font-family:var(--mono);font-size:9px;color:${chgColor(hy.chg20d,'up-bad')};">${hy.chg20d!=null?(hy.chg20d>0?'+':'')+f2(hy.chg20d):'—'}pp <span style="color:var(--text3);">20D</span></span>` : ''}
           </div>
-
-          <!-- Selector rango HY OAS -->
-          <div style="display:flex;gap:4px;margin-bottom:6px;" id="hy-range-btns">
-            ${['3M','1A','3A','Máx'].map((r,i)=>`<button data-range="${r}" style="font-family:var(--mono);font-size:8px;padding:2px 6px;border-radius:3px;border:1px solid var(--border);background:${i===1?'var(--teal)':'transparent'};color:${i===1?'#000':'var(--text3)'};font-weight:${i===1?'700':'400'};cursor:pointer;">${r}</button>`).join('')}
-          </div>
-
-          <!-- Canvas gráfico -->
-          <canvas id="hy-chart" width="340" height="120" style="width:100%;height:120px;display:block;border-radius:4px;background:var(--surface2);"></canvas>
-
-          <!-- Leyenda -->
-          <div style="display:flex;gap:12px;margin-top:6px;flex-wrap:wrap;">
-            <div style="display:flex;align-items:center;gap:4px;"><div style="width:14px;height:2px;background:var(--teal);"></div><span style="font-size:8px;color:var(--text3);font-family:var(--mono);">HY OAS</span></div>
-            <div style="display:flex;align-items:center;gap:4px;"><div style="width:14px;height:1px;background:var(--amber);border-top:1px dashed var(--amber);"></div><span style="font-size:8px;color:var(--text3);font-family:var(--mono);">MM100</span></div>
-            <div style="display:flex;align-items:center;gap:4px;"><div style="width:14px;height:1px;background:rgba(255,255,255,0.4);border-top:1px dashed rgba(255,255,255,0.4);"></div><span style="font-size:8px;color:var(--text3);font-family:var(--mono);">MM200</span></div>
-            <button id="hy-detail-btn" style="margin-left:auto;font-family:var(--mono);font-size:8px;color:var(--teal);background:none;border:none;cursor:pointer;padding:0;">▾ Ver detalle</button>
-          </div>
-
-          <!-- Detalle oculto -->
-          <div id="hy-detail" style="display:none;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);">
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;">
-              ${hy ? [
-                ['Percentil', hy.percentile != null ? hy.percentile + '%' : '—'],
-                ['Z-score 3Y', hy.zscore3y != null ? f2(hy.zscore3y) : '—'],
-                ['MM100', f2(hy.mm100)], ['MM200', f2(hy.mm200)],
-                ['Obs.', hy.nObs || '—'], ['Desde', hy.dateFrom || '—'],
-                ['Chg 20D', hy.chg20d != null ? (hy.chg20d>0?'+':'')+f2(hy.chg20d)+'pp' : '—'], ['Fecha', hy.date || '—'],
-              ].map(([k,v]) => `<div style="font-size:9px;"><span style="color:var(--text3);font-family:var(--mono);">${k}: </span><span style="color:var(--text1);">${v}</span></div>`).join('') : ''}
-            </div>
+          ${hy ? chip(stateLabel(hy.hyState), stateColor(hy.hyState)) : ''}
+          ${hy ? `${freshDot(hy.freshness)}<span style="font-family:var(--mono);font-size:8px;color:var(--text3);margin-left:3px;">${hy.ageDays}d</span>` : ''}
+          <div style="flex:1;"></div>
+          <!-- Selector rango -->
+          <div style="display:flex;gap:4px;" id="hy-range-btns">
+            ${['3M','1A','3A','Máx'].map((r,i)=>`<button data-range="${r}" style="font-family:var(--mono);font-size:8px;padding:2px 7px;border-radius:3px;border:1px solid var(--border);background:${i===1?'var(--teal)':'transparent'};color:${i===1?'#000':'var(--text3)'};font-weight:${i===1?'700':'400'};cursor:pointer;">${r}</button>`).join('')}
           </div>
         </div>
+        <!-- Máx disponible label -->
+        <div id="hy-max-label" style="font-family:var(--mono);font-size:8px;color:var(--text3);margin-bottom:6px;display:none;"></div>
+        <!-- Canvas principal -->
+        <canvas id="hy-chart" width="900" height="460" class="chart-canvas-main"></canvas>
+        <!-- Leyenda toggleable -->
+        <div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap;align-items:center;">
+          <label style="display:flex;align-items:center;gap:5px;cursor:pointer;"><input type="checkbox" id="hy-tog-hy" checked style="accent-color:var(--teal);"><div style="width:14px;height:2px;background:var(--teal);"></div><span style="font-size:8px;color:var(--text3);font-family:var(--mono);">HY OAS</span></label>
+          <label style="display:flex;align-items:center;gap:5px;cursor:pointer;"><input type="checkbox" id="hy-tog-mm100" checked style="accent-color:var(--amber);"><div style="width:14px;height:1px;border-top:1px dashed var(--amber);"></div><span style="font-size:8px;color:var(--text3);font-family:var(--mono);">MM100</span></label>
+          <label style="display:flex;align-items:center;gap:5px;cursor:pointer;"><input type="checkbox" id="hy-tog-mm200" checked style="accent-color:rgba(255,255,255,0.4);"><div style="width:14px;height:1px;border-top:1px dashed rgba(255,255,255,0.4);"></div><span style="font-size:8px;color:var(--text3);font-family:var(--mono);">MM200</span></label>
+          <button id="hy-detail-btn" style="margin-left:auto;font-family:var(--mono);font-size:8px;color:var(--teal);background:none;border:none;cursor:pointer;padding:0;">▾ Ver detalle</button>
+        </div>
+        <!-- Detalle oculto -->
+        <div id="hy-detail" style="display:none;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);">
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;">
+            ${hy ? [
+              ['Percentil', hy.percentile != null ? hy.percentile + '%' : '—'],
+              ['Z-score 3Y', hy.zscore3y != null ? f2(hy.zscore3y) : '—'],
+              ['MM100', f2(hy.mm100)], ['MM200', f2(hy.mm200)],
+              ['Obs.', hy.nObs || '—'], ['Desde', hy.dateFrom || '—'],
+              ['Chg 20D', hy.chg20d != null ? (hy.chg20d>0?'+':'')+f2(hy.chg20d)+'pp' : '—'], ['Fecha', hy.date || '—'],
+            ].map(([k,v]) => `<div style="font-size:9px;"><span style="color:var(--text3);font-family:var(--mono);">${k}: </span><span style="color:var(--text1);">${v}</span></div>`).join('') : ''}
+          </div>
+        </div>
+      </div>
 
-        <!-- ─ B. VOLATILIDAD ─ -->
-        <div class="mac-card" style="padding:14px;">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+      <!-- ─ B. VOLATILIDAD VIX ─ -->
+      <div class="mac-card" style="padding:14px 16px;margin-bottom:14px;">
+        <!-- Cabecera compacta -->
+        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:10px;">
+          <div style="font-family:var(--mono);font-size:8px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text3);min-width:90px;">VOLATILIDAD · VIX</div>
+          <div style="display:flex;align-items:baseline;gap:10px;">
             <div>
-              <div style="font-family:var(--mono);font-size:8px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text3);">Volatilidad · VIX</div>
-              <div style="display:flex;align-items:baseline;gap:12px;margin-top:2px;">
-                <div>
-                  <span style="font-size:8px;color:var(--text3);font-family:var(--mono);">VIX</span>
-                  <span style="font-size:22px;font-weight:700;color:${vix?.aboveMM200?'var(--red)':'var(--green)'};">${vix ? f1(vix.value) : '—'}</span>
-                  ${vix ? `<div style="font-family:var(--mono);font-size:9px;color:${chgColor(vix.chg1d,'up-bad')};">${vix.chg1d!=null?(vix.chg1d>0?'+':'')+f2(vix.chg1d):''} <span style="color:var(--text3);">1D</span></div>` : ''}
-                </div>
-                <div>
-                  <span style="font-size:8px;color:var(--text3);font-family:var(--mono);">VIX3M</span>
-                  <span style="font-size:22px;font-weight:700;color:var(--text2);">${vix3 ? f1(vix3.value) : '—'}</span>
-                  ${vix3 ? `<div style="font-family:var(--mono);font-size:9px;color:${chgColor(vix3.chg1d,'up-bad')};">${vix3.chg1d!=null?(vix3.chg1d>0?'+':'')+f2(vix3.chg1d):''} <span style="color:var(--text3);">1D</span></div>` : ''}
-                </div>
-              </div>
+              <span style="font-size:8px;color:var(--text3);font-family:var(--mono);">VIX </span>
+              <span style="font-size:20px;font-weight:800;color:${vix?.aboveMM200?'var(--red)':'var(--green)'};">${vix ? f1(vix.value) : '—'}</span>
+              ${vix ? `<span style="font-family:var(--mono);font-size:9px;color:${chgColor(vix.chg1d,'up-bad')};margin-left:4px;">${vix.chg1d!=null?(vix.chg1d>0?'+':'')+f2(vix.chg1d):''} <span style="color:var(--text3);">1D</span></span>` : ''}
             </div>
-            <div style="text-align:right;">
-              ${vix ? chip(vix.aboveMM200?'SOBRE MM200':'BAJO MM200', vix.aboveMM200?'var(--red)':'var(--green)') : ''}
-              ${vix ? `<div style="margin-top:4px;">${freshDot(vix.freshness)}<span style="font-family:var(--mono);font-size:8px;color:var(--text3);margin-left:3px;">${vix.ageDays}d</span></div>` : ''}
+            <div style="width:1px;height:16px;background:var(--border);"></div>
+            <div>
+              <span style="font-size:8px;color:var(--text3);font-family:var(--mono);">VIX3M </span>
+              <span style="font-size:20px;font-weight:800;color:var(--text2);">${vix3 ? f1(vix3.value) : '—'}</span>
+              ${vix3 ? `<span style="font-family:var(--mono);font-size:9px;color:${chgColor(vix3.chg1d,'up-bad')};margin-left:4px;">${vix3.chg1d!=null?(vix3.chg1d>0?'+':'')+f2(vix3.chg1d):''} <span style="color:var(--text3);">1D</span></span>` : ''}
+            </div>
+            <div style="width:1px;height:16px;background:var(--border);"></div>
+            <div>
+              <span style="font-size:8px;color:var(--text3);font-family:var(--mono);">RATIO </span>
+              <span style="font-family:var(--mono);font-size:16px;font-weight:700;color:${vtr ? stateColor(vtr.state) : 'var(--text3)'};">${vtr ? f3(vtr.ratio) : '—'}</span>
+              ${vtr ? `<span style="margin-left:5px;">${chip(stateLabel(vtr.state), stateColor(vtr.state), true)}</span>` : ''}
             </div>
           </div>
-
+          ${vix ? chip(vix.aboveMM200?'SOBRE MM200':'BAJO MM200', vix.aboveMM200?'var(--red)':'var(--green)') : ''}
+          ${vix ? `${freshDot(vix.freshness)}<span style="font-family:var(--mono);font-size:8px;color:var(--text3);margin-left:3px;">${vix.ageDays}d</span>` : ''}
+          <div style="flex:1;"></div>
           <!-- Selector rango VIX -->
-          <div style="display:flex;gap:4px;margin-bottom:6px;" id="vix-range-btns">
-            ${['3M','1A','3A','Máx'].map((r,i)=>`<button data-range="${r}" style="font-family:var(--mono);font-size:8px;padding:2px 6px;border-radius:3px;border:1px solid var(--border);background:${i===1?'#f47174':'transparent'};color:${i===1?'#000':'var(--text3)'};font-weight:${i===1?'700':'400'};cursor:pointer;">${r}</button>`).join('')}
-          </div>
-
-          <!-- Canvas VIX -->
-          <canvas id="vix-chart" width="340" height="110" style="width:100%;height:110px;display:block;border-radius:4px;background:var(--surface2);"></canvas>
-
-          <!-- Ratio medidor -->
-          <div style="margin-top:8px;padding:8px;background:var(--surface2);border-radius:6px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
-              <span style="font-family:var(--mono);font-size:9px;color:var(--text3);">VIX / VIX3M</span>
-              <span style="font-family:var(--mono);font-size:12px;font-weight:700;color:${vtr ? stateColor(vtr.state) : 'var(--text3)'};">${vtr ? f3(vtr.ratio) : '—'}</span>
-              ${vtr ? chip(stateLabel(vtr.state), stateColor(vtr.state), true) : ''}
-            </div>
-            <!-- Barra ratio 0.75 - 1.25 -->
-            <div style="position:relative;height:6px;background:linear-gradient(to right, var(--green) 0%, var(--teal) 20%, var(--amber) 50%, var(--red) 80%);border-radius:3px;overflow:hidden;">
-              ${vtr ? `<div style="position:absolute;top:-1px;width:3px;height:8px;background:white;border-radius:1px;left:${Math.max(0,Math.min(100,((vtr.ratio-0.75)/0.5)*100))}%;transform:translateX(-50%);"></div>` : ''}
-            </div>
-            <div style="display:flex;justify-content:space-between;margin-top:2px;">
-              <span style="font-family:var(--mono);font-size:7px;color:var(--text3);">0.75</span>
-              <span style="font-family:var(--mono);font-size:7px;color:var(--text3);">1.00</span>
-              <span style="font-family:var(--mono);font-size:7px;color:var(--text3);">1.25</span>
-            </div>
-          </div>
-
-          <!-- Leyenda -->
-          <div style="display:flex;gap:10px;margin-top:6px;flex-wrap:wrap;">
-            <div style="display:flex;align-items:center;gap:4px;"><div style="width:14px;height:2px;background:var(--red);"></div><span style="font-size:8px;color:var(--text3);font-family:var(--mono);">VIX</span></div>
-            <div style="display:flex;align-items:center;gap:4px;"><div style="width:14px;height:1px;background:var(--amber);"></div><span style="font-size:8px;color:var(--text3);font-family:var(--mono);">VIX3M</span></div>
-            <div style="display:flex;align-items:center;gap:4px;"><div style="width:14px;height:1px;border-top:1px dashed rgba(255,255,255,0.3);"></div><span style="font-size:8px;color:var(--text3);font-family:var(--mono);">MM200</span></div>
+          <div style="display:flex;gap:4px;" id="vix-range-btns">
+            ${['3M','1A','3A','Máx'].map((r,i)=>`<button data-range="${r}" style="font-family:var(--mono);font-size:8px;padding:2px 7px;border-radius:3px;border:1px solid var(--border);background:${i===1?'#f47174':'transparent'};color:${i===1?'#000':'var(--text3)'};font-weight:${i===1?'700':'400'};cursor:pointer;">${r}</button>`).join('')}
           </div>
         </div>
+        <!-- Canvas VIX -->
+        <canvas id="vix-chart" width="900" height="460" class="chart-canvas-main"></canvas>
+        <!-- Leyenda -->
+        <div style="display:flex;gap:10px;margin-top:8px;flex-wrap:wrap;">
+          <div style="display:flex;align-items:center;gap:4px;"><div style="width:14px;height:2px;background:var(--red);"></div><span style="font-size:8px;color:var(--text3);font-family:var(--mono);">VIX</span></div>
+          <div style="display:flex;align-items:center;gap:4px;"><div style="width:14px;height:1px;background:var(--amber);"></div><span style="font-size:8px;color:var(--text3);font-family:var(--mono);">VIX3M</span></div>
+          <div style="display:flex;align-items:center;gap:4px;"><div style="width:14px;height:1px;border-top:1px dashed var(--amber);"></div><span style="font-size:8px;color:var(--text3);font-family:var(--mono);">MM100</span></div>
+          <div style="display:flex;align-items:center;gap:4px;"><div style="width:14px;height:1px;border-top:1px dashed rgba(255,255,255,0.3);"></div><span style="font-size:8px;color:var(--text3);font-family:var(--mono);">MM200</span></div>
+        </div>
+      </div>
 
-        <!-- ─ C. SP500 TENDENCIA ─ -->
-        <div class="mac-card" style="padding:14px;">
-          <div style="font-family:var(--mono);font-size:8px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text3);margin-bottom:8px;">S&P 500 · Tendencia M10</div>
-
-          <!-- Semáforo 3 timeframes -->
-          <div style="display:flex;gap:8px;margin-bottom:10px;">
+      <!-- ─ C. S&P 500 TENDENCIA ─ -->
+      <div class="mac-card" style="padding:14px 16px;margin-bottom:14px;">
+        <!-- Cabecera dinámica (se actualiza vía JS) -->
+        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:10px;">
+          <div style="font-family:var(--mono);font-size:8px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text3);min-width:90px;">S&amp;P 500 · M10</div>
+          <div id="sp-header-metrics" style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;">
+            <!-- rellenado por JS -->
+          </div>
+          <div style="flex:1;"></div>
+          <!-- Semáforos compactos -->
+          <div style="display:flex;gap:6px;">
             ${['monthly','weekly','daily'].map((tf, i) => {
-              const label = ['MENSUAL','SEMANAL','DIARIO'][i];
+              const label = ['M','S','D'][i];
               const d = sp?.[tf];
               const sc = stateColor(d?.state);
-              return `<div style="flex:1;text-align:center;padding:6px;border-radius:6px;background:${sc}15;border:1px solid ${sc}33;">
-                <div style="font-family:var(--mono);font-size:7px;color:var(--text3);margin-bottom:3px;">${label}</div>
-                <div style="width:10px;height:10px;border-radius:50%;background:${sc};margin:0 auto 3px;"></div>
-                <div style="font-family:var(--mono);font-size:8px;font-weight:700;color:${sc};">${d ? stateLabel(d.state) : '—'}</div>
+              return `<div style="text-align:center;padding:3px 7px;border-radius:4px;background:${sc}18;border:1px solid ${sc}44;">
+                <div style="font-family:var(--mono);font-size:7px;color:var(--text3);">${label}</div>
+                <div style="font-family:var(--mono);font-size:8px;font-weight:700;color:${sc};">${d ? stateLabel(d.state).slice(0,3) : '—'}</div>
               </div>`;
             }).join('')}
           </div>
-
-          <!-- Tabs timeframe SP500 -->
-          <div style="display:flex;gap:0;margin-bottom:8px;border-bottom:1px solid var(--border);">
-            ${['monthly','weekly','daily'].map((tf, i) => {
-              const label = ['Mensual','Semanal','Diario'][i];
-              const active = tf === 'daily';
-              return `<button class="sp-tf-tab" data-tf="${tf}" style="font-family:var(--mono);font-size:9px;padding:4px 10px;background:${active?'var(--surface2)':'transparent'};color:${active?'var(--text1)':'var(--text3)'};border:none;border-bottom:${active?'1px solid var(--teal)':'1px solid transparent'};cursor:pointer;margin-bottom:-1px;">${label}</button>`;
-            }).join('')}
-          </div>
-
-          <!-- Gráfico SP500 + info timeframe activo -->
-          <div style="display:flex;flex-direction:column;gap:6px;">
-            ${['monthly','weekly','daily'].map((tf, i) => {
-              const label = ['Mensual','Semanal','Diario'][i];
-              const d = sp?.[tf];
-              if (!d) return '';
-              const sc = stateColor(d.state);
-              const distPct = d.price && d.m10 ? (((d.price - d.m10) / d.m10) * 100).toFixed(1) : null;
-              const slopeIcon = d.slope === 'up' ? '↑' : d.slope === 'down' ? '↓' : '→';
-              const hidden = tf !== 'daily';
-              return `<div data-sp-panel="${tf}" style="background:var(--surface2);border-radius:6px;padding:6px 8px;display:${hidden?'none':'block'};">
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
-                  <span style="font-family:var(--mono);font-size:9px;color:var(--text2);">${label}</span>
-                  <div style="display:flex;gap:8px;align-items:center;">
-                    <span style="font-family:var(--mono);font-size:9px;color:var(--text1);">P: ${f2(d.price)}</span>
-                    <span style="font-family:var(--mono);font-size:9px;color:${sc};">M10: ${f2(d.m10)} ${slopeIcon}</span>
-                    ${distPct != null ? `<span style="font-family:var(--mono);font-size:8px;color:${parseFloat(distPct)>0?'var(--green)':'var(--red)'};">${parseFloat(distPct)>0?'+':''}${distPct}%</span>` : ''}
-                  </div>
-                </div>
-                <canvas id="sp-${tf}-chart" width="300" height="90" style="width:100%;height:90px;display:block;border-radius:3px;"></canvas>
-              </div>`;
-            }).filter(Boolean).join('')}
-          </div>
-
-          ${sp?.summary ? `<div style="margin-top:8px;font-size:9px;color:var(--text2);line-height:1.5;font-style:italic;">${sp.summary}</div>` : ''}
         </div>
+        <!-- Tabs timeframe SP500 -->
+        <div style="display:flex;gap:0;margin-bottom:10px;border-bottom:1px solid var(--border);">
+          ${['monthly','weekly','daily'].map((tf, i) => {
+            const label = ['Mensual','Semanal','Diario'][i];
+            const active = tf === 'daily';
+            return `<button class="sp-tf-tab" data-tf="${tf}" style="font-family:var(--mono);font-size:9px;padding:5px 14px;background:${active?'var(--surface2)':'transparent'};color:${active?'var(--text1)':'var(--text3)'};border:none;border-bottom:${active?'2px solid var(--teal)':'2px solid transparent'};cursor:pointer;margin-bottom:-1px;">${label}</button>`;
+          }).join('')}
+        </div>
+        <!-- Canvas SP500 (único, redibujado al cambiar tab) -->
+        <canvas id="sp-main-chart" width="900" height="460" class="chart-canvas-main"></canvas>
+        <!-- Leyenda SP500 -->
+        <div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap;">
+          <div style="display:flex;align-items:center;gap:4px;"><div style="width:14px;height:2px;background:var(--teal);"></div><span style="font-size:8px;color:var(--text3);font-family:var(--mono);">Precio</span></div>
+          <div style="display:flex;align-items:center;gap:4px;"><div style="width:14px;height:1px;border-top:1px dashed var(--amber);"></div><span style="font-size:8px;color:var(--text3);font-family:var(--mono);">M10</span></div>
+        </div>
+        ${sp?.summary ? `<div style="margin-top:8px;font-size:9px;color:var(--text2);line-height:1.5;font-style:italic;">${sp.summary}</div>` : ''}
       </div>
 
       <!-- ══ 4. BANDA CONDICIONES FINANCIERAS ══ -->
@@ -896,8 +864,11 @@ export async function render(container, { actionsSlot }) {
           { yMin: 0,   yMax: 3.5, color: 'rgba(74,222,128,0.04)'  }, // normal
         ];
 
-        // Estado de rango (persiste en closure)
         let hyActiveRange = '1A';
+        // Estado de visibilidad de series (toggleable legend)
+        let hyShowHy   = true;
+        let hyShowMm100 = true;
+        let hyShowMm200 = true;
 
         function hyRedraw() {
           // Actualizar estilo botones
@@ -913,7 +884,6 @@ export async function render(container, { actionsSlot }) {
           const { dates: allDates, vals: allVals } = prepHist(rawHist);
 
           if (allDates.length < 5) {
-            // Sin historia: mostrar solo snapshot
             drawLineChart(hyCanvas, [], { bands: hyBands });
             return;
           }
@@ -924,33 +894,50 @@ export async function render(container, { actionsSlot }) {
           const scaledVals = allVals.map(v => v * scaleFactor);
 
           // Calcular MM100 y MM200 sobre la serie completa antes de filtrar rango
+          // rollingMA devuelve null para el período de warmup → drawLineChart no los une
           const mm100Full = rollingMA(scaledVals, 100);
           const mm200Full = rollingMA(scaledVals, 200);
+
+          // Máx disponible: mostrar etiqueta con rango real
+          const maxLabel = document.getElementById('hy-max-label');
+          if (maxLabel) {
+            if (hyActiveRange === 'Máx' && allDates.length > 0) {
+              maxLabel.textContent = `Máximo disponible: ${allDates[0]} — ${allDates[allDates.length - 1]}`;
+              maxLabel.style.display = 'block';
+            } else {
+              maxLabel.style.display = 'none';
+            }
+          }
 
           // Filtrar por rango
           const fromDate = rangeFromDate(hyActiveRange);
           const xRange = fromDate ? { fromDate, toDate: allDates[allDates.length - 1] } : null;
 
-          drawLineChart(hyCanvas, [
-            { dates: allDates, vals: scaledVals,  color: '#40d9c0', width: 2,   fill: true, label: 'HY OAS' },
-            { dates: allDates, vals: mm100Full,   color: '#fbbf24', width: 1,   dash: [4,3], label: 'MM100' },
-            { dates: allDates, vals: mm200Full,   color: 'rgba(255,255,255,0.35)', width: 1, dash: [2,4], label: 'MM200' },
-          ], { bands: hyBands, xRange, GAP_DAYS: 10, unitMaxValue: null });
+          const series = [];
+          if (hyShowHy)    series.push({ dates: allDates, vals: scaledVals,  color: '#40d9c0', width: 2,   fill: true,  label: 'HY OAS' });
+          if (hyShowMm100) series.push({ dates: allDates, vals: mm100Full,   color: '#fbbf24', width: 1,   dash: [4,3], label: 'MM100'  });
+          if (hyShowMm200) series.push({ dates: allDates, vals: mm200Full,   color: 'rgba(255,255,255,0.35)', width: 1, dash: [2,4], label: 'MM200' });
+
+          drawLineChart(hyCanvas, series, { bands: hyBands, xRange, GAP_DAYS: 10, unitMaxValue: null });
         }
 
         hyRedraw();
 
         // Binding botones de rango
         document.querySelectorAll('#hy-range-btns button').forEach(b => {
-          b.addEventListener('click', () => {
-            hyActiveRange = b.dataset.range;
-            hyRedraw();
-          });
+          b.addEventListener('click', () => { hyActiveRange = b.dataset.range; hyRedraw(); });
         });
+        // Binding toggles de leyenda
+        const togHy  = document.getElementById('hy-tog-hy');
+        const togM100 = document.getElementById('hy-tog-mm100');
+        const togM200 = document.getElementById('hy-tog-mm200');
+        if (togHy)   togHy.addEventListener('change',  () => { hyShowHy    = togHy.checked;   hyRedraw(); });
+        if (togM100) togM100.addEventListener('change', () => { hyShowMm100 = togM100.checked; hyRedraw(); });
+        if (togM200) togM200.addEventListener('change', () => { hyShowMm200 = togM200.checked; hyRedraw(); });
       }
 
       // ════════════════════════════════════════════════════════════════
-      // B. VIX — gráfico con historia real + VIX3M + MM200 + niveles
+      // B. VIX — gráfico con historia real + VIX3M + MM100 + MM200 + niveles
       // ════════════════════════════════════════════════════════════════
       const vixCanvas = document.getElementById('vix-chart');
       if (vixCanvas && vix) {
@@ -972,7 +959,8 @@ export async function render(container, { actionsSlot }) {
             return;
           }
 
-          // MM200 sobre VIX
+          // MM100 y MM200 sobre VIX (null durante warmup → no se unen)
+          const mm100Vix = rollingMA(vVals, 100);
           const mm200Vix = rollingMA(vVals, 200);
 
           const fromDate = rangeFromDate(vixActiveRange);
@@ -981,6 +969,7 @@ export async function render(container, { actionsSlot }) {
           drawLineChart(vixCanvas, [
             { dates: vDates,  vals: vVals,    color: '#f47174', width: 2,   label: 'VIX'   },
             { dates: v3Dates, vals: v3Vals,   color: '#fbbf24', width: 1.5, dash: [4,3], label: 'VIX3M' },
+            { dates: vDates,  vals: mm100Vix, color: 'rgba(251,191,36,0.6)', width: 1, dash: [3,3], label: 'MM100' },
             { dates: vDates,  vals: mm200Vix, color: 'rgba(255,255,255,0.3)', width: 1, dash: [2,4], label: 'MM200' },
           ], {
             hLines: [
@@ -996,88 +985,80 @@ export async function render(container, { actionsSlot }) {
         vixRedraw();
 
         document.querySelectorAll('#vix-range-btns button').forEach(b => {
-          b.addEventListener('click', () => {
-            vixActiveRange = b.dataset.range;
-            vixRedraw();
-          });
+          b.addEventListener('click', () => { vixActiveRange = b.dataset.range; vixRedraw(); });
         });
       }
 
       // ════════════════════════════════════════════════════════════════
-      // C. SP500 — gráfico por timeframe (tabs Mensual/Semanal/Diario)
+      // C. SP500 — canvas único, redibujado al cambiar tab
       //    Cada timeframe tiene history: [{date, price, m10}]
       // ════════════════════════════════════════════════════════════════
       if (sp) {
         let spActiveTf = 'daily';
+        const spMainCanvas = document.getElementById('sp-main-chart');
 
-        // Los canvas ya existen en el DOM (uno por timeframe)
+        function updateSpHeader() {
+          const d = sp[spActiveTf];
+          const headerEl = document.getElementById('sp-header-metrics');
+          if (!headerEl || !d) return;
+          const sc = stateColor(d.state);
+          const distPct = d.price && d.m10 ? (((d.price - d.m10) / d.m10) * 100).toFixed(1) : null;
+          const slopeIcon = d.slope === 'up' ? '↑' : d.slope === 'down' ? '↓' : '→';
+          headerEl.innerHTML = `
+            <span style="font-size:20px;font-weight:800;color:${sc};">${f2(d.price)}</span>
+            <span style="font-family:var(--mono);font-size:9px;color:${sc};">M10: ${f2(d.m10)} ${slopeIcon}</span>
+            ${distPct != null ? `<span style="font-family:var(--mono);font-size:9px;color:${parseFloat(distPct)>0?'var(--green)':'var(--red)'};">${parseFloat(distPct)>0?'+':''}${distPct}%</span>` : ''}
+            ${chip(stateLabel(d.state), sc)}
+          `;
+        }
+
         function spRedraw() {
           // Actualizar estilos de tabs
           document.querySelectorAll('.sp-tf-tab').forEach(b => {
             const active = b.dataset.tf === spActiveTf;
             b.style.background = active ? 'var(--surface2)' : 'transparent';
             b.style.color = active ? 'var(--text1)' : 'var(--text3)';
-            b.style.borderBottom = active ? '1px solid var(--teal)' : '1px solid transparent';
+            b.style.borderBottom = active ? '2px solid var(--teal)' : '2px solid transparent';
           });
 
-          ['monthly','weekly','daily'].forEach(tf => {
-            const c = document.getElementById(`sp-${tf}-chart`);
-            if (!c) return;
-            if (tf !== spActiveTf) return;
+          updateSpHeader();
 
-            const d = sp[tf];
-            if (!d?.history?.length) {
-              drawLineChart(c, [], {});
-              return;
-            }
+          if (!spMainCanvas) return;
+          const d = sp[spActiveTf];
+          if (!d?.history?.length) {
+            drawLineChart(spMainCanvas, [], {});
+            return;
+          }
 
-            // history: [{date, price, m10}]
-            const hist = d.history
-              .filter(o => o && typeof o.date === 'string' && isFinite(Number(o.price)))
-              .sort((a, b) => a.date < b.date ? -1 : 1);
+          // history: [{date, price, m10}]
+          const hist = d.history
+            .filter(o => o && typeof o.date === 'string' && isFinite(Number(o.price)))
+            .sort((a, b) => a.date < b.date ? -1 : 1);
 
-            const dates      = hist.map(o => o.date.slice(0, 10));
-            const prices     = hist.map(o => Number(o.price));
-            const m10s       = hist.map(o => (o.m10 != null && isFinite(Number(o.m10))) ? Number(o.m10) : null);
+          const dates  = hist.map(o => o.date.slice(0, 10));
+          const prices = hist.map(o => Number(o.price));
+          // m10 puede ser null durante las primeras 9 obs (semanal) o 9 obs (mensual)
+          const m10s   = hist.map(o => (o.m10 != null && isFinite(Number(o.m10))) ? Number(o.m10) : null);
 
-            const color = d.state === 'alcista' ? '#4ade80'
-                        : d.state === 'bajista' ? '#f47174'
-                        : '#fbbf24';
+          const color = d.state === 'alcista' ? '#4ade80'
+                      : d.state === 'bajista' ? '#f47174'
+                      : '#fbbf24';
 
-            const gapDays = tf === 'monthly' ? 60 : tf === 'weekly' ? 14 : 7;
+          const gapDays = spActiveTf === 'monthly' ? 60 : spActiveTf === 'weekly' ? 14 : 7;
 
-            drawLineChart(c, [
-              { dates, vals: prices, color, width: 1.8, fill: true, label: 'Precio' },
-              { dates, vals: m10s,   color: 'rgba(255,255,255,0.4)', width: 1.2, dash: [4,3], label: 'M10' },
-            ], { GAP_DAYS: gapDays, unitMaxValue: null });
-          });
+          drawLineChart(spMainCanvas, [
+            { dates, vals: prices, color, width: 1.8, fill: true, label: 'Precio' },
+            { dates, vals: m10s,   color: 'rgba(255,255,255,0.5)', width: 1.5, dash: [4,3], label: 'M10' },
+          ], { GAP_DAYS: gapDays, unitMaxValue: null });
         }
 
-        // La visibilidad la maneja directamente spRedraw a través de data-sp-panel
-        function spRedrawFull() {
-          // Actualizar tabs
-          document.querySelectorAll('.sp-tf-tab').forEach(b => {
-            const active = b.dataset.tf === spActiveTf;
-            b.style.background = active ? 'var(--surface2)' : 'transparent';
-            b.style.color = active ? 'var(--text1)' : 'var(--text3)';
-            b.style.borderBottom = active ? '1px solid var(--teal)' : '1px solid transparent';
-          });
-          // Mostrar/ocultar paneles
-          ['monthly','weekly','daily'].forEach(tf => {
-            const panel = document.querySelector(`[data-sp-panel="${tf}"]`);
-            if (panel) panel.style.display = tf === spActiveTf ? 'block' : 'none';
-          });
-          // Dibujar solo el activo
-          spRedraw();
-        }
-
-        spRedrawFull();
+        spRedraw();
 
         // Binding tabs SP500
         document.querySelectorAll('.sp-tf-tab').forEach(b => {
           b.addEventListener('click', () => {
             spActiveTf = b.dataset.tf;
-            spRedrawFull();
+            spRedraw();
           });
         });
       }

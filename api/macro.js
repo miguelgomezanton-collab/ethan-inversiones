@@ -634,28 +634,30 @@ async function fetchSP500Trend() {
   const dailyDates  = daily.map(o => new Date(o.t * 1000).toISOString().slice(0, 10));
   const dailyState  = { ...m10State(dailyCloses, 'Diario'), date: dailyDates[dailyDates.length - 1] };
 
-  // Semanal: agrupar por semana (cierre del viernes o último día de la semana)
-  const weeklyMap = new Map();
+  // Semanal: agrupar por semana ISO (año-semana), guardar fecha real del último día
+  const weeklyMap = new Map(); // key → { v, date }
   daily.forEach(o => {
     const d   = new Date(o.t * 1000);
     const yr  = d.getUTCFullYear();
-    const wk  = Math.floor((d - new Date(yr, 0, 1)) / 604800000);
+    const wk  = Math.floor((d - new Date(Date.UTC(yr, 0, 1))) / 604800000);
     const key = `${yr}-W${String(wk).padStart(2,'0')}`;
-    weeklyMap.set(key, o.v); // sobreescribe → queda el último día de cada semana
+    const iso = d.toISOString().slice(0, 10); // fecha real YYYY-MM-DD
+    weeklyMap.set(key, { v: o.v, date: iso }); // sobreescribe → queda el último día de la semana
   });
-  const weeklyCloses = [...weeklyMap.values()];
-  const weeklyDates  = [...weeklyMap.keys()];
+  const weeklyCloses = [...weeklyMap.values()].map(e => e.v);
+  const weeklyDates  = [...weeklyMap.values()].map(e => e.date); // YYYY-MM-DD reales
   const weeklyState  = { ...m10State(weeklyCloses, 'Semanal'), week: weeklyDates[weeklyDates.length - 1] };
 
-  // Mensual: agrupar por mes
-  const monthlyMap = new Map();
+  // Mensual: agrupar por mes, guardar fecha real del último día del mes
+  const monthlyMap = new Map(); // key → { v, date }
   daily.forEach(o => {
     const d   = new Date(o.t * 1000);
     const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}`;
-    monthlyMap.set(key, o.v); // sobreescribe → queda el cierre de fin de mes
+    const iso = d.toISOString().slice(0, 10);
+    monthlyMap.set(key, { v: o.v, date: iso }); // sobreescribe → queda el cierre de fin de mes
   });
-  const monthlyCloses = [...monthlyMap.values()];
-  const monthlyDates  = [...monthlyMap.keys()];
+  const monthlyCloses = [...monthlyMap.values()].map(e => e.v);
+  const monthlyDates  = [...monthlyMap.values()].map(e => e.date); // YYYY-MM-DD reales
   const monthlyState  = { ...m10State(monthlyCloses, 'Mensual'), month: monthlyDates[monthlyDates.length - 1] };
 
   // Resumen
