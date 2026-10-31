@@ -26,7 +26,8 @@ const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 horas
 
 function getDB() {
   if (!getApps().length) {
-    initializeApp({ credential: cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)) });
+    initializeApp({ credential: cert({ projectId: process.env.FIREBASE_ADMIN_PROJECT_ID, clientEmail: process.env.FIREBASE_ADMIN_CLIENT_EMAIL, privateKey: process.env.FIREBASE_ADMIN_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+    }) });
   }
   return getFirestore();
 }
@@ -239,7 +240,7 @@ export default async function handler(req, res) {
   const { indicator, from = 'MAX', meta = 'false' } = req.query;
   const apiKey = process.env.FRED_API_KEY;
   if (!apiKey) return res.status(500).json({ error: 'FRED_API_KEY no configurada' });
-  if (!process.env.FIREBASE_SERVICE_ACCOUNT) return res.status(500).json({ error: 'FIREBASE_SERVICE_ACCOUNT no configurada' });
+  if (!process.env.FIREBASE_ADMIN_PROJECT_ID) return res.status(500).json({ error: 'FIREBASE_ADMIN_* env vars no configuradas' });
 
   // Listar indicadores disponibles
   if (!indicator || indicator === 'list') {
