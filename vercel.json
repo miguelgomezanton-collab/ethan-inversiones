@@ -3,9 +3,14 @@
   "outputDirectory": "dist",
   "framework": "vite",
   "functions": {
-    "api/smart-money.js": { "maxDuration": 60 },
-    "api/fundamental.js": { "maxDuration": 60 },
-    "api/macro-history.js": { "maxDuration": 60 }
+    "api/smart-money.js":         { "maxDuration": 60 },
+    "api/fundamental.js":         { "maxDuration": 60 },
+    "api/macro-history.js":       { "maxDuration": 60 },
+    "api/macro-rlab/data.js":     { "maxDuration": 60 },
+    "api/macro-rlab/execute.js":  { "maxDuration": 60 },
+    "api/macro-rlab/research.js": { "maxDuration": 30 },
+    "api/macro-rlab/results.js":  { "maxDuration": 30 },
+    "api/macro-rlab/close.js":    { "maxDuration": 30 }
   },
   "crons": [
     {

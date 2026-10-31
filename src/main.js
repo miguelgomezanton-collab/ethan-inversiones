@@ -86,6 +86,11 @@ registerPage('lab-trading', {
   title: 'ETHAN R-Lab · Trading R-Lab',
   loader: () => import('./modules/research/trading-rlab.js')
 });
+registerPage('lab-macro-rlab', {
+  crumb: 'ETHAN R-Lab <span>›</span> Macro R-Lab',
+  title: 'ETHAN R-Lab · Macro R-Lab',
+  loader: () => import('./modules/macro/macro-rlab.js')
+});
 
 registerPage('alc-alertas', {
   crumb: '2. Alcista <span>›</span> Alertas',
