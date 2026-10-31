@@ -22,7 +22,8 @@ const seeds = [
   {
     id: 'RISK_RADAR_V1',
     doc: {
-      title:           'RISK_RADAR_V1 — VIX como predictor de retornos S&P 500',
+      // B8: título corregido — RISK_RADAR_V1 estudia VIX → retornos SP500, no otra cosa
+      title:           'RISK_RADAR_V1 — VIX como predictor anticipado de retornos S&P 500 (referencia conceptual)',
       hypothesis:      'Niveles elevados de VIX (>25) anticipan rendimientos superiores del S&P 500 a 3-12 meses. El mecanismo: el miedo extremo crea valoraciones deprimidas, y la reversión a la media genera alfa predictivo.',
       signal:          'VIX',
       targetIndicator: 'SP500',
@@ -76,6 +77,71 @@ const seeds = [
       updatedAt:       now,
     },
   },
+  // ── Acceptance test seed #1 (Task 21) ──────────────────────────────────────
+  // VIX_CAVA_CLASSIC_V1: hipótesis clásica VIX alto → retornos positivos a 12M
+  // Dirección esperada: NEGATIVE (VIX alto correlaciona negativamente con retornos futuros)
+  {
+    id: 'VIX_CAVA_CLASSIC_V1',
+    doc: {
+      title:           'VIX_CAVA_CLASSIC_V1 — VIX nivel (clásico): estrés extremo y retorno futuro SP500',
+      hypothesis:      'Cuando el VIX supera 25, los retornos del S&P 500 a 6-12 meses tienden a ser superiores a la media histórica. La correlación esperada es NEGATIVA (VIX alto → retornos futuros altos). Acceptance test del motor estadístico con expectedDirection=NEGATIVE.',
+      signal:          'VIX',
+      targetIndicator: 'SP500',
+      horizonMonths:   [1, 3, 6, 12],
+      periodConfig:    { type: 'MAX' },
+      lag:             0,
+      transformSignal: 'LEVEL',
+      transformExtended: null,
+      expectedDirection: 'NEGATIVE', // B3: correlación esperada negativa
+      quintiles:       5,
+      state:           'EN_INVESTIGACION',
+      closureVerdict:  null,
+      closureNotes:    '',
+      closureChecklist: {},
+      checklistPct:    0,
+      versionCount:    0,
+      executionCount:  0,
+      notes:           'Acceptance test #1 del motor estadístico. Verifica que expectedDirection=NEGATIVE no clasifica como NO_VALIDADA una correlación negativa significativa. Historia completa disponible vía Yahoo Finance ^GSPC.',
+      tags:            ['VIX', 'SP500', 'acceptance-test', 'expectedDirection'],
+      archived:        false,
+      closedAt:        null,
+      createdAt:       now,
+      updatedAt:       now,
+    },
+  },
+
+  // ── Acceptance test seed #2 (Task 21) ──────────────────────────────────────
+  // HY_OAS_MM100_MM200_V1: señal = distancia HY_OAS respecto a sus medias móviles 100 y 200
+  {
+    id: 'HY_OAS_MM100_MM200_V1',
+    doc: {
+      title:           'HY_OAS_MM100_MM200_V1 — Spreads HY con señal MM100/MM200 y cruce de medias',
+      hypothesis:      'El cruce alcista de MM100 sobre MM200 del HY OAS (spreads acelerando al alza) predice retornos negativos del S&P 500 a 3-6 meses. Señal derivada: crossover de medias móviles sobre HY_OAS como proxy de deterioro crediticio.',
+      signal:          'HY_OAS',
+      targetIndicator: 'SP500',
+      horizonMonths:   [1, 3, 6, 12],
+      periodConfig:    { type: 'MAX' },
+      lag:             0,
+      transformSignal: 'LEVEL',
+      transformExtended: 'MA_DIST_100', // B6: señal = distancia HY_OAS respecto a MM100
+      expectedDirection: 'NEGATIVE',    // B3: spreads subiendo → retornos negativos
+      quintiles:       5,
+      state:           'EN_INVESTIGACION',
+      closureVerdict:  null,
+      closureNotes:    '',
+      closureChecklist: {},
+      checklistPct:    0,
+      versionCount:    0,
+      executionCount:  0,
+      notes:           'Acceptance test #2. Verifica integración de transformExtended=MA_DIST_100 (B6) con expectedDirection=NEGATIVE (B3) y bootstrap adaptativo (B4+B5). Extensión de HY_OAS_V1.',
+      tags:            ['HY', 'MM100', 'MM200', 'acceptance-test', 'crossover'],
+      archived:        false,
+      closedAt:        null,
+      createdAt:       now,
+      updatedAt:       now,
+    },
+  },
+
   {
     id: 'VIX_V1',
     doc: {
