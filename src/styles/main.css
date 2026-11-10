@@ -627,6 +627,41 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 .sct-rot-footer { display: flex; justify-content: space-between; align-items: center; }
 .sct-rot-price { font-family: var(--mono); font-size: 11px; color: var(--text2); }
 
+/* ── SUBSECTORES ── */
+.sct-ver-sub-btn {
+  font-size: 9.5px; padding: 3px 8px; border-radius: 4px;
+  background: rgba(45,212,191,0.1); border: 1px solid rgba(45,212,191,0.25);
+  color: var(--teal); cursor: pointer; font-family: var(--sans); font-weight: 500;
+  transition: all 0.15s; white-space: nowrap;
+}
+.sct-ver-sub-btn:hover { background: rgba(45,212,191,0.2); border-color: var(--teal); }
+
+.sct-back-btn {
+  font-size: 11px; padding: 5px 12px; border-radius: 6px;
+  background: var(--surface2); border: 1px solid var(--border);
+  color: var(--text2); cursor: pointer; font-family: var(--sans); font-weight: 500;
+  transition: all 0.15s;
+}
+.sct-back-btn:hover { background: var(--surface3); color: var(--text1); }
+
+.sct-sub-header {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 16px;
+  padding-bottom: 12px; border-bottom: 1px solid var(--border);
+}
+.sct-sub-title {
+  font-size: 13px; font-weight: 600; color: var(--text1);
+}
+.sct-sub-card { cursor: pointer; }
+.sct-sub-card:hover { border-color: var(--teal) !important; }
+
+.sct-ver-comp-btn {
+  font-size: 9.5px; padding: 3px 8px; border-radius: 4px;
+  background: rgba(99,102,241,0.1); border: 1px solid rgba(99,102,241,0.25);
+  color: #818cf8; cursor: pointer; font-family: var(--sans); font-weight: 500;
+  transition: all 0.15s; white-space: nowrap;
+}
+.sct-ver-comp-btn:hover { background: rgba(99,102,241,0.2); border-color: #818cf8; }
+
 /* ── SCREENER COMMODITIES ── */
 .cm-wrap { display: flex; flex-direction: column; }
 .cm-tabs { display: flex; gap: 3px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
