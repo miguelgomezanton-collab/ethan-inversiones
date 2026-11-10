@@ -492,9 +492,9 @@ export async function render(container, { actionsSlot, savedState }) {
   // ── Vista Componentes: renderTable ──────────────
   function renderTable(sectorKey) {
     const state = sectorState[sectorKey];
-    const minScore    = parseInt(document.getElementById(`sfs-${sectorKey}`)?.value || '7');
-    const minVol      = parseInt(document.getElementById(`sfv-${sectorKey}`)?.value || '0');
-    const filterEstado = document.getElementById(`sfe-${sectorKey}`)?.value || 'all';
+    const minScore    = parseInt(container.querySelector(`#sfs-${sectorKey}`)?.value || '7');
+    const minVol      = parseInt(container.querySelector(`#sfv-${sectorKey}`)?.value || '0');
+    const filterEstado = container.querySelector(`#sfe-${sectorKey}`)?.value || 'all';
 
     const filtered = state.results.filter(r => {
       if (r.score < minScore) return false;
@@ -503,10 +503,10 @@ export async function render(container, { actionsSlot, savedState }) {
       return true;
     }).sort((a,b) => b.score - a.score);
 
-    const el = document.getElementById(`sres-${sectorKey}`);
+    const el = container.querySelector(`#sres-${sectorKey}`);
     if (!el) return;
 
-    const badge = document.getElementById(`sbadge-${sectorKey}`);
+    const badge = container.querySelector(`#sbadge-${sectorKey}`);
     const readyCount = state.results.filter(r => r.estado === 'ready').length;
     if (badge) {
       if (state.results.length > 0) {
@@ -554,10 +554,10 @@ export async function render(container, { actionsSlot, savedState }) {
     const tickers = SECTOR_TICKERS[sectorKey] || [];
     state.total = tickers.length;
 
-    const btn  = document.getElementById(`sbtn-${sectorKey}`);
-    const st   = document.getElementById(`sst-${sectorKey}`);
-    const prog = document.getElementById(`sprog-${sectorKey}`);
-    const fill = document.getElementById(`sprogfill-${sectorKey}`);
+    const btn  = container.querySelector(`#sbtn-${sectorKey}`);
+    const st   = container.querySelector(`#sst-${sectorKey}`);
+    const prog = container.querySelector(`#sprog-${sectorKey}`);
+    const fill = container.querySelector(`#sprogfill-${sectorKey}`);
 
     if (btn)  { btn.disabled = true; btn.textContent = '⏳ Escaneando...'; }
     if (prog) prog.style.display = 'block';
@@ -597,7 +597,7 @@ export async function render(container, { actionsSlot, savedState }) {
 
   // ── Rotación Sectorial ───────────────────────────
   function renderRotacion() {
-    const el = document.getElementById('rot-results');
+    const el = container.querySelector('#rot-results');
     if (!el) return;
     if (rotacionResults.length === 0) {
       el.innerHTML = `<div class="sc2-empty">Pulsa Escanear para analizar los 11 ETFs sectoriales</div>`;
@@ -649,13 +649,13 @@ export async function render(container, { actionsSlot, savedState }) {
   }
 
   async function startRotacionScan() {
-    if (rotacionResults.length > 0 && document.getElementById('rot-scan-btn')?.textContent.includes('Re')) {
+    if (rotacionResults.length > 0 && container.querySelector('#rot-scan-btn')?.textContent.includes('Re')) {
       // permitir re-escanear
     }
-    const btn  = document.getElementById('rot-scan-btn');
-    const st   = document.getElementById('rot-status');
-    const prog = document.getElementById('rot-progress');
-    const fill = document.getElementById('rot-progress-fill');
+    const btn  = container.querySelector('#rot-scan-btn');
+    const st   = container.querySelector('#rot-status');
+    const prog = container.querySelector('#rot-progress');
+    const fill = container.querySelector('#rot-progress-fill');
 
     if (btn?.disabled) return;
     rotacionResults = [];
@@ -684,9 +684,9 @@ export async function render(container, { actionsSlot, savedState }) {
 
   // ── Subsector Drill: sector → lista ETFs especializados ──
   function openSubsectorDrill(sectorKey) {
-    const rotMain = document.getElementById('sct-rot-main');
-    const drillEl = document.getElementById('sct-subsector-drill');
-    const compEl  = document.getElementById('sct-comp-drill');
+    const rotMain = container.querySelector('#sct-rot-main');
+    const drillEl = container.querySelector('#sct-subsector-drill');
+    const compEl  = container.querySelector('#sct-comp-drill');
     if (!rotMain || !drillEl) return;
 
     subsectorView = { sectorKey, subsectorTicker: null };
@@ -696,14 +696,14 @@ export async function render(container, { actionsSlot, savedState }) {
     if (compEl) compEl.style.display = 'none';
 
     const sectorCfg = ETFS_SECTORIALES.find(e => e.ticker === sectorKey) || {};
-    const titleEl = document.getElementById('sct-sub-title');
+    const titleEl = container.querySelector('#sct-sub-title');
     if (titleEl) titleEl.textContent = `${sectorCfg.emoji || ''} ${sectorCfg.name || sectorKey} — Subsectores`;
 
     renderSubsectorList(sectorKey);
   }
 
   function renderSubsectorList(sectorKey) {
-    const listEl = document.getElementById('sct-sub-list');
+    const listEl = container.querySelector('#sct-sub-list');
     if (!listEl) return;
 
     const subs    = SUBSECTORS_CONFIG[sectorKey] || [];
@@ -765,7 +765,7 @@ export async function render(container, { actionsSlot, savedState }) {
       </div>
     `;
 
-    document.getElementById(`sub-scan-btn-${sectorKey}`)?.addEventListener('click', () => {
+    container.querySelector(`#sub-scan-btn-${sectorKey}`)?.addEventListener('click', () => {
       startSubsectorScan(sectorKey);
     });
 
@@ -784,10 +784,10 @@ export async function render(container, { actionsSlot, savedState }) {
     state.results  = [];
 
     const subs = SUBSECTORS_CONFIG[sectorKey] || [];
-    const btn  = document.getElementById(`sub-scan-btn-${sectorKey}`);
-    const st   = document.getElementById(`sub-scan-status-${sectorKey}`);
-    const prog = document.getElementById(`sub-prog-${sectorKey}`);
-    const fill = document.getElementById(`sub-progfill-${sectorKey}`);
+    const btn  = container.querySelector(`#sub-scan-btn-${sectorKey}`);
+    const st   = container.querySelector(`#sub-scan-status-${sectorKey}`);
+    const prog = container.querySelector(`#sub-prog-${sectorKey}`);
+    const fill = container.querySelector(`#sub-progfill-${sectorKey}`);
 
     if (btn)  { btn.disabled = true; btn.textContent = '⏳ Escaneando...'; }
     if (prog) prog.style.display = 'block';
@@ -823,8 +823,8 @@ export async function render(container, { actionsSlot, savedState }) {
 
   // ── Componentes de un ETF especializado ─────────
   function openComponentsDrill(etfTicker, etfName, etfEmoji) {
-    const compEl    = document.getElementById('sct-comp-drill');
-    const subListEl = document.getElementById('sct-sub-list');
+    const compEl    = container.querySelector('#sct-comp-drill');
+    const subListEl = container.querySelector('#sct-sub-list');
     if (!compEl) return;
 
     subsectorView = { ...subsectorView, subsectorTicker: etfTicker };
@@ -833,14 +833,14 @@ export async function render(container, { actionsSlot, savedState }) {
     if (subListEl) subListEl.style.opacity = '0.4';
     compEl.style.display = 'block';
 
-    const titleEl = document.getElementById('sct-comp-title');
+    const titleEl = container.querySelector('#sct-comp-title');
     if (titleEl) titleEl.textContent = `${etfEmoji} ${etfTicker} — ${etfName}`;
 
     renderComponentsDrill(etfTicker);
   }
 
   async function renderComponentsDrill(etfTicker) {
-    const contentEl = document.getElementById('sct-comp-content');
+    const contentEl = container.querySelector('#sct-comp-content');
     if (!contentEl) return;
 
     // ¿Hay holdings cacheados?
@@ -926,11 +926,11 @@ export async function render(container, { actionsSlot, savedState }) {
     // Renderizar screener si ya hay datos
     if (compState.results.length > 0) renderCompScreener(etfTicker, holdings);
 
-    document.getElementById(`comp-scan-btn-${etfTicker}`)?.addEventListener('click', () => {
+    container.querySelector(`#comp-scan-btn-${etfTicker}`)?.addEventListener('click', () => {
       startCompScreener(etfTicker, holdings);
     });
 
-    document.getElementById(`comp-refresh-btn-${etfTicker}`)?.addEventListener('click', async () => {
+    container.querySelector(`#comp-refresh-btn-${etfTicker}`)?.addEventListener('click', async () => {
       delete holdingsCache[etfTicker];
       saveState();
       await renderComponentsDrill(etfTicker);
@@ -944,10 +944,10 @@ export async function render(container, { actionsSlot, savedState }) {
     state.results  = [];
 
     const tickers = holdings.map(h => h.ticker).filter(Boolean);
-    const btn  = document.getElementById(`comp-scan-btn-${etfTicker}`);
-    const st   = document.getElementById(`comp-scan-st-${etfTicker}`);
-    const prog = document.getElementById(`comp-prog-${etfTicker}`);
-    const fill = document.getElementById(`comp-progfill-${etfTicker}`);
+    const btn  = container.querySelector(`#comp-scan-btn-${etfTicker}`);
+    const st   = container.querySelector(`#comp-scan-st-${etfTicker}`);
+    const prog = container.querySelector(`#comp-prog-${etfTicker}`);
+    const fill = container.querySelector(`#comp-progfill-${etfTicker}`);
 
     if (btn)  { btn.disabled = true; btn.textContent = '⏳ Escaneando...'; }
     if (prog) prog.style.display = 'block';
@@ -976,7 +976,7 @@ export async function render(container, { actionsSlot, savedState }) {
       // Actualizar celdas ETHAN en la tabla de holdings
       batchRes.forEach(r => {
         if (!r) return;
-        const cell = document.getElementById(`comp-ethan-${etfTicker}-${r.ticker}`);
+        const cell = container.querySelector(`#comp-ethan-${etfTicker}-${r.ticker}`);
         if (cell) {
           cell.innerHTML = `<span style="color:${scoreColor(r.score)};font-weight:700">${r.score}/10</span> <span style="color:${estadoColor(r.estado)};font-size:10px">${estadoLabel[r.estado]||''}</span>`;
         }
@@ -994,7 +994,7 @@ export async function render(container, { actionsSlot, savedState }) {
   }
 
   function renderCompScreener(etfTicker, holdings) {
-    const el = document.getElementById(`comp-screener-results-${etfTicker}`);
+    const el = container.querySelector(`#comp-screener-results-${etfTicker}`);
     if (!el) return;
     const state = compScreenerState[etfTicker];
     if (!state || state.results.length === 0) return;
@@ -1038,7 +1038,7 @@ export async function render(container, { actionsSlot, savedState }) {
 
   // ── Vista Global Subsectores (FASE 3) ───────────
   function renderGlobalSubsectores() {
-    const el = document.getElementById('gsub-results');
+    const el = container.querySelector('#gsub-results');
     if (!el) return;
     if (globalSubResults.length === 0) {
       el.innerHTML = `<div class="sc2-empty">Pulsa Escanear para analizar todos los ETFs especializados</div>`;
@@ -1077,10 +1077,10 @@ export async function render(container, { actionsSlot, savedState }) {
     if (globalSubScanning) return;
     globalSubScanning = true;
 
-    const btn  = document.getElementById('gsub-scan-btn');
-    const st   = document.getElementById('gsub-status');
-    const prog = document.getElementById('gsub-progress');
-    const fill = document.getElementById('gsub-progress-fill');
+    const btn  = container.querySelector('#gsub-scan-btn');
+    const st   = container.querySelector('#gsub-status');
+    const prog = container.querySelector('#gsub-progress');
+    const fill = container.querySelector('#gsub-progress-fill');
 
     if (btn)  { btn.disabled = true; btn.textContent = '⏳ Escaneando...'; }
     if (prog) prog.style.display = 'block';
@@ -1141,26 +1141,26 @@ export async function render(container, { actionsSlot, savedState }) {
       activeView = view;
       container.querySelectorAll('.sct-view-tab').forEach(t => t.classList.remove('active'));
       tab.classList.add('active');
-      document.getElementById('sct-panel-rotacion')?.style.setProperty('display', view==='rotacion' ? 'block' : 'none');
-      document.getElementById('sct-panel-subsectores-global')?.style.setProperty('display', view==='subsectores-global' ? 'block' : 'none');
-      document.getElementById('sct-panel-componentes')?.style.setProperty('display', view==='componentes' ? 'block' : 'none');
+      container.querySelector('#sct-panel-rotacion')?.style.setProperty('display', view==='rotacion' ? 'block' : 'none');
+      container.querySelector('#sct-panel-subsectores-global')?.style.setProperty('display', view==='subsectores-global' ? 'block' : 'none');
+      container.querySelector('#sct-panel-componentes')?.style.setProperty('display', view==='componentes' ? 'block' : 'none');
     });
   });
 
-  document.getElementById('rot-scan-btn')?.addEventListener('click', startRotacionScan);
-  document.getElementById('gsub-scan-btn')?.addEventListener('click', startGlobalSubScan);
+  container.querySelector('#rot-scan-btn')?.addEventListener('click', startRotacionScan);
+  container.querySelector('#gsub-scan-btn')?.addEventListener('click', startGlobalSubScan);
 
   // Botón "Volver a Sectores"
-  document.getElementById('sct-back-btn')?.addEventListener('click', () => {
-    document.getElementById('sct-rot-main').style.display = 'block';
-    document.getElementById('sct-subsector-drill').style.display = 'none';
+  container.querySelector('#sct-back-btn')?.addEventListener('click', () => {
+    container.querySelector('#sct-rot-main').style.display = 'block';
+    container.querySelector('#sct-subsector-drill').style.display = 'none';
     subsectorView = null;
   });
 
   // Botón "Volver a Subsectores"
-  document.getElementById('sct-back-sub-btn')?.addEventListener('click', () => {
-    const compEl    = document.getElementById('sct-comp-drill');
-    const subListEl = document.getElementById('sct-sub-list');
+  container.querySelector('#sct-back-sub-btn')?.addEventListener('click', () => {
+    const compEl    = container.querySelector('#sct-comp-drill');
+    const subListEl = container.querySelector('#sct-sub-list');
     if (compEl)    compEl.style.display = 'none';
     if (subListEl) subListEl.style.opacity = '1';
     if (subsectorView) subsectorView.subsectorTicker = null;
@@ -1173,7 +1173,7 @@ export async function render(container, { actionsSlot, savedState }) {
       container.querySelectorAll('.sc2-tab[data-sector]').forEach(t => t.classList.remove('active'));
       container.querySelectorAll('.sc2-panel').forEach(p => p.classList.remove('active'));
       tab.classList.add('active');
-      document.getElementById(`spanel-${key}`)?.classList.add('active');
+      container.querySelector(`#spanel-${key}`)?.classList.add('active');
       renderTable(key);
       saveState();
     });
@@ -1185,7 +1185,7 @@ export async function render(container, { actionsSlot, savedState }) {
 
   SECTORS_CONFIG.forEach(cfg => {
     [`sfs-${cfg.key}`,`sfv-${cfg.key}`,`sfe-${cfg.key}`].forEach(id => {
-      document.getElementById(id)?.addEventListener('change', () => renderTable(cfg.key));
+      container.querySelector(`#${id}`)?.addEventListener('change', () => renderTable(cfg.key));
     });
   });
 
@@ -1193,8 +1193,8 @@ export async function render(container, { actionsSlot, savedState }) {
   if (savedState?.sectorState) {
     SECTORS_CONFIG.forEach(cfg => {
       if (sectorState[cfg.key]?.results?.length > 0) {
-        const btn = document.getElementById(`sbtn-${cfg.key}`);
-        const st  = document.getElementById(`sst-${cfg.key}`);
+        const btn = container.querySelector(`#sbtn-${cfg.key}`);
+        const st  = container.querySelector(`#sst-${cfg.key}`);
         if (btn) btn.textContent = '↻ Re-escanear';
         if (st)  st.textContent = `${sectorState[cfg.key].results.length} valores · ${sectorState[cfg.key].results.filter(r=>r.estado==='ready').length} listos`;
         if (cfg.key === activeTab) renderTable(cfg.key);
