@@ -164,12 +164,12 @@ async function fetchOHLC(ticker) {
 }
 
 // ── Obtener componentes de un ETF via backend oficial ────────────────
-// Usa el endpoint /api/etf-holdings/{ticker} que a su vez consulta
-// las fuentes oficiales de cada gestora (SPDR, First Trust, VanEck...).
+// Usa el endpoint /api/macro-rlab/etf-holdings?ticker=XBI integrado en el
+// dispatcher de macro-rlab para respetar el límite de 12 funciones Vercel Hobby.
 // Fallback transparente: si el backend falla, se mantiene el caché local.
 async function fetchETFHoldings(ticker) {
   const BASE = import.meta.env?.VITE_API_BASE || '';
-  const url  = `${BASE}/api/etf-holdings?ticker=${encodeURIComponent(ticker.toUpperCase())}`;
+  const url  = `${BASE}/api/macro-rlab/etf-holdings?ticker=${encodeURIComponent(ticker.toUpperCase())}`;
 
   try {
     const ctrl = new AbortController();
@@ -998,7 +998,7 @@ export async function render(container, { actionsSlot, savedState }) {
     container.querySelector(`#comp-refresh-btn-${etfTicker}`)?.addEventListener('click', async () => {
       // Forzar re-descarga desde fuente oficial (pasar refresh=1 al backend)
       const BASE = import.meta.env?.VITE_API_BASE || '';
-      const url  = `${BASE}/api/etf-holdings?ticker=${encodeURIComponent(etfTicker.toUpperCase())}&refresh=1`;
+      const url  = `${BASE}/api/macro-rlab/etf-holdings?ticker=${encodeURIComponent(etfTicker.toUpperCase())}&refresh=1`;
       contentEl.innerHTML = `<div class="sc2-empty">⏳ Actualizando componentes de ${etfTicker} desde fuente oficial...</div>`;
       try {
         const r = await fetch(url, { signal: (() => { const c = new AbortController(); setTimeout(() => c.abort(), 25000); return c.signal; })() });

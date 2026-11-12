@@ -9,6 +9,7 @@
 //   POST /api/macro-rlab/execute
 //   GET  /api/macro-rlab/results
 //   POST /api/macro-rlab/close
+//   GET  /api/macro-rlab/etf-holdings?ticker=XBI[&refresh=1]
 //
 // La lógica vive en server/macro-rlab/*.js (fuera de /api para que Vercel
 // no los cuente como funciones adicionales).
@@ -16,27 +17,30 @@
 
 // Importaciones estáticas: Vercel las bundlea en el momento del deploy.
 // Las rutas son relativas al fichero [action].js dentro de api/macro-rlab/.
-import dataHandler     from '../../server/macro-rlab/data.js';
-import researchHandler from '../../server/macro-rlab/research.js';
-import executeHandler  from '../../server/macro-rlab/execute.js';
-import resultsHandler  from '../../server/macro-rlab/results.js';
-import closeHandler    from '../../server/macro-rlab/close.js';
+import dataHandler        from '../../server/macro-rlab/data.js';
+import researchHandler    from '../../server/macro-rlab/research.js';
+import executeHandler     from '../../server/macro-rlab/execute.js';
+import resultsHandler     from '../../server/macro-rlab/results.js';
+import closeHandler       from '../../server/macro-rlab/close.js';
+import etfHoldingsHandler from '../../server/etf-holdings/handler.js';
 
 // Métodos HTTP permitidos por acción
 const ALLOWED_METHODS = {
-  data:     ['GET'],
-  research: ['GET', 'POST', 'PUT', 'DELETE'],
-  execute:  ['POST'],
-  results:  ['GET'],
-  close:    ['POST'],
+  data:            ['GET'],
+  research:        ['GET', 'POST', 'PUT', 'DELETE'],
+  execute:         ['POST'],
+  results:         ['GET'],
+  close:           ['POST'],
+  'etf-holdings':  ['GET'],
 };
 
 const HANDLERS = {
-  data:     dataHandler,
-  research: researchHandler,
-  execute:  executeHandler,
-  results:  resultsHandler,
-  close:    closeHandler,
+  data:            dataHandler,
+  research:        researchHandler,
+  execute:         executeHandler,
+  results:         resultsHandler,
+  close:           closeHandler,
+  'etf-holdings':  etfHoldingsHandler,
 };
 
 export default async function handler(req, res) {
