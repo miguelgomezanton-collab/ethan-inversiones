@@ -1,0 +1,288 @@
+name: ETF Holdings Pilot — Informe de resultados
+
+# Ejecutar manualmente desde GitHub Actions tab,
+# o automáticamente en cada push a feature/etf-holdings-pilot
+on:
+  workflow_dispatch:
+    inputs:
+      preview_url:
+        description: 'Preview URL de Vercel (sin trailing slash)'
+        required: true
+        default: 'https://ethan-inversiones-j14d3jekl-miguel-angel-s-projects2.vercel.app'
+  push:
+    branches:
+      - feature/etf-holdings-pilot
+
+jobs:
+  pilot-test:
+    name: Pruebas piloto XBI · CIBR · SMH · GDX
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      # URL de Preview: se usa el input manual si existe, o se construye desde el último deploy
+      PREVIEW_URL: ${{ github.event.inputs.preview_url || 'https://ethan-inversiones-j14d3jekl-miguel-angel-s-projects2.vercel.app' }}
+      BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+
+    steps:
+      - name: 📋 Verificar configuración
+        run: |
+          echo "Preview URL: $PREVIEW_URL"
+          if [ -z "$BYPASS_SECRET" ]; then
+            echo "⚠️  VERCEL_AUTOMATION_BYPASS_SECRET no configurado"
+            echo "    → Settings → Deployment Protection → Protection Bypass for Automation"
+            exit 1
+          fi
+          echo "✅ Bypass secret configurado (${#BYPASS_SECRET} chars)"
+
+      - name: 🔍 Test endpoint de diagnóstico (tickers soportados)
+        id: supported
+        run: |
+          echo "=== GET /api/macro-rlab/etf-holdings?ticker=supported ==="
+          RESP=$(curl -sf \
+            -H "x-vercel-protection-bypass: $BYPASS_SECRET" \
+            "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=supported")
+          echo "$RESP" | python3 -c "
+          import json, sys
+          d = json.load(sys.stdin)
+          tickers = d.get('tickers', [])
+          supported = [t['ticker'] for t in tickers if t['status'] == 'supported']
+          pending   = [t['ticker'] for t in tickers if t['status'] == 'pending']
+          print(f'✅ Endpoint activo — {len(supported)} tickers soportados, {len(pending)} pendientes')
+          pilot = [t for t in supported if t in ['XBI','CIBR','SMH','GDX']]
+          print(f'   Piloto disponible: {pilot}')
+          if len(pilot) < 4:
+            missing = [t for t in [\"XBI\",\"CIBR\",\"SMH\",\"GDX\"] if t not in pilot]
+            print(f'   ⚠️  Faltan: {missing}')
+          "
+
+      - name: 📊 Test XBI (SPDR/SSGA — XLSX)
+        id: xbi
+        run: |
+          echo ""
+          echo "════════════════════════════════════════════"
+          echo "  XBI — SPDR Biotech ETF (State Street SSGA)"
+          echo "════════════════════════════════════════════"
+          START=$(date +%s%3N)
+          RESP=$(curl -sf \
+            -H "x-vercel-protection-bypass: $BYPASS_SECRET" \
+            -w "\n__HTTP_CODE__:%{http_code}" \
+            "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=XBI" 2>&1) || true
+          END=$(date +%s%3N)
+          ELAPSED=$((END - START))
+
+          HTTP_CODE=$(echo "$RESP" | grep "__HTTP_CODE__:" | cut -d: -f2)
+          BODY=$(echo "$RESP" | grep -v "__HTTP_CODE__:")
+
+          echo "HTTP: $HTTP_CODE | Tiempo: ${ELAPSED}ms"
+
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "$BODY" | python3 -c "
+          import json, sys
+          d = json.load(sys.stdin)
+          print(f'  ok:            {d[\"ok\"]}')
+          print(f'  source:        {d.get(\"source\",\"N/A\")}')
+          print(f'  sourceUrl:     {d.get(\"sourceUrl\",\"N/A\")}')
+          print(f'  referenceDate: {d.get(\"referenceDate\",\"N/A\")}')
+          print(f'  totalHoldings: {d.get(\"totalHoldings\",0)} posiciones')
+          print(f'  cashRows:      {d.get(\"cashRows\",0)} excluidas (cash/collateral)')
+          print(f'  totalWeight:   {d.get(\"totalWeight\",0):.2f}%')
+          print(f'  integrityOk:   {d.get(\"integrityOk\",False)}')
+          print(f'  integrityNote: {d.get(\"integrityNote\",\"N/A\")}')
+          print(f'  fromCache:     {d.get(\"fromCache\",False)}')
+          print(f'  stale:         {d.get(\"stale\",False)}')
+          holdings = d.get('holdings', [])
+          valid = [h for h in holdings if h.get('ticker') and h.get('ticker') != 'null']
+          print(f'')
+          print(f'  → ETHAN-analizables: {len(valid)}/{len(holdings)} ({100*len(valid)//len(holdings) if holdings else 0}%)')
+          print(f'  → Top 5 posiciones:')
+          top5 = sorted(holdings, key=lambda x: x.get('weight',0), reverse=True)[:5]
+          for h in top5:
+            print(f'     {h[\"ticker\"]:8s}  {h.get(\"weight\",0):.2f}%  {h.get(\"name\",\"\")[:40]}')
+          if d.get('staleWarning'):
+            print(f'  ⚠️  STALE: {d[\"staleWarning\"]}')
+          " 2>&1 || echo "  ❌ Error parseando respuesta JSON"
+          else
+            echo "  ❌ Error HTTP $HTTP_CODE"
+            echo "$BODY" | head -5
+          fi
+
+      - name: 📊 Test CIBR (First Trust — HTML scraping)
+        id: cibr
+        run: |
+          echo ""
+          echo "════════════════════════════════════════════"
+          echo "  CIBR — First Trust Cybersecurity ETF"
+          echo "  (Verificación identidad: CIBR ≠ QTEC)"
+          echo "════════════════════════════════════════════"
+          START=$(date +%s%3N)
+          RESP=$(curl -sf \
+            -H "x-vercel-protection-bypass: $BYPASS_SECRET" \
+            -w "\n__HTTP_CODE__:%{http_code}" \
+            "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=CIBR" 2>&1) || true
+          END=$(date +%s%3N)
+          ELAPSED=$((END - START))
+
+          HTTP_CODE=$(echo "$RESP" | grep "__HTTP_CODE__:" | cut -d: -f2)
+          BODY=$(echo "$RESP" | grep -v "__HTTP_CODE__:")
+
+          echo "HTTP: $HTTP_CODE | Tiempo: ${ELAPSED}ms"
+
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "$BODY" | python3 -c "
+          import json, sys
+          d = json.load(sys.stdin)
+          print(f'  ok:            {d[\"ok\"]}')
+          print(f'  source:        {d.get(\"source\",\"N/A\")}')
+          print(f'  referenceDate: {d.get(\"referenceDate\",\"N/A\")}')
+          print(f'  totalHoldings: {d.get(\"totalHoldings\",0)} posiciones')
+          print(f'  cashRows:      {d.get(\"cashRows\",0)} excluidas')
+          print(f'  totalWeight:   {d.get(\"totalWeight\",0):.2f}%')
+          print(f'  integrityOk:   {d.get(\"integrityOk\",False)}')
+          holdings = d.get('holdings', [])
+          valid = [h for h in holdings if h.get('ticker') and h.get('ticker') != 'null']
+          print(f'')
+          print(f'  → ETHAN-analizables: {len(valid)}/{len(holdings)} ({100*len(valid)//len(holdings) if holdings else 0}%)')
+          # Verificar que no es QTEC
+          tickers_set = set(h.get('ticker','') for h in holdings)
+          qtec_indicators = ['QTEC', 'QCOM', 'CSCO']  # QTEC tendría composición diferente
+          print(f'  → Verificación identidad CIBR ≠ QTEC: ', end='')
+          # CIBR debe contener empresas como CRWD, PANW, ZS, FTNT
+          cibr_expected = {'CRWD', 'PANW', 'ZS', 'FTNT', 'OKTA'}
+          found_cibr = tickers_set & cibr_expected
+          if found_cibr:
+            print(f'✅ OK (encontradas: {found_cibr})')
+          else:
+            print(f'⚠️  No se encontraron tickers esperados de CIBR ({cibr_expected})')
+          print(f'  → Top 5 posiciones:')
+          top5 = sorted(holdings, key=lambda x: x.get('weight',0), reverse=True)[:5]
+          for h in top5:
+            print(f'     {h[\"ticker\"]:8s}  {h.get(\"weight\",0):.2f}%  {h.get(\"name\",\"\")[:40]}')
+          " 2>&1 || echo "  ❌ Error parseando respuesta JSON"
+          else
+            echo "  ❌ Error HTTP $HTTP_CODE"
+            echo "$BODY" | head -5
+          fi
+
+      - name: 📊 Test SMH (VanEck — HTML table)
+        id: smh
+        run: |
+          echo ""
+          echo "════════════════════════════════════════════"
+          echo "  SMH — VanEck Semiconductor ETF"
+          echo "════════════════════════════════════════════"
+          START=$(date +%s%3N)
+          RESP=$(curl -sf \
+            -H "x-vercel-protection-bypass: $BYPASS_SECRET" \
+            -w "\n__HTTP_CODE__:%{http_code}" \
+            "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=SMH" 2>&1) || true
+          END=$(date +%s%3N)
+          ELAPSED=$((END - START))
+
+          HTTP_CODE=$(echo "$RESP" | grep "__HTTP_CODE__:" | cut -d: -f2)
+          BODY=$(echo "$RESP" | grep -v "__HTTP_CODE__:")
+
+          echo "HTTP: $HTTP_CODE | Tiempo: ${ELAPSED}ms"
+
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "$BODY" | python3 -c "
+          import json, sys
+          d = json.load(sys.stdin)
+          print(f'  ok:            {d[\"ok\"]}')
+          print(f'  source:        {d.get(\"source\",\"N/A\")}')
+          print(f'  referenceDate: {d.get(\"referenceDate\",\"N/A\")}')
+          print(f'  totalHoldings: {d.get(\"totalHoldings\",0)} posiciones')
+          print(f'  totalWeight:   {d.get(\"totalWeight\",0):.2f}%')
+          print(f'  integrityOk:   {d.get(\"integrityOk\",False)}')
+          holdings = d.get('holdings', [])
+          valid = [h for h in holdings if h.get('ticker') and h.get('ticker') != 'null']
+          print(f'')
+          print(f'  → ETHAN-analizables: {len(valid)}/{len(holdings)} ({100*len(valid)//len(holdings) if holdings else 0}%)')
+          print(f'  → Top 5 posiciones:')
+          top5 = sorted(holdings, key=lambda x: x.get('weight',0), reverse=True)[:5]
+          for h in top5:
+            print(f'     {h[\"ticker\"]:8s}  {h.get(\"weight\",0):.2f}%  {h.get(\"name\",\"\")[:40]}')
+          " 2>&1 || echo "  ❌ Error parseando respuesta JSON"
+          else
+            echo "  ❌ Error HTTP $HTTP_CODE"
+            echo "$BODY" | head -5
+          fi
+
+      - name: 📊 Test GDX (VanEck — HTML table + normalización internacional)
+        id: gdx
+        run: |
+          echo ""
+          echo "════════════════════════════════════════════"
+          echo "  GDX — VanEck Gold Miners ETF"
+          echo "  (Normalización tickers internacionales)"
+          echo "════════════════════════════════════════════"
+          START=$(date +%s%3N)
+          RESP=$(curl -sf \
+            -H "x-vercel-protection-bypass: $BYPASS_SECRET" \
+            -w "\n__HTTP_CODE__:%{http_code}" \
+            "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=GDX" 2>&1) || true
+          END=$(date +%s%3N)
+          ELAPSED=$((END - START))
+
+          HTTP_CODE=$(echo "$RESP" | grep "__HTTP_CODE__:" | cut -d: -f2)
+          BODY=$(echo "$RESP" | grep -v "__HTTP_CODE__:")
+
+          echo "HTTP: $HTTP_CODE | Tiempo: ${ELAPSED}ms"
+
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "$BODY" | python3 -c "
+          import json, sys
+          d = json.load(sys.stdin)
+          print(f'  ok:            {d[\"ok\"]}')
+          print(f'  source:        {d.get(\"source\",\"N/A\")}')
+          print(f'  referenceDate: {d.get(\"referenceDate\",\"N/A\")}')
+          print(f'  totalHoldings: {d.get(\"totalHoldings\",0)} posiciones')
+          print(f'  totalWeight:   {d.get(\"totalWeight\",0):.2f}%')
+          print(f'  integrityOk:   {d.get(\"integrityOk\",False)}')
+          holdings = d.get('holdings', [])
+
+          # Verificar normalización internacional
+          normalized = [h for h in holdings if h.get('originalTicker') and h.get('ticker') != h.get('originalTicker')]
+          us_tickers  = [h for h in holdings if h.get('ticker') and '.' not in h.get('ticker','')]
+          intl_tickers = [h for h in holdings if h.get('ticker') and '.' in h.get('ticker','')]
+          null_tickers = [h for h in holdings if not h.get('ticker') or h.get('ticker') == 'null']
+          valid = [h for h in holdings if h.get('ticker') and h.get('ticker') != 'null']
+
+          print(f'')
+          print(f'  → ETHAN-analizables (US): {len(us_tickers)} tickers sin sufijo')
+          print(f'  → Internacionales normalizados: {len(intl_tickers)} (ej. NST.AX, EDV.L)')
+          print(f'  → No mapeables (null): {len(null_tickers)} (PE&OLES y similares)')
+          print(f'  → Total ETHAN-analizables: {len(valid)}/{len(holdings)} ({100*len(valid)//len(holdings) if holdings else 0}%)')
+          if normalized:
+            print(f'')
+            print(f'  → Muestra normalización (hasta 8):')
+            for h in normalized[:8]:
+              print(f'     {h.get(\"originalTicker\",\"\"):15s} → {h.get(\"ticker\",\"\"):12s}  {h.get(\"name\",\"\")[:30]}')
+          print(f'')
+          print(f'  → Top 5 posiciones:')
+          top5 = sorted(holdings, key=lambda x: x.get('weight',0), reverse=True)[:5]
+          for h in top5:
+            orig = f\" (orig: {h['originalTicker']})\" if h.get('originalTicker') and h.get('originalTicker') != h.get('ticker') else ''
+            print(f'     {h[\"ticker\"]:12s}  {h.get(\"weight\",0):.2f}%  {h.get(\"name\",\"\")[:30]}{orig}')
+          " 2>&1 || echo "  ❌ Error parseando respuesta JSON"
+          else
+            echo "  ❌ Error HTTP $HTTP_CODE"
+            echo "$BODY" | head -5
+          fi
+
+      - name: 📋 Resumen del piloto
+        if: always()
+        run: |
+          echo ""
+          echo "════════════════════════════════════════════════════════"
+          echo "  INFORME PILOTO ETF HOLDINGS — $(date '+%Y-%m-%d %H:%M UTC')"
+          echo "  Preview: $PREVIEW_URL"
+          echo "════════════════════════════════════════════════════════"
+          echo ""
+          echo "Pasos siguientes si todas las pruebas pasan:"
+          echo "  1. Verificar Firestore: colección etf_holdings_cache"
+          echo "     (4 documentos: XBI, CIBR, SMH, GDX)"
+          echo "  2. Probar integración ETHAN en UI: subsector → componentes"
+          echo "  3. Autorizar deploy a main (el usuario confirma)"
+          echo ""
+          echo "⛔ main NO ha sido modificado — piloto solo en feature/etf-holdings-pilot"
