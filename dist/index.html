@@ -2,12 +2,22 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>ETHAN Mercados</title>
+
+<!-- PWA iOS -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ETHAN">
+<link rel="apple-touch-icon" href="/icons/icon-180.png">
+<link rel="apple-touch-icon" sizes="192x192" href="/icons/icon-192.png">
+<link rel="apple-touch-icon" sizes="512x512" href="/icons/icon-512.png">
+<meta name="theme-color" content="#040e0e">
+<meta name="description" content="ETHAN Mercados — Plataforma profesional de análisis e inversión">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=Montserrat:wght@200;300;400;500;600&family=IBM+Plex+Mono:wght@300;400;500&display=swap" rel="stylesheet">
-  <script type="module" crossorigin src="/assets/index-BuBCrzrQ.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-CirJMAu0.css">
-</head>
+  <script type="module" crossorigin src="/assets/index-BgqbrflN.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-QgqYHJNn.css">
+<link rel="manifest" href="/manifest.webmanifest"><script id="vite-plugin-pwa:register-sw" src="/registerSW.js"></script></head>
 <body>
 
 <!-- ══════════════════════════════════════════
@@ -15,8 +25,10 @@
      ══════════════════════════════════════════ -->
 <div id="login-screen">
   <div class="login-box">
-    <div class="login-logo">ethan <em>mercados</em></div>
-    <div class="login-sub">inversión <em>consciente</em> · crece · disfruta</div>
+    <div class="login-logo">
+      <img src="/assets/LOGO%20ETHAN%20MERCADOS-PorqCY7i.png" alt="ETHAN Mercados" style="max-width:280px;width:100%;height:auto;margin-bottom:8px;">
+    </div>
+    <div class="login-sub"><span style="color:var(--text1);">Inverite</span> · <em>Crece</em> · <span style="color:var(--text1);">Disfruta</span></div>
 
     <form id="login-form">
       <div class="login-field">
@@ -38,11 +50,9 @@
 <div id="app">
 
   <header id="header">
-    <div class="h-brand">
-      <div class="h-logo-icon" id="toggle-sidebar-btn">E</div>
+    <div class="h-brand" style="cursor:pointer;" id="h-brand-home">
       <div class="h-logo-text">
-        <div class="h-logo-name">ethan mercados</div>
-        <div class="h-logo-sub">Plataforma · v3.0</div>
+        <img src="/assets/LOGO%20ETHAN%20MERCADOS-PorqCY7i.png" alt="ETHAN Mercados" style="height:28px;width:auto;display:block;">
       </div>
     </div>
     <div class="h-tickers" id="ticker-tape">
@@ -79,7 +89,7 @@
         <div class="grp-head" data-toggle-grp>
           <span class="grp-num">1</span>
           <div class="grp-icon">◉</div>
-          <span class="grp-title">Macro</span>
+          <span class="grp-title">ETHAN Macro</span>
           <span class="grp-chevron">▸</span>
         </div>
         <div class="grp-body">
@@ -101,25 +111,46 @@
           <div class="mod mod-direct" data-page="macro-sentimiento">
             <span class="mod-icon">1.5</span><span class="mod-lbl">Sentimiento</span>
           </div>
-          <div class="mod mod-direct" data-page="macro-timeline">
-            <span class="mod-icon">1.6</span><span class="mod-lbl">Timeline</span>
-          </div>
-          <div class="mod mod-direct" data-page="macro-correlaciones">
-            <span class="mod-icon">1.7</span><span class="mod-lbl">Correlaciones</span>
-          </div>
           <div class="mod mod-direct" data-page="macro-radar">
-            <span class="mod-icon">1.8</span><span class="mod-lbl">Radar Riesgos</span>
+            <span class="mod-icon">1.6</span><span class="mod-lbl">ETHAN Risk Radar</span>
           </div>
           <div class="mod mod-direct" data-page="macro-calendario">
-            <span class="mod-icon">1.9</span><span class="mod-lbl">Calendario</span>
+            <span class="mod-icon">1.7</span><span class="mod-lbl">Calendario</span>
           </div>
           <div class="mod mod-direct" data-page="macro-inversor">
-            <span class="mod-icon">1.10</span><span class="mod-lbl">Modo Inversor</span>
+            <span class="mod-icon">1.8</span><span class="mod-lbl">Modo Inversor</span>
           </div>
         </div>
       </div>
 
-      <!-- 2. ALCISTA -->
+      <!-- RESEARCH LAB — Investigación cuantitativa y validación de motores -->
+      <div class="grp" data-accent="research" data-tip="Research Lab">
+        <div class="grp-head" data-toggle-grp>
+          <span class="grp-num">⚗</span>
+          <div class="grp-icon">⚗</div>
+          <span class="grp-title">ETHAN R-Lab</span>
+          <span class="grp-chevron">▸</span>
+        </div>
+        <div class="grp-body">
+          <div class="mod mod-direct" data-page="lab-timeline">
+            <span class="mod-icon">R.1</span><span class="mod-lbl">Timeline & Analogías</span>
+          </div>
+          <div class="mod mod-direct" data-page="lab-correlaciones">
+            <span class="mod-icon">R.2</span><span class="mod-lbl">Correlaciones</span>
+          </div>
+          <div class="mod mod-direct" data-page="lab-radar">
+            <span class="mod-icon">R.3</span><span class="mod-lbl">Risk Radar · Validation</span>
+          </div>
+          <div class="mod mod-direct" data-page="lab-trading">
+            <span class="mod-icon">R.4</span><span class="mod-lbl">Trading R-Lab</span>
+          </div>
+          <div class="mod mod-direct" data-page="lab-macro-rlab">
+            <span class="mod-icon">R.5</span><span class="mod-lbl">Macro R-Lab</span>
+          </div>
+        </div>
+      </div>
+
+
       <div class="grp" data-accent="alcista" data-tip="Alcista">
         <div class="grp-head" data-toggle-grp>
           <span class="grp-num">2</span>
@@ -189,16 +220,18 @@
         <div class="grp-body">
           <div class="mod mod-direct" data-page="car-fondo"><span class="mod-icon">4.1</span><span class="mod-lbl">Fondo ETHAN</span></div>
           <div class="mod mod-direct" data-page="car-cartera"><span class="mod-icon">4.2</span><span class="mod-lbl">Posiciones</span></div>
-          <div class="mod mod-direct" data-page="car-allocation"><span class="mod-icon">4.3</span><span class="mod-lbl">Asset Allocation</span></div>
-          <div class="mod mod-direct" data-page="car-money"><span class="mod-icon">4.4</span><span class="mod-lbl">Money Management</span></div>
-          <div class="mod mod-direct" data-page="car-risk"><span class="mod-icon">4.5</span><span class="mod-lbl">Risk Management</span></div>
+          <div class="mod mod-direct" data-page="car-motor"><span class="mod-icon">⚙</span><span class="mod-lbl">ETHAN Motor</span></div>
           <div class="mod mod-direct" data-page="car-backtest"><span class="mod-icon">4.6</span><span class="mod-lbl">Backtesting</span></div>
           <div class="mod mod-direct" data-page="car-vitacora"><span class="mod-icon">4.7</span><span class="mod-lbl">Bitácora</span></div>
+          <div class="mod mod-direct" data-page="alc-alertas">
+            <span class="mod-icon">⚑</span>
+            <span class="mod-lbl">Alertas <span id="alertas-badge" style="display:none;background:var(--green);color:#000;font-size:8px;font-weight:700;padding:1px 5px;border-radius:8px;margin-left:4px;"></span></span>
+          </div>
         </div>
       </div>
 
       <!-- 5. FUNDAMENTALES -->
-      <div class="grp" data-accent="fund" data-tip="Fundamentales">
+      <div class="grp open" data-accent="fund" data-tip="Fundamentales">
         <div class="grp-head" data-toggle-grp>
           <span class="grp-num">5</span>
           <div class="grp-icon">▤</div>
@@ -206,17 +239,9 @@
           <span class="grp-chevron">▸</span>
         </div>
         <div class="grp-body">
-          <div class="mod mod-direct" data-page="fund-analisis"><span class="mod-icon">5</span><span class="mod-lbl">Análisis Fundamental</span></div>
-        </div>
-      </div>
-
-      <!-- ALERTAS -->
-      <div class="grp open" data-accent="dash" data-tip="Alertas">
-        <div class="grp-body" style="padding-top:4px;">
-          <div class="mod mod-direct" data-page="alc-alertas">
-            <span class="mod-icon">⚑</span>
-            <span class="mod-lbl">Alertas <span id="alertas-badge" style="display:none;background:var(--green);color:#000;font-size:8px;font-weight:700;padding:1px 5px;border-radius:8px;margin-left:4px;"></span></span>
-          </div>
+          <div class="mod mod-direct" data-page="fund-analisis"><span class="mod-icon">5.1</span><span class="mod-lbl">ETHAN Fundamentales</span></div>
+          <div class="mod mod-direct" data-page="smart-money"><span class="mod-icon">5.2</span><span class="mod-lbl">Smart Money</span></div>
+          <div class="mod mod-direct" data-page="cava"><span class="mod-icon">5.3</span><span class="mod-lbl">José Luis Cava</span></div>
         </div>
       </div>
 

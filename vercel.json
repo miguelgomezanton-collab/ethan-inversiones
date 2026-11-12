@@ -6,7 +6,8 @@
     "api/smart-money.js":             { "maxDuration": 60 },
     "api/fundamental.js":             { "maxDuration": 60 },
     "api/macro-history.js":           { "maxDuration": 60 },
-    "api/macro-rlab/[action].js":     { "maxDuration": 60 }
+    "api/macro-rlab/[action].js":     { "maxDuration": 60 },
+    "api/etf-holdings.js":            { "maxDuration": 60 }
   },
   "crons": [
     {
