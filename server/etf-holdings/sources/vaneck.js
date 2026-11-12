@@ -1,34 +1,33 @@
 // server/etf-holdings/sources/vaneck.js
 // Adapter para VanEck
 //
-// ETFs soportados: SMH, GDX, SIL, XME, REMX
+// ETFs soportados: SMH, GDX, SIL, XME, REMX, GDXJ
 //
-// Fuente: vaneck.com holdings pages
-//   SMH: https://www.vaneck.com/us/en/investments/semiconductor-etf-smh/holdings/
-//   GDX: https://www.vaneck.com/us/en/investments/gold-miners-etf-gdx/holdings/
-//   SIL: https://www.vaneck.com/us/en/investments/silver-miners-etf-sil/holdings/
-//   XME: https://www.vaneck.com/us/en/investments/mvis-us-listed-rare-earth-critical-minerals-etf-remx/holdings/ [sic XME usa etf propio]
-//   REMX: https://www.vaneck.com/us/en/investments/mvis-us-listed-rare-earth-critical-minerals-etf-remx/holdings/
+// Fuente: vaneck.com/offshore/en/ — versión que sirve HTML estático con tabla de holdings.
+// La URL /us/en/ usa React SSR y no incluye la tabla en el HTML crudo del servidor.
+// La URL /offshore/en/ sí incluye la tabla completa en el HTML inicial.
 //
-// Estrategia:
-//   1. Intentar descarga XLS si el href es accesible sin JS
-//   2. Fallback: parsear tabla HTML de la página de holdings
+//   SMH:  https://www.vaneck.com/offshore/en/investments/semiconductor-etf-smh/holdings/
+//   GDX:  https://www.vaneck.com/offshore/en/investments/gold-miners-etf-gdx/holdings/
+//   SIL:  https://www.vaneck.com/offshore/en/investments/silver-miners-etf-sil/holdings/
+//   REMX: https://www.vaneck.com/offshore/en/investments/mvis-us-listed-rare-earth-critical-minerals-etf-remx/holdings/
+//   XME:  https://www.vaneck.com/offshore/en/investments/mvis-us-listed-rare-earth-critical-minerals-etf-remx/holdings/
+//   GDXJ: https://www.vaneck.com/offshore/en/investments/junior-gold-miners-etf-gdxj/holdings/
 //
-// CONDICIÓN #4: Confirmar URL real de descarga, no depender de patrones supuestos
 // CONDICIÓN #5: Normalizar tickers internacionales para Yahoo Finance
 //               Formato OTC: "NST AU" → "NST.AX", "EDV LN" → "EDV.L"
 // ─────────────────────────────────────────────────────────────────────────────────
 
 import https from 'https';
 
-// Map de tickers VanEck → slug de URL
+// Map de tickers VanEck → slug de URL en vaneck.com/offshore/en/
 const VANECK_URL_MAP = {
   SMH:  'semiconductor-etf-smh',
   GDX:  'gold-miners-etf-gdx',
   SIL:  'silver-miners-etf-sil',
   REMX: 'mvis-us-listed-rare-earth-critical-minerals-etf-remx',
-  XME:  'vectors-steel-etf-xme',  // confirmado por pág. vaneck.com
-  GDXJ: 'vectors-junior-gold-miners-etf-gdxj',
+  XME:  'mvis-us-listed-rare-earth-critical-minerals-etf-remx',  // usa misma página que REMX
+  GDXJ: 'junior-gold-miners-etf-gdxj',
 };
 
 const VANECK_TICKERS = new Set(Object.keys(VANECK_URL_MAP));
@@ -52,7 +51,8 @@ export async function fetchHoldings(etfTicker) {
     throw new Error(`VanEck: no hay URL configurada para ${ticker}`);
   }
 
-  const pageUrl = `https://www.vaneck.com/us/en/investments/${urlSlug}/holdings/`;
+  // /offshore/en/ sirve HTML estático con tabla; /us/en/ requiere JS (React SSR)
+  const pageUrl = `https://www.vaneck.com/offshore/en/investments/${urlSlug}/holdings/`;
   const html    = await fetchPage(pageUrl, ticker);
 
   // ── Extraer fecha de referencia ───────────────────────────────────
@@ -335,10 +335,11 @@ async function fetchPage(url, ticker) {
       headers: {
         'User-Agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept':          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Language': 'en-GB,en;q=0.9',  // offshore/en sirve mejor con en-GB
         'Connection':      'keep-alive',
+        'Cache-Control':   'no-cache',
       },
-      timeout: 25000,
+      timeout: 20000,
     };
 
     const req = https.request(options, (res) => {

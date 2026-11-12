@@ -247,13 +247,18 @@ async function fetchPage(url, ticker) {
       path:     reqUrl.pathname + reqUrl.search,
       method:   'GET',
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept':     'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'User-Agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept':          'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
-        'Connection': 'keep-alive',
-        'Referer':    'https://www.ftportfolios.com/',
+        'Accept-Encoding': 'identity',         // evitar gzip para simplificar chunks
+        'Connection':      'keep-alive',
+        'Referer':         'https://www.ftportfolios.com/',
+        'DNT':             '1',
+        'Upgrade-Insecure-Requests': '1',
+        'Cache-Control':   'no-cache',
+        'Pragma':          'no-cache',
       },
-      timeout: 20000,
+      timeout: 25000,
     };
 
     const req = https.request(options, (res) => {
@@ -276,6 +281,15 @@ async function fetchPage(url, ticker) {
           reject(new Error(`First Trust ${ticker}: respuesta HTML vacía o demasiado corta (${html.length} bytes)`));
           return;
         }
+        // Detectar páginas de error o redirección JS (sin tabla de datos)
+        if (html.length < 5000 && !html.includes('Holdings')) {
+          reject(new Error(
+            `First Trust ${ticker}: respuesta demasiado corta y sin tabla de holdings ` +
+            `(${html.length} bytes). Posible bloqueo de sesión/cookie. ` +
+            `URL: ${url}`
+          ));
+          return;
+        }
         resolve(html);
       });
       res.on('error', reject);
@@ -284,7 +298,7 @@ async function fetchPage(url, ticker) {
     req.on('error', reject);
     req.on('timeout', () => {
       req.destroy();
-      reject(new Error(`First Trust ${ticker}: timeout descargando página HTML`));
+      reject(new Error(`First Trust ${ticker}: timeout descargando página HTML (${options.timeout}ms). URL: ${url}`));
     });
     req.end();
   });

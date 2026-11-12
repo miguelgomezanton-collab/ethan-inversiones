@@ -135,6 +135,8 @@ export async function getHoldings(ticker, forceRefresh = false) {
 /**
  * Descarga los holdings desde la fuente oficial del ETF.
  * Selecciona el adapter correcto por ticker.
+ * Calcula integrityOk/integrityNote aquí para que estén disponibles
+ * tanto en respuestas fresh como en las cacheadas.
  *
  * @param {string} ticker
  * @returns {Promise<HoldingsResult>}
@@ -158,7 +160,34 @@ async function downloadFromSource(ticker) {
     throw new Error(`${ticker}: adapter devolvió 0 holdings`);
   }
 
-  return result;
+  // ── Calcular integridad aquí para que extractPublicFields() siempre lo tenga ──
+  const tw = result.totalWeight ?? 0;
+  const integrityOk   = tw > 80;
+  const integrityNote = buildIntegrityNoteInline(
+    result.totalHoldings ?? result.holdings.length,
+    result.cashRows ?? 0,
+    tw,
+    result.source ?? 'unknown'
+  );
+
+  return { ...result, integrityOk, integrityNote };
+}
+
+/** Calcula la nota de integridad sin depender de cache.js */
+function buildIntegrityNoteInline(totalHoldings, cashRows, totalWeight, source) {
+  const parts = [`${totalHoldings} posiciones accionarias`];
+  if (cashRows > 0) {
+    parts.push(`${cashRows} posición${cashRows > 1 ? 'es' : ''} no-accionaria${cashRows > 1 ? 's' : ''} excluida${cashRows > 1 ? 's' : ''} (cash/collateral)`);
+  }
+  parts.push(`peso total: ${totalWeight.toFixed(1)}%`);
+  parts.push(`fuente: ${source}`);
+  if (totalWeight < 95) {
+    parts.push(`⚠️ peso <95% — posible liquidez retenida o posiciones con peso <0.01%`);
+  }
+  if (totalWeight > 100.5) {
+    parts.push(`⚠️ peso >100% — posible solapamiento en la fuente`);
+  }
+  return parts.join(' · ');
 }
 
 /**

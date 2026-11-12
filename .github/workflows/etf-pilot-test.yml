@@ -20,7 +20,6 @@ jobs:
     timeout-minutes: 10
 
     env:
-      # URL de Preview: se usa el input manual si existe, o se construye desde el último deploy
       PREVIEW_URL: ${{ github.event.inputs.preview_url || 'https://ethan-inversiones-j14d3jekl-miguel-angel-s-projects2.vercel.app' }}
       BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
@@ -29,33 +28,41 @@ jobs:
         run: |
           echo "Preview URL: $PREVIEW_URL"
           if [ -z "$BYPASS_SECRET" ]; then
-            echo "⚠️  VERCEL_AUTOMATION_BYPASS_SECRET no configurado"
-            echo "    → Settings → Deployment Protection → Protection Bypass for Automation"
+            echo "❌ VERCEL_AUTOMATION_BYPASS_SECRET no configurado"
+            echo "   → Settings → Deployment Protection → Protection Bypass for Automation"
             exit 1
           fi
           echo "✅ Bypass secret configurado (${#BYPASS_SECRET} chars)"
 
       - name: 🔍 Test endpoint de diagnóstico (tickers soportados)
-        id: supported
         run: |
           echo "=== GET /api/macro-rlab/etf-holdings?ticker=supported ==="
-          RESP=$(curl -sf \
+          HTTP_CODE=$(curl -s -o /tmp/supported.json -w "%{http_code}" \
             -H "x-vercel-protection-bypass: $BYPASS_SECRET" \
             "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=supported")
-          echo "$RESP" | python3 -c "
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ Endpoint no accesible: HTTP $HTTP_CODE"
+            cat /tmp/supported.json | head -5
+            exit 1
+          fi
+
+          python3 - <<'PYEOF'
           import json, sys
-          d = json.load(sys.stdin)
+          with open('/tmp/supported.json') as f:
+              d = json.load(f)
           tickers = d.get('tickers', [])
           supported = [t['ticker'] for t in tickers if t['status'] == 'supported']
           pending   = [t['ticker'] for t in tickers if t['status'] == 'pending']
           print(f'✅ Endpoint activo — {len(supported)} tickers soportados, {len(pending)} pendientes')
           pilot = [t for t in supported if t in ['XBI','CIBR','SMH','GDX']]
+          missing = [t for t in ['XBI','CIBR','SMH','GDX'] if t not in pilot]
           print(f'   Piloto disponible: {pilot}')
-          if len(pilot) < 4:
-            missing = [t for t in [\"XBI\",\"CIBR\",\"SMH\",\"GDX\"] if t not in pilot]
-            print(f'   ⚠️  Faltan: {missing}')
-          "
+          if missing:
+              print(f'   ⚠️  Faltan en /supported: {missing}')
+          PYEOF
 
+      # ── Helper function instalado como script temporal ────────────────────
       - name: 📊 Test XBI (SPDR/SSGA — XLSX)
         id: xbi
         run: |
@@ -64,48 +71,70 @@ jobs:
           echo "  XBI — SPDR Biotech ETF (State Street SSGA)"
           echo "════════════════════════════════════════════"
           START=$(date +%s%3N)
-          RESP=$(curl -sf \
+          HTTP_CODE=$(curl -s -o /tmp/xbi.json -w "%{http_code}" \
             -H "x-vercel-protection-bypass: $BYPASS_SECRET" \
-            -w "\n__HTTP_CODE__:%{http_code}" \
-            "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=XBI" 2>&1) || true
+            "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=XBI")
           END=$(date +%s%3N)
           ELAPSED=$((END - START))
-
-          HTTP_CODE=$(echo "$RESP" | grep "__HTTP_CODE__:" | cut -d: -f2)
-          BODY=$(echo "$RESP" | grep -v "__HTTP_CODE__:")
-
           echo "HTTP: $HTTP_CODE | Tiempo: ${ELAPSED}ms"
 
-          if [ "$HTTP_CODE" = "200" ]; then
-            echo "$BODY" | python3 -c "
+          # FAIL: HTTP distinto de 200
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ FALLO — HTTP $HTTP_CODE (esperado 200)"
+            cat /tmp/xbi.json | head -10
+            exit 1
+          fi
+
+          # FAIL: ok:false o cuerpo inválido
+          python3 - <<'PYEOF'
           import json, sys
-          d = json.load(sys.stdin)
-          print(f'  ok:            {d[\"ok\"]}')
-          print(f'  source:        {d.get(\"source\",\"N/A\")}')
-          print(f'  sourceUrl:     {d.get(\"sourceUrl\",\"N/A\")}')
-          print(f'  referenceDate: {d.get(\"referenceDate\",\"N/A\")}')
-          print(f'  totalHoldings: {d.get(\"totalHoldings\",0)} posiciones')
-          print(f'  cashRows:      {d.get(\"cashRows\",0)} excluidas (cash/collateral)')
-          print(f'  totalWeight:   {d.get(\"totalWeight\",0):.2f}%')
-          print(f'  integrityOk:   {d.get(\"integrityOk\",False)}')
-          print(f'  integrityNote: {d.get(\"integrityNote\",\"N/A\")}')
-          print(f'  fromCache:     {d.get(\"fromCache\",False)}')
-          print(f'  stale:         {d.get(\"stale\",False)}')
+          with open('/tmp/xbi.json') as f:
+              d = json.load(f)
+          ok = d.get('ok', False)
           holdings = d.get('holdings', [])
+          total_holdings = d.get('totalHoldings', 0)
+          total_weight = d.get('totalWeight', 0)
+          integrity_ok = d.get('integrityOk', False)
+
+          print(f'  ok:            {ok}')
+          print(f'  source:        {d.get("source","N/A")}')
+          print(f'  referenceDate: {d.get("referenceDate","N/A")}')
+          print(f'  totalHoldings: {total_holdings} posiciones')
+          print(f'  cashRows:      {d.get("cashRows",0)} excluidas (cash/collateral)')
+          print(f'  totalWeight:   {total_weight:.2f}%')
+          print(f'  integrityOk:   {integrity_ok}')
+          print(f'  integrityNote: {d.get("integrityNote","N/A")}')
+          print(f'  fromCache:     {d.get("fromCache",False)}')
+
           valid = [h for h in holdings if h.get('ticker') and h.get('ticker') != 'null']
+          pct = 100*len(valid)//len(holdings) if holdings else 0
           print(f'')
-          print(f'  → ETHAN-analizables: {len(valid)}/{len(holdings)} ({100*len(valid)//len(holdings) if holdings else 0}%)')
+          print(f'  → ETHAN-analizables: {len(valid)}/{len(holdings)} ({pct}%)')
           print(f'  → Top 5 posiciones:')
           top5 = sorted(holdings, key=lambda x: x.get('weight',0), reverse=True)[:5]
           for h in top5:
-            print(f'     {h[\"ticker\"]:8s}  {h.get(\"weight\",0):.2f}%  {h.get(\"name\",\"\")[:40]}')
-          if d.get('staleWarning'):
-            print(f'  ⚠️  STALE: {d[\"staleWarning\"]}')
-          " 2>&1 || echo "  ❌ Error parseando respuesta JSON"
-          else
-            echo "  ❌ Error HTTP $HTTP_CODE"
-            echo "$BODY" | head -5
-          fi
+              print(f'     {h["ticker"]:8s}  {h.get("weight",0):.2f}%  {h.get("name","")[:40]}')
+
+          errors = []
+          if not ok:
+              errors.append(f'ok=false: {d.get("error","sin mensaje")}')
+          if total_holdings == 0 or not holdings:
+              errors.append('0 holdings devueltos')
+          if total_weight < 10:
+              errors.append(f'totalWeight={total_weight:.2f}% — demasiado bajo')
+          if not integrity_ok:
+              errors.append(f'integrityOk=false (peso={total_weight:.2f}%)')
+
+          if errors:
+              print(f'')
+              print(f'❌ FALLO XBI:')
+              for e in errors:
+                  print(f'   - {e}')
+              sys.exit(1)
+          else:
+              print(f'')
+              print(f'✅ XBI OK')
+          PYEOF
 
       - name: 📊 Test CIBR (First Trust — HTML scraping)
         id: cibr
@@ -116,55 +145,78 @@ jobs:
           echo "  (Verificación identidad: CIBR ≠ QTEC)"
           echo "════════════════════════════════════════════"
           START=$(date +%s%3N)
-          RESP=$(curl -sf \
+          HTTP_CODE=$(curl -s -o /tmp/cibr.json -w "%{http_code}" \
             -H "x-vercel-protection-bypass: $BYPASS_SECRET" \
-            -w "\n__HTTP_CODE__:%{http_code}" \
-            "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=CIBR" 2>&1) || true
+            "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=CIBR")
           END=$(date +%s%3N)
           ELAPSED=$((END - START))
-
-          HTTP_CODE=$(echo "$RESP" | grep "__HTTP_CODE__:" | cut -d: -f2)
-          BODY=$(echo "$RESP" | grep -v "__HTTP_CODE__:")
-
           echo "HTTP: $HTTP_CODE | Tiempo: ${ELAPSED}ms"
 
-          if [ "$HTTP_CODE" = "200" ]; then
-            echo "$BODY" | python3 -c "
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ FALLO — HTTP $HTTP_CODE (esperado 200)"
+            cat /tmp/cibr.json | head -10
+            exit 1
+          fi
+
+          python3 - <<'PYEOF'
           import json, sys
-          d = json.load(sys.stdin)
-          print(f'  ok:            {d[\"ok\"]}')
-          print(f'  source:        {d.get(\"source\",\"N/A\")}')
-          print(f'  referenceDate: {d.get(\"referenceDate\",\"N/A\")}')
-          print(f'  totalHoldings: {d.get(\"totalHoldings\",0)} posiciones')
-          print(f'  cashRows:      {d.get(\"cashRows\",0)} excluidas')
-          print(f'  totalWeight:   {d.get(\"totalWeight\",0):.2f}%')
-          print(f'  integrityOk:   {d.get(\"integrityOk\",False)}')
+          with open('/tmp/cibr.json') as f:
+              d = json.load(f)
+          ok = d.get('ok', False)
           holdings = d.get('holdings', [])
+          total_holdings = d.get('totalHoldings', 0)
+          total_weight = d.get('totalWeight', 0)
+          integrity_ok = d.get('integrityOk', False)
+
+          print(f'  ok:            {ok}')
+          print(f'  source:        {d.get("source","N/A")}')
+          print(f'  referenceDate: {d.get("referenceDate","N/A")}')
+          print(f'  totalHoldings: {total_holdings} posiciones')
+          print(f'  totalWeight:   {total_weight:.2f}%')
+          print(f'  integrityOk:   {integrity_ok}')
+
           valid = [h for h in holdings if h.get('ticker') and h.get('ticker') != 'null']
+          pct = 100*len(valid)//len(holdings) if holdings else 0
           print(f'')
-          print(f'  → ETHAN-analizables: {len(valid)}/{len(holdings)} ({100*len(valid)//len(holdings) if holdings else 0}%)')
-          # Verificar que no es QTEC
+          print(f'  → ETHAN-analizables: {len(valid)}/{len(holdings)} ({pct}%)')
+
+          # Verificar identidad: CIBR debe tener empresas de ciberseguridad
           tickers_set = set(h.get('ticker','') for h in holdings)
-          qtec_indicators = ['QTEC', 'QCOM', 'CSCO']  # QTEC tendría composición diferente
-          print(f'  → Verificación identidad CIBR ≠ QTEC: ', end='')
-          # CIBR debe contener empresas como CRWD, PANW, ZS, FTNT
-          cibr_expected = {'CRWD', 'PANW', 'ZS', 'FTNT', 'OKTA'}
+          cibr_expected = {'CRWD', 'PANW', 'ZS', 'FTNT', 'OKTA', 'CSCO'}
           found_cibr = tickers_set & cibr_expected
+          print(f'  → Verificación identidad CIBR: ', end='')
           if found_cibr:
-            print(f'✅ OK (encontradas: {found_cibr})')
+              print(f'✅ OK (encontradas: {found_cibr})')
           else:
-            print(f'⚠️  No se encontraron tickers esperados de CIBR ({cibr_expected})')
+              print(f'⚠️  No se encontraron tickers esperados de CIBR ({cibr_expected})')
+
           print(f'  → Top 5 posiciones:')
           top5 = sorted(holdings, key=lambda x: x.get('weight',0), reverse=True)[:5]
           for h in top5:
-            print(f'     {h[\"ticker\"]:8s}  {h.get(\"weight\",0):.2f}%  {h.get(\"name\",\"\")[:40]}')
-          " 2>&1 || echo "  ❌ Error parseando respuesta JSON"
-          else
-            echo "  ❌ Error HTTP $HTTP_CODE"
-            echo "$BODY" | head -5
-          fi
+              print(f'     {h["ticker"]:8s}  {h.get("weight",0):.2f}%  {h.get("name","")[:40]}')
 
-      - name: 📊 Test SMH (VanEck — HTML table)
+          errors = []
+          if not ok:
+              errors.append(f'ok=false: {d.get("error","sin mensaje")}')
+          if total_holdings == 0 or not holdings:
+              errors.append('0 holdings devueltos')
+          if total_weight < 10:
+              errors.append(f'totalWeight={total_weight:.2f}% — demasiado bajo')
+          if not integrity_ok:
+              errors.append(f'integrityOk=false (peso={total_weight:.2f}%)')
+
+          if errors:
+              print(f'')
+              print(f'❌ FALLO CIBR:')
+              for e in errors:
+                  print(f'   - {e}')
+              sys.exit(1)
+          else:
+              print(f'')
+              print(f'✅ CIBR OK')
+          PYEOF
+
+      - name: 📊 Test SMH (VanEck — HTML estático offshore)
         id: smh
         run: |
           echo ""
@@ -172,43 +224,67 @@ jobs:
           echo "  SMH — VanEck Semiconductor ETF"
           echo "════════════════════════════════════════════"
           START=$(date +%s%3N)
-          RESP=$(curl -sf \
+          HTTP_CODE=$(curl -s -o /tmp/smh.json -w "%{http_code}" \
             -H "x-vercel-protection-bypass: $BYPASS_SECRET" \
-            -w "\n__HTTP_CODE__:%{http_code}" \
-            "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=SMH" 2>&1) || true
+            "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=SMH")
           END=$(date +%s%3N)
           ELAPSED=$((END - START))
-
-          HTTP_CODE=$(echo "$RESP" | grep "__HTTP_CODE__:" | cut -d: -f2)
-          BODY=$(echo "$RESP" | grep -v "__HTTP_CODE__:")
-
           echo "HTTP: $HTTP_CODE | Tiempo: ${ELAPSED}ms"
 
-          if [ "$HTTP_CODE" = "200" ]; then
-            echo "$BODY" | python3 -c "
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ FALLO — HTTP $HTTP_CODE (esperado 200)"
+            cat /tmp/smh.json | head -10
+            exit 1
+          fi
+
+          python3 - <<'PYEOF'
           import json, sys
-          d = json.load(sys.stdin)
-          print(f'  ok:            {d[\"ok\"]}')
-          print(f'  source:        {d.get(\"source\",\"N/A\")}')
-          print(f'  referenceDate: {d.get(\"referenceDate\",\"N/A\")}')
-          print(f'  totalHoldings: {d.get(\"totalHoldings\",0)} posiciones')
-          print(f'  totalWeight:   {d.get(\"totalWeight\",0):.2f}%')
-          print(f'  integrityOk:   {d.get(\"integrityOk\",False)}')
+          with open('/tmp/smh.json') as f:
+              d = json.load(f)
+          ok = d.get('ok', False)
           holdings = d.get('holdings', [])
+          total_holdings = d.get('totalHoldings', 0)
+          total_weight = d.get('totalWeight', 0)
+          integrity_ok = d.get('integrityOk', False)
+
+          print(f'  ok:            {ok}')
+          print(f'  source:        {d.get("source","N/A")}')
+          print(f'  referenceDate: {d.get("referenceDate","N/A")}')
+          print(f'  totalHoldings: {total_holdings} posiciones')
+          print(f'  totalWeight:   {total_weight:.2f}%')
+          print(f'  integrityOk:   {integrity_ok}')
+
           valid = [h for h in holdings if h.get('ticker') and h.get('ticker') != 'null']
+          pct = 100*len(valid)//len(holdings) if holdings else 0
           print(f'')
-          print(f'  → ETHAN-analizables: {len(valid)}/{len(holdings)} ({100*len(valid)//len(holdings) if holdings else 0}%)')
+          print(f'  → ETHAN-analizables: {len(valid)}/{len(holdings)} ({pct}%)')
           print(f'  → Top 5 posiciones:')
           top5 = sorted(holdings, key=lambda x: x.get('weight',0), reverse=True)[:5]
           for h in top5:
-            print(f'     {h[\"ticker\"]:8s}  {h.get(\"weight\",0):.2f}%  {h.get(\"name\",\"\")[:40]}')
-          " 2>&1 || echo "  ❌ Error parseando respuesta JSON"
-          else
-            echo "  ❌ Error HTTP $HTTP_CODE"
-            echo "$BODY" | head -5
-          fi
+              print(f'     {h["ticker"]:8s}  {h.get("weight",0):.2f}%  {h.get("name","")[:40]}')
 
-      - name: 📊 Test GDX (VanEck — HTML table + normalización internacional)
+          errors = []
+          if not ok:
+              errors.append(f'ok=false: {d.get("error","sin mensaje")}')
+          if total_holdings == 0 or not holdings:
+              errors.append('0 holdings devueltos')
+          if total_weight < 10:
+              errors.append(f'totalWeight={total_weight:.2f}% — demasiado bajo')
+          if not integrity_ok:
+              errors.append(f'integrityOk=false (peso={total_weight:.2f}%)')
+
+          if errors:
+              print(f'')
+              print(f'❌ FALLO SMH:')
+              for e in errors:
+                  print(f'   - {e}')
+              sys.exit(1)
+          else:
+              print(f'')
+              print(f'✅ SMH OK')
+          PYEOF
+
+      - name: 📊 Test GDX (VanEck — HTML estático + normalización internacional)
         id: gdx
         run: |
           echo ""
@@ -217,58 +293,81 @@ jobs:
           echo "  (Normalización tickers internacionales)"
           echo "════════════════════════════════════════════"
           START=$(date +%s%3N)
-          RESP=$(curl -sf \
+          HTTP_CODE=$(curl -s -o /tmp/gdx.json -w "%{http_code}" \
             -H "x-vercel-protection-bypass: $BYPASS_SECRET" \
-            -w "\n__HTTP_CODE__:%{http_code}" \
-            "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=GDX" 2>&1) || true
+            "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=GDX")
           END=$(date +%s%3N)
           ELAPSED=$((END - START))
-
-          HTTP_CODE=$(echo "$RESP" | grep "__HTTP_CODE__:" | cut -d: -f2)
-          BODY=$(echo "$RESP" | grep -v "__HTTP_CODE__:")
-
           echo "HTTP: $HTTP_CODE | Tiempo: ${ELAPSED}ms"
 
-          if [ "$HTTP_CODE" = "200" ]; then
-            echo "$BODY" | python3 -c "
-          import json, sys
-          d = json.load(sys.stdin)
-          print(f'  ok:            {d[\"ok\"]}')
-          print(f'  source:        {d.get(\"source\",\"N/A\")}')
-          print(f'  referenceDate: {d.get(\"referenceDate\",\"N/A\")}')
-          print(f'  totalHoldings: {d.get(\"totalHoldings\",0)} posiciones')
-          print(f'  totalWeight:   {d.get(\"totalWeight\",0):.2f}%')
-          print(f'  integrityOk:   {d.get(\"integrityOk\",False)}')
-          holdings = d.get('holdings', [])
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ FALLO — HTTP $HTTP_CODE (esperado 200)"
+            cat /tmp/gdx.json | head -10
+            exit 1
+          fi
 
-          # Verificar normalización internacional
-          normalized = [h for h in holdings if h.get('originalTicker') and h.get('ticker') != h.get('originalTicker')]
-          us_tickers  = [h for h in holdings if h.get('ticker') and '.' not in h.get('ticker','')]
+          python3 - <<'PYEOF'
+          import json, sys
+          with open('/tmp/gdx.json') as f:
+              d = json.load(f)
+          ok = d.get('ok', False)
+          holdings = d.get('holdings', [])
+          total_holdings = d.get('totalHoldings', 0)
+          total_weight = d.get('totalWeight', 0)
+          integrity_ok = d.get('integrityOk', False)
+
+          print(f'  ok:            {ok}')
+          print(f'  source:        {d.get("source","N/A")}')
+          print(f'  referenceDate: {d.get("referenceDate","N/A")}')
+          print(f'  totalHoldings: {total_holdings} posiciones')
+          print(f'  totalWeight:   {total_weight:.2f}%')
+          print(f'  integrityOk:   {integrity_ok}')
+
+          us_tickers   = [h for h in holdings if h.get('ticker') and '.' not in h.get('ticker','') and h.get('ticker') != 'null']
           intl_tickers = [h for h in holdings if h.get('ticker') and '.' in h.get('ticker','')]
           null_tickers = [h for h in holdings if not h.get('ticker') or h.get('ticker') == 'null']
-          valid = [h for h in holdings if h.get('ticker') and h.get('ticker') != 'null']
+          valid        = [h for h in holdings if h.get('ticker') and h.get('ticker') != 'null']
+          pct = 100*len(valid)//len(holdings) if holdings else 0
 
           print(f'')
-          print(f'  → ETHAN-analizables (US): {len(us_tickers)} tickers sin sufijo')
-          print(f'  → Internacionales normalizados: {len(intl_tickers)} (ej. NST.AX, EDV.L)')
-          print(f'  → No mapeables (null): {len(null_tickers)} (PE&OLES y similares)')
-          print(f'  → Total ETHAN-analizables: {len(valid)}/{len(holdings)} ({100*len(valid)//len(holdings) if holdings else 0}%)')
+          print(f'  → US sin sufijo:            {len(us_tickers)}')
+          print(f'  → Internacionales (.AX .L): {len(intl_tickers)}')
+          print(f'  → No mapeables (null):       {len(null_tickers)}')
+          print(f'  → ETHAN-analizables:         {len(valid)}/{len(holdings)} ({pct}%)')
+
+          # Muestra de normalizados
+          normalized = [h for h in holdings if h.get('originalTicker') and h.get('ticker') != h.get('originalTicker') and h.get('ticker')]
           if normalized:
-            print(f'')
-            print(f'  → Muestra normalización (hasta 8):')
-            for h in normalized[:8]:
-              print(f'     {h.get(\"originalTicker\",\"\"):15s} → {h.get(\"ticker\",\"\"):12s}  {h.get(\"name\",\"\")[:30]}')
-          print(f'')
+              print(f'  → Muestra normalización (hasta 5):')
+              for h in normalized[:5]:
+                  print(f'     {h.get("originalTicker",""):15s} → {h.get("ticker",""):12s}  {h.get("name","")[:30]}')
+
           print(f'  → Top 5 posiciones:')
           top5 = sorted(holdings, key=lambda x: x.get('weight',0), reverse=True)[:5]
           for h in top5:
-            orig = f\" (orig: {h['originalTicker']})\" if h.get('originalTicker') and h.get('originalTicker') != h.get('ticker') else ''
-            print(f'     {h[\"ticker\"]:12s}  {h.get(\"weight\",0):.2f}%  {h.get(\"name\",\"\")[:30]}{orig}')
-          " 2>&1 || echo "  ❌ Error parseando respuesta JSON"
-          else
-            echo "  ❌ Error HTTP $HTTP_CODE"
-            echo "$BODY" | head -5
-          fi
+              orig = f' (orig: {h["originalTicker"]})' if h.get('originalTicker') and h.get('originalTicker') != h.get('ticker') else ''
+              print(f'     {h["ticker"]:12s}  {h.get("weight",0):.2f}%  {h.get("name","")[:30]}{orig}')
+
+          errors = []
+          if not ok:
+              errors.append(f'ok=false: {d.get("error","sin mensaje")}')
+          if total_holdings == 0 or not holdings:
+              errors.append('0 holdings devueltos')
+          if total_weight < 10:
+              errors.append(f'totalWeight={total_weight:.2f}% — demasiado bajo')
+          if not integrity_ok:
+              errors.append(f'integrityOk=false (peso={total_weight:.2f}%)')
+
+          if errors:
+              print(f'')
+              print(f'❌ FALLO GDX:')
+              for e in errors:
+                  print(f'   - {e}')
+              sys.exit(1)
+          else:
+              print(f'')
+              print(f'✅ GDX OK')
+          PYEOF
 
       - name: 📋 Resumen del piloto
         if: always()
@@ -279,10 +378,37 @@ jobs:
           echo "  Preview: $PREVIEW_URL"
           echo "════════════════════════════════════════════════════════"
           echo ""
-          echo "Pasos siguientes si todas las pruebas pasan:"
-          echo "  1. Verificar Firestore: colección etf_holdings_cache"
-          echo "     (4 documentos: XBI, CIBR, SMH, GDX)"
-          echo "  2. Probar integración ETHAN en UI: subsector → componentes"
-          echo "  3. Autorizar deploy a main (el usuario confirma)"
+          XBI_STATUS="${{ steps.xbi.outcome }}"
+          CIBR_STATUS="${{ steps.cibr.outcome }}"
+          SMH_STATUS="${{ steps.smh.outcome }}"
+          GDX_STATUS="${{ steps.gdx.outcome }}"
+
+          icon() { [ "$1" = "success" ] && echo "✅" || echo "❌"; }
+
+          echo "  $(icon $XBI_STATUS)  XBI  (SPDR/SSGA XLSX)         → $XBI_STATUS"
+          echo "  $(icon $CIBR_STATUS)  CIBR (First Trust HTML)       → $CIBR_STATUS"
+          echo "  $(icon $SMH_STATUS)  SMH  (VanEck HTML offshore)    → $SMH_STATUS"
+          echo "  $(icon $GDX_STATUS)  GDX  (VanEck HTML + intl norm) → $GDX_STATUS"
           echo ""
-          echo "⛔ main NO ha sido modificado — piloto solo en feature/etf-holdings-pilot"
+
+          FAILED=0
+          [ "$XBI_STATUS"  != "success" ] && FAILED=$((FAILED+1))
+          [ "$CIBR_STATUS" != "success" ] && FAILED=$((FAILED+1))
+          [ "$SMH_STATUS"  != "success" ] && FAILED=$((FAILED+1))
+          [ "$GDX_STATUS"  != "success" ] && FAILED=$((FAILED+1))
+
+          if [ "$FAILED" -gt 0 ]; then
+            echo "  ══ RESULTADO GLOBAL: FAILED ($FAILED/4 ETFs fallaron) ══"
+            echo ""
+            echo "  ⛔ main NO ha sido modificado — piloto solo en feature/etf-holdings-pilot"
+            exit 1
+          else
+            echo "  ══ RESULTADO GLOBAL: PASSED (4/4 ETFs OK) ══"
+            echo ""
+            echo "  Pasos siguientes:"
+            echo "    1. Verificar Firestore: colección etf_holdings_cache (4 documentos)"
+            echo "    2. Probar integración ETHAN en UI: subsector → componentes"
+            echo "    3. Autorizar deploy a main (el usuario confirma)"
+            echo ""
+            echo "  ⛔ main NO ha sido modificado — piloto solo en feature/etf-holdings-pilot"
+          fi
