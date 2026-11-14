@@ -227,14 +227,22 @@ function extractDate(text, ticker) {
  * El texto viene como texto plano extraído de PDF/HTML.
  */
 function parseIndexText(text, etfTicker, indexTicker) {
-  const holdings = [];
-  let cashRows = 0;
+  // ── Estrategia 1: texto de PDF comprimido con espacios múltiples (una línea) ──
+  // El extractor PDF une todo el texto de una página con espacios.
+  // Formato observado: "... Name     Symbol     COMPANY NAME   TICKER   WEIGHT   COMPANY2 ..."
+  // Ejemplo real: "A10 NETWORKS, INC.   ATEN   0.33   ACCENTURE PLC   ACN   1.87..."
+  const headerMatch = text.match(/Name\s+Symbol\s+/i);
+  if (headerMatch) {
+    const afterHeader = text.slice(headerMatch.index + headerMatch[0].length);
+    const result1 = parseHoldingsFromInlineText(afterHeader, etfTicker);
+    if (result1.holdings.length > 5) {
+      console.log(`[NasdaqIndex] ${etfTicker}: Estrategia 1 (PDF inline) → ${result1.holdings.length} holdings`);
+      return result1;
+    }
+  }
 
-  // Buscar sección de holdings: desde la línea que tiene "Name Symbol Weight" o similar
-  // hasta el final o hasta una línea de pie de página
+  // ── Estrategia 2: texto multilínea (cada holding en su propia línea) ──
   const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-
-  // Encontrar índice de inicio de datos (después de cabecera)
   let startIdx = -1;
   for (let i = 0; i < lines.length; i++) {
     const lower = lines[i].toLowerCase();
@@ -244,75 +252,97 @@ function parseIndexText(text, etfTicker, indexTicker) {
       break;
     }
   }
-
-  // Si no encontramos cabecera explícita, buscar desde la primera línea con ticker + peso
   if (startIdx === -1) {
     for (let i = 0; i < lines.length; i++) {
-      // Buscar línea con patrón: texto <espacio> TICKER <espacio> número%
       if (/[A-Z]{2,6}\s+[\d.]+\s*$/.test(lines[i]) || /[A-Z]{2,6}\s+[\d.]+%/.test(lines[i])) {
         startIdx = i;
         break;
       }
     }
   }
-
   if (startIdx === -1) {
     throw new Error(
       `NasdaqIndex ${etfTicker}/${indexTicker}: no se encontró sección de holdings en el texto. ` +
-      `Primeras 10 líneas: ${lines.slice(0, 10).join(' | ')}`
+      `Primeras 500 chars: ${text.slice(0, 500)}`
     );
   }
 
-  console.log(`[NasdaqIndex] ${etfTicker}: parsing desde línea ${startIdx}, total líneas: ${lines.length}`);
-
-  // Parsear cada línea de datos
-  // Formato esperado: "COMPANY NAME  TICKER  WEIGHT" o "COMPANY NAME TICKER WEIGHT%"
-  // El ticker es la penúltima columna, el peso es la última
+  console.log(`[NasdaqIndex] ${etfTicker}: Estrategia 2 (multilínea) desde línea ${startIdx}`);
+  const holdings = [];
+  let cashRows = 0;
   for (let i = startIdx; i < lines.length; i++) {
     const line = lines[i];
-
-    // Parar en líneas de pie de página o notas
     if (line.startsWith('*') || line.startsWith('©') || line.startsWith('All content') ||
         line.startsWith('Unauthorized') || line.toLowerCase().startsWith('source:') ||
         line.toLowerCase().startsWith('note:') || line.toLowerCase().startsWith('total')) {
       break;
     }
-
-    // Intentar parsear: "NAME ... TICKER WEIGHT"
-    // La línea termina en "TICKER  WEIGHT" o "TICKER WEIGHT%"
-    const weightPattern = /^(.*?)\s+([A-Z0-9]{1,8})\s+([\d.]+)\s*%?\s*$/;
-    const m = line.match(weightPattern);
+    const m = line.match(/^(.*?)\s+([A-Z0-9]{1,8})\s+([\d.]+)\s*%?\s*$/);
     if (!m) continue;
+    const rawName = m[1].trim(), rawTicker = m[2].trim(), weight = parseFloat(m[3]) || 0;
+    if (!rawTicker || !/^[A-Z0-9]+$/.test(rawTicker) || weight <= 0) continue;
+    const isCash = /cash|money market|collateral/i.test(rawName) || rawTicker === 'CASH' || rawTicker === 'USD';
+    if (isCash) { cashRows++; continue; }
+    holdings.push({ ticker: (INTL_TICKER_MAP[rawTicker] || rawTicker).toUpperCase(), name: rawName, weight: parseFloat(weight.toFixed(4)), shares: null });
+  }
+  return { holdings, cashRows };
+}
 
-    const rawName   = m[1].trim();
-    const rawTicker = m[2].trim();
-    const rawWeight = m[3].trim();
+/**
+ * Parsea holdings desde texto en una sola línea con espacios múltiples como separadores.
+ * Formato: "COMPANY NAME   TICKER   WEIGHT   COMPANY2   TICK2   WEIGHT2 ..."
+ * Los separadores son 2+ espacios entre columnas.
+ */
+function parseHoldingsFromInlineText(text, etfTicker) {
+  const holdings = [];
+  let cashRows = 0;
 
-    // Validar que parece un ticker real (1-8 chars alfanuméricos)
-    if (!rawTicker || rawTicker.length > 8 || !/^[A-Z0-9]+$/.test(rawTicker)) continue;
+  // Dividir por 2+ espacios: cada "token" es un campo
+  // Luego agrupar en triplas: [name, ticker, weight]
+  const tokens = text.split(/\s{2,}/).map(t => t.trim()).filter(t => t.length > 0);
 
-    const weight = parseFloat(rawWeight) || 0;
-    if (weight <= 0) continue;
+  // Recorrer los tokens buscando patrón: ...NAME  TICKER  WEIGHT...
+  // TICKER: 1-8 chars alfanuméricos mayúsculas
+  // WEIGHT: número decimal (ej. 0.33, 1.87, 15.2)
+  // NAME: todo lo anterior al TICKER en el grupo actual
+  let i = 0;
+  while (i < tokens.length) {
+    const tok = tokens[i];
 
-    // Detectar cash/collateral
-    const isCash = rawName.toLowerCase().includes('cash') ||
-                   rawName.toLowerCase().includes('money market') ||
-                   rawName.toLowerCase().includes('collateral') ||
-                   rawTicker === 'CASH' || rawTicker === 'USD';
-    if (isCash) {
-      cashRows++;
-      continue;
+    // ¿Es este token un TICKER? (1-8 chars A-Z0-9, sin puntuación)
+    if (/^[A-Z][A-Z0-9]{0,7}$/.test(tok)) {
+      const nextTok = tokens[i + 1];
+      // ¿El siguiente token es un WEIGHT? (número decimal)
+      if (nextTok && /^[\d]+\.[\d]+$/.test(nextTok)) {
+        const rawTicker = tok;
+        const weight    = parseFloat(nextTok);
+
+        // El nombre está en el token ANTERIOR a este TICKER
+        const prevTok = tokens[i - 1] || '';
+        const rawName = prevTok;
+
+        // Validaciones básicas
+        if (weight > 0 && weight <= 25 &&
+            !['NAME', 'SYMBOL', 'WEIGHT', 'INDEX', 'DATA', 'NOTES', 'TOTAL'].includes(rawTicker)) {
+
+          const isCash = /cash|money market|collateral/i.test(rawName) ||
+                         rawTicker === 'CASH' || rawTicker === 'USD';
+          if (isCash) {
+            cashRows++;
+          } else {
+            holdings.push({
+              ticker: (INTL_TICKER_MAP[rawTicker] || rawTicker).toUpperCase(),
+              name:   rawName,
+              weight: parseFloat(weight.toFixed(4)),
+              shares: null,
+            });
+          }
+        }
+        i += 2; // saltar TICKER y WEIGHT
+        continue;
+      }
     }
-
-    // Normalizar ticker internacional si tiene mapeado
-    const normalizedTicker = INTL_TICKER_MAP[rawTicker] || rawTicker;
-
-    holdings.push({
-      ticker: normalizedTicker.toUpperCase(),
-      name:   rawName,
-      weight: parseFloat(weight.toFixed(4)),
-      shares: null,
-    });
+    i++;
   }
 
   return { holdings, cashRows };
