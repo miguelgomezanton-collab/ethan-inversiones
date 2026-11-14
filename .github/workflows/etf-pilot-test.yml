@@ -555,10 +555,15 @@ jobs:
       - name: "Screener ETHAN — validación universo completo"
         run: python3 .github/scripts/full_coverage_screener.py
 
-      - name: "Publicar resultado JSON"
+      - name: "Validación funcional — indicadores técnicos reales ETHAN"
+        run: python3 .github/scripts/functional_ethan_screener.py
+
+      - name: "Publicar resultados JSON"
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: full-coverage-result
-          path: /tmp/full_coverage_result.json
+          path: |
+            /tmp/full_coverage_result.json
+            /tmp/functional_screener_result.json
           retention-days: 30
