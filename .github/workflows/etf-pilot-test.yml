@@ -235,7 +235,7 @@ jobs:
           START=$(date +%s%3N)
           HTTP_CODE=$(curl -s -o /tmp/soxx.json -w "%{http_code}" \
             -H "x-vercel-protection-bypass: $BYPASS_SECRET" \
-            "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=SOXX")
+            "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=SOXX&refresh=1")
           END=$(date +%s%3N)
           ELAPSED=$((END - START))
           echo "HTTP: $HTTP_CODE | Tiempo: ${ELAPSED}ms"
@@ -315,7 +315,7 @@ jobs:
           START=$(date +%s%3N)
           HTTP_CODE=$(curl -s -o /tmp/gdx.json -w "%{http_code}" \
             -H "x-vercel-protection-bypass: $BYPASS_SECRET" \
-            "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=GDX")
+            "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=GDX&refresh=1")
           END=$(date +%s%3N)
           ELAPSED=$((END - START))
           echo "HTTP: $HTTP_CODE | Tiempo: ${ELAPSED}ms"
