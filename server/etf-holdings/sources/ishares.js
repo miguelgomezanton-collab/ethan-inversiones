@@ -130,21 +130,24 @@ export async function fetchHoldings(etfTicker) {
     if (rawTicker === '-') continue;
 
     // Ignorar filas de disclaimer legal que iShares append al final del CSV
-    // (textos legales, advertencias, etc. — no son holdings reales)
-    const rawNameUpper = rawName.toUpperCase();
-    const isDisclaimer = rawName.includes('©') ||
-                         rawNameUpper.includes('CAREFULLY CONSIDER') ||
-                         rawNameUpper.includes('BLACKROCK INVESTMENTS') ||
-                         rawNameUpper.includes('NOT SPONSORED') ||
-                         rawNameUpper.includes('FOR ILLUSTRATIVE') ||
-                         rawNameUpper.includes('SHOULD NOT BE RELIED') ||
-                         rawNameUpper.includes('INVESTMENT OBJECTIVES') ||
-                         rawNameUpper.includes('GENERALLY REPRESENT') ||
-                         rawNameUpper.includes('PRICING VENDOR') ||
-                         rawNameUpper.includes('NET ASSET VALUE') ||
-                         // Textos muy largos que no pueden ser nombres de empresa
-                         rawName.length > 80;
-    if (isDisclaimer) continue;
+    // (textos legales, advertencias, etc. — el texto puede aparecer en Ticker o Name)
+    const checkDisclaimer = (text) => {
+      if (!text) return false;
+      const up = text.toUpperCase();
+      return text.includes('©') ||
+             up.includes('CAREFULLY CONSIDER') ||
+             up.includes('BLACKROCK INVESTMENTS') ||
+             up.includes('NOT SPONSORED') ||
+             up.includes('FOR ILLUSTRATIVE') ||
+             up.includes('SHOULD NOT BE RELIED') ||
+             up.includes('INVESTMENT OBJECTIVES') ||
+             up.includes('GENERALLY REPRESENT') ||
+             up.includes('PRICING VENDOR') ||
+             up.includes('NET ASSET VALUE') ||
+             // Tickers válidos tienen ≤10 chars; textos legales son mucho más largos
+             text.length > 20;
+    };
+    if (checkDisclaimer(rawTicker) || checkDisclaimer(rawName)) continue;
 
     // Ignorar tickers que no son accionarios (derivados, futuros, etc.)
     // iShares usa "Equity" para acciones; otros asset classes son cash/futures/etc.
