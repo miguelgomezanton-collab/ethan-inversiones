@@ -311,6 +311,11 @@ async function extractPdfText(pdfBuffer, ticker) {
 
   console.log(`[NasdaqIndex] ${ticker}: PDF → streams encontrados:${streamsFound} descomprimidos:${streamsDecompressed} texto:${allText.length} chars`);
 
+  // DEBUG TEMPORAL: loguear primeras 2000 chars del texto extraído para diagnóstico
+  if (allText.length > 0) {
+    console.log(`[NasdaqIndex] ${ticker}: PDF texto extraído (primeros 500 chars): ${JSON.stringify(allText.slice(0, 500))}`);
+  }
+
   // Fallback: buscar texto en literales directos (sin comprimir) si poco texto extraído
   if (allText.length < 200) {
     console.warn(`[NasdaqIndex] ${ticker}: poco texto desde FlateDecode, intentando fallback literal`);
@@ -350,6 +355,18 @@ function extractTextFromPdfStream(stream) {
   // Tokenizar todo el stream de una vez (dentro y fuera de BT/ET)
   // ya que algunos PDFs no usan estrictamente BT/ET pero sí Tj/TJ
   const lines = stream.split(/\r?\n/);
+
+  // DEBUG TEMPORAL: loguear primeras hex strings encontradas en el stream
+  const hexSamples = [];
+  for (const line of lines.slice(0, 200)) {
+    const h1 = line.match(/<([0-9A-Fa-f]{4,})>\s*(?:Tj|'|")/);
+    if (h1) hexSamples.push(`HEX_Tj: ${h1[1].slice(0,40)}`);
+    const h2 = line.match(/\[.*<([0-9A-Fa-f]{4,})>.*\]\s*TJ/);
+    if (h2) hexSamples.push(`HEX_TJ_arr: ${h2[1].slice(0,40)}`);
+  }
+  if (hexSamples.length > 0) {
+    console.log(`[NasdaqIndex] PDF hex samples (first 5): ${hexSamples.slice(0,5).join(' | ')}`);
+  }
 
   for (const line of lines) {
     // Detectar Td o T* (nueva línea) → añadir newline al resultado
