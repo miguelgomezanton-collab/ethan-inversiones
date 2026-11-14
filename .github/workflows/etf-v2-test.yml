@@ -1,6 +1,6 @@
 name: ETF v2 Test (63 ETFs)
 
-on:
+"on":
   workflow_dispatch:
     inputs:
       vercel_url:

@@ -1,6 +1,6 @@
 name: ETF Fase2 Full Smoke Test
 
-on:
+"on":
   workflow_dispatch:
     inputs:
       vercel_url:
