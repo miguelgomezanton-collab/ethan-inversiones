@@ -331,70 +331,93 @@ async function extractPdfText(pdfBuffer, ticker) {
 
 /**
  * Busca un Buffer (needle) dentro de otro Buffer (haystack) desde pos.
- * Devuelve -1 si no se encuentra.
+ * Usa Buffer.indexOf() nativo de Node.js (mucho más eficiente).
  */
 function indexOfBuffer(haystack, needle, fromIndex = 0) {
-  const nLen = needle.length;
-  for (let i = fromIndex; i <= haystack.length - nLen; i++) {
-    let found = true;
-    for (let j = 0; j < nLen; j++) {
-      if (haystack[i + j] !== needle[j]) { found = false; break; }
-    }
-    if (found) return i;
-  }
-  return -1;
+  return haystack.indexOf(needle, fromIndex);
 }
 
 /**
  * Extrae el texto visible de un stream PDF descomprimido.
- * El stream contiene instrucciones como: BT ... (texto) Tj ... ET
+ * Soporta:
+ *  - Strings literales: (texto) Tj/'/"|[(texto)] TJ
+ *  - Strings hexadecimales: <4865> Tj / [<4865>] TJ
+ *  - Td/TD/Tm para detectar saltos de línea implícitos
  */
 function extractTextFromPdfStream(stream) {
   let result = '';
-  let inText = false;
 
-  // BT / ET delimitan bloques de texto
-  const parts = stream.split(/\b(BT|ET)\b/);
-  for (let i = 0; i < parts.length; i++) {
-    const part = parts[i];
-    if (part === 'BT') { inText = true; continue; }
-    if (part === 'ET') { inText = false; continue; }
-    if (!inText) continue;
+  // Tokenizar todo el stream de una vez (dentro y fuera de BT/ET)
+  // ya que algunos PDFs no usan estrictamente BT/ET pero sí Tj/TJ
+  const lines = stream.split(/\r?\n/);
 
-    // Dentro de BT...ET: extraer strings de texto
-    // Formato 1: (texto) Tj
-    // Formato 2: (texto) ' o "
-    // Formato 3: [(texto) n (texto) n ...] TJ
-    const tjRegex = /\(([^)]*)\)\s*(?:Tj|'|")/g;
-    let m;
-    while ((m = tjRegex.exec(part)) !== null) {
-      const decoded = m[1]
-        .replace(/\\n/g, '\n')
-        .replace(/\\r/g, '\r')
-        .replace(/\\t/g, ' ')
-        .replace(/\\\(/g, '(')
-        .replace(/\\\)/g, ')')
-        .replace(/\\\\/g, '\\');
-      result += decoded + ' ';
+  for (const line of lines) {
+    // Detectar Td o T* (nueva línea) → añadir newline al resultado
+    if (/^\s*T[d*]\s*$/.test(line) || /[-\d.]+\s+[-\d.]+\s+Td/.test(line)) {
+      if (result.length > 0 && result[result.length - 1] !== '\n') {
+        result += '\n';
+      }
+      continue;
     }
 
-    // Formato TJ: [(t1) n1 (t2) n2 ...] TJ
-    const tjArrayRegex = /\[([^\]]*)\]\s*TJ/g;
-    while ((m = tjArrayRegex.exec(part)) !== null) {
-      const inner = m[1];
-      const strRegex = /\(([^)]*)\)/g;
-      let sm;
-      while ((sm = strRegex.exec(inner)) !== null) {
-        const decoded = sm[1]
-          .replace(/\\\(/g, '(')
-          .replace(/\\\)/g, ')')
-          .replace(/\\\\/g, '\\');
-        result += decoded;
+    // Formato 1: (texto) Tj o (texto) ' o (texto) "
+    const tjLit = line.match(/\(([^)]*)\)\s*(?:Tj|'|")\s*$/);
+    if (tjLit) {
+      result += decodePdfString(tjLit[1]) + ' ';
+      continue;
+    }
+
+    // Formato 2: [(texto) kern (texto)] TJ
+    const tjArr = line.match(/\[([^\]]*)\]\s*TJ\s*$/);
+    if (tjArr) {
+      const inner = tjArr[1];
+      // extraer partes literales (texto) y hexadecimales <hex>
+      const parts = [...inner.matchAll(/\(([^)]*)\)|<([0-9A-Fa-f]*)>/g)];
+      for (const p of parts) {
+        if (p[1] !== undefined) result += decodePdfString(p[1]);
+        else if (p[2] !== undefined) result += hexToText(p[2]);
       }
       result += ' ';
+      continue;
+    }
+
+    // Formato 3: <hex> Tj (string hexadecimal directo)
+    const tjHex = line.match(/<([0-9A-Fa-f]*)>\s*(?:Tj|'|")\s*$/);
+    if (tjHex) {
+      result += hexToText(tjHex[1]) + ' ';
+      continue;
     }
   }
 
+  // Si no se encontró texto line-by-line, intentar regex global en el stream completo
+  if (result.trim().length < 10) {
+    const globalTj = [...stream.matchAll(/\(([^)]{0,200})\)\s*(?:Tj|'|")/g)];
+    for (const m of globalTj) result += decodePdfString(m[1]) + ' ';
+    const globalTjHex = [...stream.matchAll(/<([0-9A-Fa-f]{2,})>\s*(?:Tj|'|")/g)];
+    for (const m of globalTjHex) result += hexToText(m[1]) + ' ';
+  }
+
+  return result;
+}
+
+/** Decodifica un string literal PDF (escapes \n \r \( \) \\) */
+function decodePdfString(s) {
+  return s
+    .replace(/\\n/g, '\n').replace(/\\r/g, '\r').replace(/\\t/g, ' ')
+    .replace(/\\\(/g, '(').replace(/\\\)/g, ')').replace(/\\\\/g, '\\')
+    .replace(/\\(\d{3})/g, (_, oct) => String.fromCharCode(parseInt(oct, 8)));
+}
+
+/** Convierte hex string PDF a texto ASCII/Latin-1 */
+function hexToText(hex) {
+  if (!hex || hex.length % 2 !== 0) return '';
+  let result = '';
+  for (let i = 0; i < hex.length; i += 2) {
+    const code = parseInt(hex.slice(i, i + 2), 16);
+    if (code >= 32 && code < 127) result += String.fromCharCode(code);
+    else if (code === 0) continue; // null byte en UTF-16 → skip
+    else result += ' ';
+  }
   return result;
 }
 
