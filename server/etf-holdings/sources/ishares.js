@@ -32,24 +32,24 @@ const ISHARES_CONFIG = {
   // Tecnología
   IGV:  { id: '239771', slug: 'ishares-expanded-tech-software-sector-etf' },
   // Salud
-  IBB:  { id: '239458', slug: 'ishares-nasdaq-biotechnology-etf' },
-  IHE:  { id: '239521', slug: 'ishares-us-pharmaceuticals-etf' },
-  IHI:  { id: '239520', slug: 'ishares-us-medical-devices-etf' },
-  IHF:  { id: '239519', slug: 'ishares-us-healthcare-providers-etf' },
+  IBB:  { id: '239699', slug: 'ishares-nasdaq-biotechnology-etf' },   // verificado 2026-11 (bug anterior: 239458)
+  IHE:  { id: '239519', slug: 'ishares-us-pharmaceuticals-etf' },     // verificado 2026-11
+  IHI:  { id: '239520', slug: 'ishares-us-medical-devices-etf' },     // verificado 2026-11
+  IHF:  { id: '239510', slug: 'ishares-us-healthcare-providers-etf' }, // verificado 2026-11 (bug anterior: 239519)
   // Industriales / Defensa
-  ITA:  { id: '239512', slug: 'ishares-us-aerospace-defense-etf' },
+  ITA:  { id: '239502', slug: 'ishares-us-aerospace-defense-etf' },   // verificado 2026-11 (bug anterior: 239512)
   IYT:  { id: '239501', slug: 'ishares-us-transportation-etf' },
   // Consumo discrecional
-  ITB:  { id: '239511', slug: 'ishares-us-home-construction-etf' },
+  ITB:  { id: '239512', slug: 'ishares-us-home-construction-etf' },   // verificado 2026-11 (bug anterior: 239511)
   // Financieros
-  IYG:  { id: '239507', slug: 'ishares-us-financial-services-etf' },
+  IYG:  { id: '239509', slug: 'ishares-us-financial-services-etf' },  // verificado 2026-11 (bug anterior: 239507)
   // Comunicaciones
-  IYZ:  { id: '239503', slug: 'ishares-us-telecommunications-etf' },
+  IYZ:  { id: '239523', slug: 'ishares-us-telecommunications-etf' },  // verificado 2026-11 (bug anterior: 239503)
   // Real Estate
-  REET: { id: '272822', slug: 'ishares-global-reit-etf' },
-  REM:  { id: '239543', slug: 'ishares-mortgage-real-estate-etf' },
+  REET: { id: '268752', slug: 'ishares-global-reit-etf' },            // verificado 2026-11 (bug anterior: 272822)
+  REM:  { id: '239543', slug: 'ishares-mortgage-real-estate-etf' },   // verificado 2026-11
   // Energía
-  ICLN: { id: '239726', slug: 'ishares-global-clean-energy-etf' },
+  ICLN: { id: '239738', slug: 'ishares-global-clean-energy-etf' },    // verificado 2026-11 (bug anterior: 239726)
 };
 
 const ISHARES_TICKERS = new Set(Object.keys(ISHARES_CONFIG));

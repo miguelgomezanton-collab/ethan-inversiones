@@ -43,6 +43,8 @@ const FIRSTTRUST_TICKERS = new Set([
   'FIW',  // First Trust Water ETF
   'FCG',  // First Trust Natural Gas ETF
   'GRID', // First Trust NASDAQ Clean Edge Smart Grid Infrastructure ETF
+  'CARZ', // First Trust S-Network Future Vehicles & Technology ETF (XLY — Consumer Discretionary)
+          // Verificado 2026-11: gestor = First Trust Advisors LP, NO ARK Invest
 ]);
 
 /** Verifica si este adapter soporta el ticker dado */

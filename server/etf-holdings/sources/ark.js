@@ -2,17 +2,12 @@
 // Adapter para ARK Invest ETFs
 //
 // ETFs soportados (Fase 2 — 63 subsectores):
-//   ARKG  — ARK Genomic Revolution ETF
-//   CARZ  — ARK Autonomous Technology & Robotics ETF
-//           (antes ARK era CARZ; ahora CARZ es de Global X — ver nota)
+//   ARKG  — ARK Genomic Revolution ETF  (XLV — Health Care)
 //
 // NOTA sobre CARZ:
-//   ARK lanzó CARZ como "ARK Autonomous Technology & Robotics" pero
-//   el ticker CARZ en nuestro SUBSECTORS_CONFIG corresponde al
-//   "Global X Autonomous & Electric Vehicles ETF" (ticker DRIV fue
-//   renombrado; en la config CARZ = Global X). Verificar en
-//   rv-sectores.js — si CARZ es ARK, usar este adapter; si es Global X,
-//   agregar a globalx.js.
+//   CARZ es el "First Trust S-Network Future Vehicles & Technology ETF"
+//   gestionado por First Trust Advisors LP — NO es un ETF de ARK Invest.
+//   CARZ fue reasignado a firsttrust.js (verificado 2026-11).
 //
 // Fuente primaria: CSV directo en ark-funds.com
 //   ARKG: https://ark-funds.com/wp-content/uploads/funds-etf-csv/ARK_GENOMIC_REVOLUTION_ETF_ARKG_HOLDINGS.csv
@@ -26,12 +21,12 @@
 
 import https from 'https';
 
-const ARK_TICKERS = new Set(['ARKG', 'CARZ']);
+const ARK_TICKERS = new Set(['ARKG']);
 
 // Mapa de ticker → nombre del fondo para construir la URL del CSV
 const ARK_CSV_NAMES = {
   ARKG: 'ARK_GENOMIC_REVOLUTION_ETF_ARKG',
-  CARZ: 'ARK_AUTONOMOUS_TECHNOLOGY_ROBOTICS_ETF_CARZ',
+  // CARZ eliminado: pertenece a First Trust (firsttrust.js), no ARK Invest
 };
 
 /** Verifica si este adapter soporta el ticker dado */

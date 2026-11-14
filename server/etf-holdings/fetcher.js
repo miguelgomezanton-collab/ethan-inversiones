@@ -6,19 +6,16 @@
 //
 // GESTORAS SOPORTADAS (fase 2 — 63 subsectores):
 //   SPDR/State Street: XBI, KRE, XOP, XAR, FSTA, XRT + 11 sectores
-//   First Trust:       CIBR, AIQ, SKYY, JETS, PAVE, FDN, AIRR, FIW, FCG, GRID
+//   First Trust:       CIBR, AIQ, SKYY, JETS, PAVE, FDN, AIRR, FIW, FCG, GRID, CARZ
 //   VanEck:            GDX, SIL, REMX, XME, OIH, SLX, COPX, NLR, MOO, ESPO, GUNR, BIZD
 //   iShares:           SOXX, IGV, IBB, IHE, IHI, IHF, ITA, IYT, ITB, IYG, IYZ, REET, REM, ICLN + piloto
 //   Global X:          BOTZ, FINX, LIT, SOCL, URA, DTCR
-//   ARK Invest:        ARKG, CARZ
+//   ARK Invest:        ARKG
 //   Vanguard:          VNQ
+//   SEC EDGAR NPORT-P: KBWB, KIE, KCE, TAN, PHO, PEJ, PSP, PBS, PBJ, AMLP, IBUY, QTUM
+//                      (Prioridad 3 — datos regulatorios, 30-60 días de retraso)
 //
-// PENDIENTE:
-//   Invesco:   KBWB, KIE, KCE, TAN, PHO, PEJ, PSP, PBS — mayoría bloqueados por proxy
-//   Alerian:   AMLP — scraping complejo
-//   Amplify:   IBUY — SPA JS
-//   Defiance:  QTUM — SPA JS
-//   PBJ:       Invesco PowerShares — bloqueado
+// PENDIENTE: ninguno — cobertura completa 63/63
 //
 // Arquitectura desacoplada: cada gestora tiene su adapter independiente.
 // El screener ETHAN no se modifica. Solo se cambia fetchETFHoldings() en el frontend.
@@ -31,9 +28,11 @@ import * as iSharesAdapter    from './sources/ishares.js';
 import * as globalxAdapter    from './sources/globalx.js';
 import * as arkAdapter        from './sources/ark.js';
 import * as vanguardAdapter   from './sources/vanguard.js';
+import * as edgarAdapter      from './sources/edgar.js';
 import { getCached, setCached } from './cache.js';
 
 // Registro de adapters en orden de prioridad de verificación
+// EDGAR va al final (Prioridad 3 — fallback regulatorio)
 const ADAPTERS = [
   spdrAdapter,
   firstTrustAdapter,
@@ -42,26 +41,14 @@ const ADAPTERS = [
   globalxAdapter,
   arkAdapter,
   vanguardAdapter,
+  edgarAdapter,       // Prioridad 3: SEC EDGAR NPORT-P (datos históricos, 30-60 días retraso)
 ];
 
-// Tickers pendientes (bloqueados/sin implementar) — Fase 2
-// Formato: ticker → descripción del bloqueo con fecha
-const PENDING_TICKERS = {
-  // ── Invesco — mayoría bloqueados por proxy de Vercel ──────────────
-  KBWB: 'Invesco — URL no accesible desde servidor; pendiente resolución por IT',
-  KIE:  'Invesco — URL no accesible desde servidor; pendiente resolución por IT',
-  KCE:  'Invesco — URL no accesible desde servidor (invesco.com bloquea IPs de datacenter)',
-  TAN:  'Invesco — URL no accesible desde servidor (invesco.com bloquea IPs de datacenter)',
-  PHO:  'Invesco — URL no accesible desde servidor (invesco.com bloquea IPs de datacenter)',
-  PEJ:  'Invesco — URL no accesible desde servidor (invesco.com bloquea IPs de datacenter)',
-  PSP:  'Invesco — URL no accesible desde servidor (invesco.com bloquea IPs de datacenter)',
-  PBS:  'Invesco — URL no accesible desde servidor (invesco.com bloquea IPs de datacenter)',
-  PBJ:  'Invesco PowerShares — URL no accesible desde servidor (invesco.com bloquea IPs de datacenter)',
-  // ── Otros proveedores con SPA o bloqueo ──────────────────────────
-  AMLP: 'Alerian — sitio SPA JavaScript, holdings no accesibles en HTML estático desde servidor',
-  IBUY: 'Amplify — sitio SPA JavaScript, holdings no accesibles en HTML estático desde servidor',
-  QTUM: 'Defiance — sitio SPA JavaScript, holdings no accesibles en HTML estático desde servidor',
-};
+// Tickers pendientes (bloqueados/sin implementar)
+// NOTA: KBWB, KIE, KCE, TAN, PHO, PEJ, PSP, PBS, PBJ, AMLP, IBUY, QTUM
+//       ahora están cubiertos por el adaptador SEC EDGAR NPORT-P (edgarAdapter).
+//       Este mapa solo contiene tickers genuinamente sin cobertura.
+const PENDING_TICKERS = {};
 
 /**
  * Obtiene los holdings de un ETF.

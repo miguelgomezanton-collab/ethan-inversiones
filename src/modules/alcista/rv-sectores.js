@@ -1126,26 +1126,47 @@ export async function render(container, { actionsSlot, savedState }) {
     renderCompScreener(etfTicker, holdings);
   }
 
+  // Estado de ordenación por ETF (persiste entre re-renders por cambios de filtro)
+  // 'desc' = mayor score primero (default); 'asc' = menor score primero
+  const compSortDir = {};
+
   function renderCompScreener(etfTicker, holdings) {
     const el = container.querySelector(`#comp-screener-results-${etfTicker}`);
     if (!el) return;
     const state = compScreenerState[etfTicker];
     if (!state || state.results.length === 0) return;
 
+    // ── Leer dirección de ordenación (default DESC) ──────────────────
+    if (!compSortDir[etfTicker]) compSortDir[etfTicker] = 'desc';
+    const sortDir = compSortDir[etfTicker];
+
     // ── Leer valores de los 3 filtros ────────────────────────────────
     const scoreMin  = parseInt(container.querySelector(`#csfs-${etfTicker}`)?.value ?? '7', 10);
     const volMin    = parseInt(container.querySelector(`#csfv-${etfTicker}`)?.value ?? '990000', 10);
     const estadoFil = container.querySelector(`#csfe-${etfTicker}`)?.value ?? '';
 
-    // ── Aplicar filtros ───────────────────────────────────────────────
-    const sorted = [...state.results]
+    // ── Aplicar filtros y ordenación ─────────────────────────────────
+    // Separar empresas con score de empresas sin score (siempre al final)
+    const withScore    = state.results.filter(r => r.score != null && !isNaN(r.score));
+    const withoutScore = state.results.filter(r => r.score == null || isNaN(r.score));
+
+    const filtered = withScore
       .filter(r => {
         if (r.score < scoreMin)                         return false;
         if (volMin > 0 && (r.avgVol11 || 0) < volMin)  return false;
         if (estadoFil && r.estado !== estadoFil)        return false;
         return true;
       })
-      .sort((a, b) => b.score - a.score);
+      .sort((a, b) => sortDir === 'desc' ? b.score - a.score : a.score - b.score);
+
+    // Empresas sin score que pasen los filtros de volumen/estado (siempre al final)
+    const filteredNoScore = withoutScore.filter(r => {
+      if (volMin > 0 && (r.avgVol11 || 0) < volMin) return false;
+      if (estadoFil && r.estado !== estadoFil)       return false;
+      return true;
+    });
+
+    const sorted = [...filtered, ...filteredNoScore];
 
     // ── Etiqueta del título con resumen de filtros activos ─────────
     const scoreLabel = scoreMin > 0 ? `Score ≥ ${scoreMin}` : 'Todos los scores';
@@ -1155,34 +1176,54 @@ export async function render(container, { actionsSlot, savedState }) {
     const estLabel   = estadoFil ? ` · ${estadoLabel[estadoFil] || estadoFil}` : '';
     const filterDesc = [scoreLabel, volLabel].filter(Boolean).join(' · ') + estLabel;
 
+    const sortIcon  = sortDir === 'desc' ? '↓' : '↑';
+    const sortTitle = sortDir === 'desc' ? 'Ordenado: mayor score primero. Pulsa para invertir' : 'Ordenado: menor score primero. Pulsa para invertir';
+
     if (sorted.length === 0) {
       el.innerHTML = `<div class="sc2-empty" style="margin-top:16px">Ningún valor cumple los filtros actuales (${filterDesc})</div>`;
       return;
     }
 
     el.innerHTML = `
-      <div style="font-size:11px;font-weight:600;color:var(--text2);margin:16px 0 8px;text-transform:uppercase;letter-spacing:.06em">
-        Ranking ETHAN — ${filterDesc}
-        <span style="font-weight:400;color:var(--text3);margin-left:8px">${sorted.length} valores</span>
+      <div style="display:flex;align-items:center;gap:10px;margin:16px 0 8px">
+        <span style="font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.06em">
+          Ranking ETHAN — ${filterDesc}
+          <span style="font-weight:400;color:var(--text3);margin-left:8px">${sorted.length} valores</span>
+        </span>
+        <button id="comp-sort-toggle-${etfTicker}" title="${sortTitle}"
+          style="background:var(--surface1,#1a1a2e);border:1px solid var(--border,rgba(255,255,255,.12));border-radius:5px;
+                 color:var(--accent,#4fc3f7);padding:2px 8px;font-size:11px;cursor:pointer;white-space:nowrap">
+          SCORE ${sortIcon}
+        </button>
       </div>
       <table class="sc2-table">
         <thead>
           <tr><th>TICKER</th><th>SCORE</th><th>ESTADO</th><th>PRECIO</th><th>VOL MEDIA 11s</th><th></th></tr>
         </thead>
         <tbody>
-          ${sorted.map(r => `
-            <tr>
+          ${sorted.map(r => {
+            const hasScore = r.score != null && !isNaN(r.score);
+            return `
+            <tr${!hasScore ? ' style="opacity:.55"' : ''}>
               <td class="sc2-ticker">${r.ticker}</td>
-              <td class="sc2-score" style="color:${scoreColor(r.score)}">${r.score}/10</td>
+              <td class="sc2-score" style="color:${hasScore ? scoreColor(r.score) : 'var(--text3)'}">
+                ${hasScore ? r.score+'/10' : '—'}
+              </td>
               <td style="color:${estadoColor(r.estado)}">${estadoLabel[r.estado]||'—'}</td>
               <td class="sc2-price">${r.price ? r.price.toFixed(2) : '—'}</td>
-              <td class="sc2-vol">${r.avgVol11 >= 1e6 ? (r.avgVol11/1e6).toFixed(1)+'M' : Math.round(r.avgVol11/1e3)+'k'}</td>
+              <td class="sc2-vol">${(r.avgVol11||0) >= 1e6 ? ((r.avgVol11||0)/1e6).toFixed(1)+'M' : Math.round((r.avgVol11||0)/1e3)+'k'}</td>
               <td><button class="sc2-wl-btn" data-wl="${r.ticker}">+ WL</button></td>
             </tr>
-          `).join('')}
+          `}).join('')}
         </tbody>
       </table>
     `;
+
+    // Toggle de ordenación — no dispara re-scan, solo re-render
+    el.querySelector(`#comp-sort-toggle-${etfTicker}`)?.addEventListener('click', () => {
+      compSortDir[etfTicker] = compSortDir[etfTicker] === 'desc' ? 'asc' : 'desc';
+      renderCompScreener(etfTicker, holdings);
+    });
 
     el.querySelectorAll('.sc2-wl-btn').forEach(btn => {
       btn.addEventListener('click', e => { e.stopPropagation(); addToWatchlistLocal(btn.dataset.wl); });

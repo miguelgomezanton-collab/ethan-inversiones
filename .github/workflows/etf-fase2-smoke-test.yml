@@ -1,0 +1,198 @@
+name: ETF Fase 2 — Smoke Test 63 ETFs
+
+on:
+  workflow_dispatch:
+    inputs:
+      vercel_url:
+        description: 'URL de Vercel a testear (ej. https://ethan-xxx.vercel.app)'
+        required: true
+        type: string
+      bypass_secret:
+        description: 'Vercel Deployment Protection bypass secret'
+        required: true
+        type: string
+
+jobs:
+  smoke-test:
+    name: Test ${{ matrix.ticker }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ticker:
+          # ── Tecnología ─────────────────────────────────────────────────
+          - SOXX   # iShares Semiconductor ETF
+          - IGV    # iShares Expanded Tech-Software Sector ETF
+          - CIBR   # First Trust NASDAQ Cybersecurity ETF
+          - AIQ    # Global X Artificial Intelligence & Technology ETF
+          - SKYY   # First Trust ISE Cloud Computing Index Fund
+          - BOTZ   # Global X Robotics & Artificial Intelligence ETF
+          - QTUM   # Defiance Quantum ETF (EDGAR NPORT-P)
+          - FDN    # First Trust Dow Jones Internet Index Fund
+          # ── Salud ──────────────────────────────────────────────────────
+          - IBB    # iShares Nasdaq Biotechnology ETF
+          - XBI    # SPDR S&P Biotech ETF
+          - IHE    # iShares U.S. Pharmaceuticals ETF
+          - IHI    # iShares U.S. Medical Devices ETF
+          - IHF    # iShares U.S. Healthcare Providers ETF
+          - ARKG   # ARK Genomic Revolution ETF
+          # ── Industriales ───────────────────────────────────────────────
+          - ITA    # iShares U.S. Aerospace & Defense ETF
+          - XAR    # SPDR S&P Aerospace & Defense ETF
+          - PAVE   # Global X U.S. Infrastructure Development ETF
+          - AIRR   # First Trust RBA American Industrial Renaissance ETF
+          - JETS   # U.S. Global Jets ETF (First Trust)
+          - IYT    # iShares U.S. Transportation ETF
+          - FIW    # First Trust Water ETF
+          - PHO    # Invesco Water Resources ETF (EDGAR NPORT-P)
+          - AIRR   # First Trust RBA American Industrial Renaissance ETF
+          # ── Consumo Discrecional ───────────────────────────────────────
+          - XRT    # SPDR S&P Retail ETF
+          - ITB    # iShares U.S. Home Construction ETF
+          - CARZ   # First Trust S-Network Future Vehicles & Technology ETF
+          - PEJ    # Invesco Dynamic Leisure & Entertainment ETF (EDGAR)
+          - IBUY   # Amplify Online Retail ETF (EDGAR NPORT-P)
+          - PBS    # Invesco Dynamic Media ETF (EDGAR NPORT-P)
+          - PBJ    # Invesco Dynamic Food & Beverage ETF (EDGAR NPORT-P)
+          # ── Consumo Básico ─────────────────────────────────────────────
+          - FSTA   # Fidelity MSCI Consumer Staples ETF (SPDR)
+          # ── Financieros ────────────────────────────────────────────────
+          - KRE    # SPDR S&P Regional Banking ETF
+          - KBWB   # Invesco KBW Bank ETF (EDGAR NPORT-P)
+          - KIE    # Invesco KBW Insurance ETF (EDGAR NPORT-P)
+          - KCE    # Invesco KBW Capital Markets ETF (EDGAR NPORT-P)
+          - IYG    # iShares U.S. Financial Services ETF
+          - BIZD   # VanEck Business Development Company ETF
+          - PSP    # Invesco Global Listed Private Equity ETF (EDGAR)
+          # ── Comunicaciones ─────────────────────────────────────────────
+          - SOCL   # Global X Social Media ETF
+          - IYZ    # iShares U.S. Telecommunications ETF
+          - DTCR   # Global X Data Center & Digital Infrastructure ETF
+          - FINX   # Global X FinTech ETF
+          # ── Energía ────────────────────────────────────────────────────
+          - XOP    # SPDR S&P Oil & Gas Exploration & Production ETF
+          - FCG    # First Trust Natural Gas ETF
+          - TAN    # Invesco Solar ETF (EDGAR NPORT-P)
+          - ICLN   # iShares Global Clean Energy ETF
+          - GRID   # First Trust NASDAQ Clean Edge Smart Grid ETF
+          - OIH    # VanEck Oil Services ETF
+          - URA    # Global X Uranium ETF
+          - AMLP   # Alerian MLP ETF (EDGAR NPORT-P)
+          # ── Materiales ─────────────────────────────────────────────────
+          - GDX    # VanEck Gold Miners ETF
+          - SIL    # VanEck Silver Miners ETF
+          - REMX   # VanEck Rare Earth/Strategic Metals ETF
+          - XME    # SPDR S&P Metals & Mining ETF
+          - SLX    # VanEck Steel ETF
+          - COPX   # VanEck Copper Miners ETF
+          - LIT    # Global X Lithium & Battery Tech ETF
+          # ── Real Estate ────────────────────────────────────────────────
+          - VNQ    # Vanguard Real Estate ETF
+          - REET   # iShares Global REIT ETF
+          - REM    # iShares Mortgage Real Estate ETF
+          # ── Utilities ──────────────────────────────────────────────────
+          - NLR    # VanEck Uranium+Nuclear Energy ETF
+          - GUNR   # FlexShares Morningstar Global Upstream Natural Resources ETF
+          # ── Defensa / Especiales ───────────────────────────────────────
+          - MOO    # VanEck Agribusiness ETF
+          - ESPO   # VanEck Video Gaming and eSports ETF
+
+    steps:
+      - name: Test ${{ matrix.ticker }} holdings
+        id: test
+        run: |
+          TICKER="${{ matrix.ticker }}"
+          BASE_URL="${{ inputs.vercel_url }}"
+          BYPASS="${{ inputs.bypass_secret }}"
+          API_URL="${BASE_URL}/api/macro-rlab/etf-holdings?ticker=${TICKER}"
+
+          echo "=== Testing ${TICKER} ==="
+          echo "URL: ${API_URL}"
+
+          RESPONSE=$(curl -s -w "\n__HTTP_STATUS__%{http_code}" \
+            -H "x-vercel-protection-bypass: ${BYPASS}" \
+            -H "Accept: application/json" \
+            --max-time 30 \
+            "${API_URL}" 2>&1)
+
+          HTTP_STATUS=$(echo "$RESPONSE" | grep -o '__HTTP_STATUS__[0-9]*' | sed 's/__HTTP_STATUS__//')
+          BODY=$(echo "$RESPONSE" | sed 's/__HTTP_STATUS__[0-9]*//')
+
+          echo "HTTP Status: ${HTTP_STATUS}"
+
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "❌ FAIL: HTTP ${HTTP_STATUS}"
+            echo "Response: $BODY"
+            exit 1
+          fi
+
+          # Parsear campos clave
+          HOLDINGS_COUNT=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('holdingsCount', d.get('holdings', []) and len(d.get('holdings', [])) or 0))" 2>/dev/null || echo "N/A")
+          SOURCE=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('source','unknown'))" 2>/dev/null || echo "N/A")
+          EFFECTIVE_DATE=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('effectiveDate', d.get('referenceDate','unknown')))" 2>/dev/null || echo "N/A")
+          TOTAL_WEIGHT=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('totalWeight', 'N/A'))" 2>/dev/null || echo "N/A")
+          IS_HISTORICAL=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('isHistorical', False))" 2>/dev/null || echo "False")
+          HAS_WARNING=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print('YES' if d.get('dataAgeWarning') else 'NO')" 2>/dev/null || echo "NO")
+          OK=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('ok', True))" 2>/dev/null || echo "True")
+
+          if [ "$OK" = "False" ]; then
+            ERROR=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('error','unknown error'))" 2>/dev/null || echo "N/A")
+            echo "❌ FAIL: ok=false — $ERROR"
+            exit 1
+          fi
+
+          if [ "$HOLDINGS_COUNT" = "0" ] || [ "$HOLDINGS_COUNT" = "N/A" ]; then
+            echo "⚠️  WARN: holdings_count=${HOLDINGS_COUNT}"
+          fi
+
+          echo ""
+          echo "✅ OK | ${TICKER}"
+          echo "   Holdings:       ${HOLDINGS_COUNT}"
+          echo "   Fuente:         ${SOURCE}"
+          echo "   Fecha efectiva: ${EFFECTIVE_DATE}"
+          echo "   Peso total:     ${TOTAL_WEIGHT}%"
+          echo "   Histórico:      ${IS_HISTORICAL}"
+          echo "   Aviso antigüed: ${HAS_WARNING}"
+
+          # Guardar resultado para el resumen
+          echo "ticker=${TICKER}" >> $GITHUB_OUTPUT
+          echo "holdings_count=${HOLDINGS_COUNT}" >> $GITHUB_OUTPUT
+          echo "source=${SOURCE}" >> $GITHUB_OUTPUT
+          echo "effective_date=${EFFECTIVE_DATE}" >> $GITHUB_OUTPUT
+          echo "total_weight=${TOTAL_WEIGHT}" >> $GITHUB_OUTPUT
+          echo "is_historical=${IS_HISTORICAL}" >> $GITHUB_OUTPUT
+          echo "status=OK" >> $GITHUB_OUTPUT
+
+      - name: Report result
+        if: always()
+        run: |
+          if [ "${{ steps.test.outcome }}" = "success" ]; then
+            echo "### ✅ ${{ matrix.ticker }} — OK" >> $GITHUB_STEP_SUMMARY
+            echo "| Campo | Valor |" >> $GITHUB_STEP_SUMMARY
+            echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Holdings | ${{ steps.test.outputs.holdings_count }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Fuente | ${{ steps.test.outputs.source }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Fecha efectiva | ${{ steps.test.outputs.effective_date }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Peso total | ${{ steps.test.outputs.total_weight }}% |" >> $GITHUB_STEP_SUMMARY
+            echo "| Histórico | ${{ steps.test.outputs.is_historical }} |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ❌ ${{ matrix.ticker }} — FALLO" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  summary:
+    name: Resumen Final
+    runs-on: ubuntu-latest
+    needs: smoke-test
+    if: always()
+    steps:
+      - name: Resumen del test
+        run: |
+          echo "## Smoke Test ETF Fase 2 — Resultado Final" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Ver resultados individuales por ticker en los jobs anteriores." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Criterios de éxito:**" >> $GITHUB_STEP_SUMMARY
+          echo "- HTTP 200 en cada ETF" >> $GITHUB_STEP_SUMMARY
+          echo "- \`ok: true\` en la respuesta JSON" >> $GITHUB_STEP_SUMMARY
+          echo "- holdings_count > 0" >> $GITHUB_STEP_SUMMARY
+          echo "- ETFs EDGAR marcados con isHistorical=true y dataAgeWarning" >> $GITHUB_STEP_SUMMARY
