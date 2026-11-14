@@ -18,6 +18,15 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import https from 'https';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+// pdf-parse se importa con require (CJS) ya que el módulo no tiene export ESM
+let pdfParse = null;
+try {
+  pdfParse = require('pdf-parse');
+} catch (e) {
+  console.warn('[NasdaqIndex] pdf-parse no disponible:', e.message);
+}
 
 // Mapa ETF ticker → índice Nasdaq que replica
 const ETF_TO_INDEX = {
@@ -228,11 +237,65 @@ function parseIndexText(text, etfTicker, indexTicker) {
 }
 
 /**
- * Descarga una página de texto desde nasdaq.com/docs/
- * Funciona desde IPs de datacenter (sin bloqueo).
+ * Descarga el documento desde nasdaq.com/docs/
+ * Detecta automáticamente si es PDF o HTML/texto y extrae el texto.
+ * Funciona desde IPs de datacenter (sin bloqueo IP).
+ *
+ * @returns {Promise<string>} — texto limpio extraído del documento
  */
-function fetchTextPage(url, ticker) {
+async function fetchTextPage(url, ticker) {
+  const rawBuffer = await fetchRawBuffer(url, ticker);
+
+  // Detectar si es PDF por magic bytes (%PDF)
+  const magic = rawBuffer.slice(0, 4).toString('ascii');
+  if (magic === '%PDF') {
+    console.log(`[NasdaqIndex] ${ticker}: respuesta es PDF (${rawBuffer.length} bytes), extrayendo texto`);
+    if (!pdfParse) {
+      throw new Error(`NasdaqIndex ${ticker}: respuesta es PDF pero pdf-parse no está disponible`);
+    }
+    try {
+      const data = await pdfParse(rawBuffer);
+      const text = data.text || '';
+      console.log(`[NasdaqIndex] ${ticker}: PDF → ${text.length} chars extraídos, ${data.numpages} páginas`);
+      if (!text || text.trim().length < 100) {
+        throw new Error(`NasdaqIndex ${ticker}: PDF extraído vacío o demasiado corto`);
+      }
+      return text;
+    } catch (pdfErr) {
+      throw new Error(`NasdaqIndex ${ticker}: error parsing PDF — ${pdfErr.message}`);
+    }
+  }
+
+  // HTML o texto plano
+  const text = rawBuffer.toString('utf-8');
+  const cleaned = text
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&#\d+;/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/^\s+|\s+$/gm, '')
+    ;
+  if (!cleaned || cleaned.trim().length < 100) {
+    throw new Error(`NasdaqIndex ${ticker}: respuesta vacía o demasiado corta desde ${url}`);
+  }
+  console.log(`[NasdaqIndex] ${ticker}: ${cleaned.length} chars (HTML/texto) recibidos de ${url}`);
+  return cleaned;
+}
+
+/**
+ * Descarga los bytes raw desde una URL con headers de browser.
+ * Sigue redirecciones (máx 3 saltos).
+ */
+function fetchRawBuffer(url, ticker, redirects = 0) {
   return new Promise((resolve, reject) => {
+    if (redirects > 3) {
+      reject(new Error(`NasdaqIndex ${ticker}: demasiadas redirecciones desde ${url}`));
+      return;
+    }
+
     const reqUrl = new URL(url);
     const options = {
       hostname: reqUrl.hostname,
@@ -240,7 +303,7 @@ function fetchTextPage(url, ticker) {
       method:   'GET',
       headers: {
         'User-Agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept':          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept':          'application/pdf,text/html,application/xhtml+xml,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
         'Accept-Encoding': 'identity',
         'Connection':      'keep-alive',
@@ -249,44 +312,30 @@ function fetchTextPage(url, ticker) {
     };
 
     const req = https.request(options, (res) => {
-      // Seguir redirecciones
-      if (res.statusCode === 301 || res.statusCode === 302) {
+      if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 303) {
         const location = res.headers.location;
         if (!location) {
           reject(new Error(`NasdaqIndex: redirect sin Location desde ${url}`));
           return;
         }
         const absUrl = location.startsWith('http') ? location : `https://www.nasdaq.com${location}`;
-        fetchTextPage(absUrl, ticker).then(resolve).catch(reject);
+        fetchRawBuffer(absUrl, ticker, redirects + 1).then(resolve).catch(reject);
         return;
       }
       if (res.statusCode !== 200) {
-        reject(new Error(`NasdaqIndex ${ticker}: HTTP ${res.statusCode} desde ${url}`));
+        // Leer body para diagnóstico
+        const chunks = [];
+        res.on('data', c => chunks.push(c));
+        res.on('end', () => {
+          const preview = Buffer.concat(chunks).slice(0, 200).toString('utf-8').replace(/[\x00-\x1F]/g, '?');
+          reject(new Error(`NasdaqIndex ${ticker}: HTTP ${res.statusCode} desde ${url}. Body preview: ${preview}`));
+        });
         return;
       }
 
       const chunks = [];
       res.on('data', chunk => chunks.push(chunk));
-      res.on('end', () => {
-        const text = Buffer.concat(chunks).toString('utf-8');
-        // Limpiar HTML si es necesario
-        const cleaned = text
-          .replace(/<[^>]+>/g, ' ')          // quitar tags HTML
-          .replace(/&amp;/g, '&')
-          .replace(/&nbsp;/g, ' ')
-          .replace(/&lt;/g, '<')
-          .replace(/&gt;/g, '>')
-          .replace(/&#\d+;/g, ' ')
-          .replace(/\s{2,}/g, ' ')            // espacios múltiples → uno
-          .replace(/^\s+|\s+$/gm, '')         // trim por línea
-          ;
-        if (!cleaned || cleaned.trim().length < 100) {
-          reject(new Error(`NasdaqIndex ${ticker}: respuesta vacía o demasiado corta desde ${url}`));
-          return;
-        }
-        console.log(`[NasdaqIndex] ${ticker}: ${cleaned.length} chars recibidos de ${url}`);
-        resolve(cleaned);
-      });
+      res.on('end', () => resolve(Buffer.concat(chunks)));
       res.on('error', reject);
     });
 
