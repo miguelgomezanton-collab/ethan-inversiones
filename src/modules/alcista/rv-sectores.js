@@ -25,7 +25,7 @@ const SECTORS_CONFIG = [
 // NO modificar SECTORS_CONFIG ni SECTOR_TICKERS
 const SUBSECTORS_CONFIG = {
   XLK:  [
-    { ticker: 'SMH',  name: 'Semiconductores',         emoji: '🔬' },
+    { ticker: 'SOXX', name: 'Semiconductores',         emoji: '🔬' },
     { ticker: 'IGV',  name: 'Software',                emoji: '💾' },
     { ticker: 'CIBR', name: 'Ciberseguridad',          emoji: '🔐' },
     { ticker: 'SKYY', name: 'Cloud Computing',         emoji: '☁️' },
