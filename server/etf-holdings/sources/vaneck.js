@@ -304,6 +304,9 @@ async function downloadBuffer(url, ticker, redirectCount = 0) {
         'Connection':      'keep-alive',
         'Cache-Control':   'no-cache',
         'Referer':         `https://www.vaneck.com/us/en/investments/`,
+        // Cookies necesarias para evitar redirect a /corp/en/disabled-cookies
+        // VanEck requiere cookies de sesión que identifiquen al visitante como usuario US
+        'Cookie': 've-country-us=iso%3Dus%26investortype%3Dretail%26language%3Den%26disclaimer%3Dtrue%26foreigntax%3Dfalse%26foreigntaxdisclaimer%3Dfalse; ve-country=current%3Dus%26previous%3D; visitortype=user; sitelanguage=en; EPiStateMarker=true',
       },
       timeout: 8000,
     };
