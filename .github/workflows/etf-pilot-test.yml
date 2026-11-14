@@ -136,26 +136,14 @@ jobs:
               print(f'✅ XBI OK')
           PYEOF
 
-      - name: 🔬 Diagnóstico PDF CIBR (TEMPORAL — debug)
+      - name: "Debug PDF CIBR (temporal)"
         run: |
-          echo "=== GET /api/macro-rlab/etf-holdings?ticker=CIBR&debug=pdf ==="
-          HTTP_CODE=$(curl -s -o /tmp/cibr_debug.json -w "%{http_code}" \
+          echo "=== debug=pdf para CIBR ==="
+          HTTP=$(curl -s -o /tmp/cibr_debug.json -w "%{http_code}" \
             -H "x-vercel-protection-bypass: $BYPASS_SECRET" \
             "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=CIBR&debug=pdf")
-          echo "HTTP: $HTTP_CODE"
-          cat /tmp/cibr_debug.json | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-print('isPdf:', d.get('isPdf'))
-print('size:', d.get('size'))
-print('extractedTextLength:', d.get('extractedTextLength'))
-print('extractedTextSample:', repr(d.get('extractedTextSample','')[:300]))
-samples = d.get('streamSamples',[])
-print('streams found:', len(samples))
-for s in samples:
-    print(f'  stream {s[\"idx\"]}: method={s[\"method\"]} decompressedSize={s[\"decompressedSize\"]} hexSamples={s[\"hexSamples\"]}')
-    print(f'    textSample: {repr(s[\"textSample\"][:200])}')
-" || cat /tmp/cibr_debug.json | head -50
+          echo "HTTP: $HTTP"
+          jq '{isPdf,size,extractedTextLength,extractedTextSample: .extractedTextSample[:300],streamSamples: [.streamSamples[]? | {idx,method,decompressedSize,hexSamples,textSample: .textSample[:200]}]}' /tmp/cibr_debug.json 2>/dev/null || cat /tmp/cibr_debug.json | python3 -m json.tool | head -60
 
       - name: 📊 Test CIBR (First Trust — HTML scraping)
         id: cibr
