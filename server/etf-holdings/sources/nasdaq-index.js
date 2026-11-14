@@ -235,46 +235,60 @@ function parseIndexText(text, etfTicker, indexTicker) {
 
 /**
  * Extrae texto de un PDF binario sin dependencias externas.
- * Estrategia:
- *  1. Buscar streams FlateDecode comprimidos con zlib → descomprimir → extraer operadores PDF texto
- *  2. Buscar strings de texto en objetos no comprimidos (BT...ET, Tj, TJ operators)
- *  3. Reconstruir el texto en orden de aparición
  *
- * Los PDFs de Nasdaq son generados por acrobat con estructura simple,
- * sin cifrado, con texto en streams FlateDecode estándar.
+ * Estrategia robusta:
+ *  1. Encontrar objetos PDF que declaran /Filter /FlateDecode buscando
+ *     las posiciones de bytes exactas de "stream\n" y "endstream" en el Buffer
+ *  2. Descomprimir los streams con zlib
+ *  3. Extraer texto de los streams descomprimidos (operadores BT/ET, Tj, TJ)
+ *
+ * Trabaja con offsets de bytes del Buffer directamente para evitar
+ * problemas de codificación al convertir a string.
  */
 async function extractPdfText(pdfBuffer, ticker) {
-  const pdf = pdfBuffer;
   let allText = '';
+  let streamsFound = 0;
+  let streamsDecompressed = 0;
 
-  // ── Estrategia 1: extraer y descomprimir streams FlateDecode ──────────
-  // Patrón: << ... /Filter /FlateDecode ... >> stream\r\n<bytes>\r\nendstream
-  const streamRegex = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
-  const filterRegex  = /\/Filter\s*\/FlateDecode/;
+  // Buscar todas las posiciones de "stream\n" o "stream\r\n" en el buffer
+  const STREAM_MARKER    = Buffer.from('stream');
+  const ENDSTREAM_MARKER = Buffer.from('endstream');
+  const FLATEDECODE      = Buffer.from('FlateDecode');
 
-  // Encontrar objetos con FlateDecode: buscar la secuencia completa
-  const objRegex = /(\d+\s+\d+\s+obj[\s\S]*?endobj)/g;
-  let objMatch;
-  while ((objMatch = objRegex.exec(pdf.toString('latin1'))) !== null) {
-    const objText = objMatch[1];
-    if (!filterRegex.test(objText)) continue;
+  let searchPos = 0;
+  while (searchPos < pdfBuffer.length) {
+    // Buscar siguiente "stream"
+    const streamIdx = indexOfBuffer(pdfBuffer, STREAM_MARKER, searchPos);
+    if (streamIdx === -1) break;
 
-    // Localizar el stream dentro del objeto
-    const streamStart = objText.indexOf('stream');
-    if (streamStart === -1) continue;
+    // Verificar que antes del stream hay /FlateDecode (en los últimos ~500 bytes)
+    const lookbackStart = Math.max(0, streamIdx - 500);
+    const lookback      = pdfBuffer.slice(lookbackStart, streamIdx);
+    if (indexOfBuffer(lookback, FLATEDECODE, 0) === -1) {
+      searchPos = streamIdx + 6;
+      continue;
+    }
 
-    // Encontrar inicio del contenido (después de \n)
-    const contentStart = objText.indexOf('\n', streamStart) + 1;
-    const contentEnd   = objText.lastIndexOf('endstream');
-    if (contentStart <= 0 || contentEnd <= contentStart) continue;
+    streamsFound++;
 
-    // Obtener los bytes reales del buffer (latin1 → offset correcto)
-    const objOffset   = objMatch.index;
-    const rawStart    = objOffset + contentStart;
-    const rawEnd      = objOffset + contentEnd;
-    const streamBytes = pdf.slice(rawStart, rawEnd);
+    // El stream empieza después de "stream\n" o "stream\r\n"
+    let dataStart = streamIdx + 6; // longitud de "stream"
+    if (pdfBuffer[dataStart] === 0x0D) dataStart++; // \r
+    if (pdfBuffer[dataStart] === 0x0A) dataStart++; // \n
+    else { searchPos = dataStart; continue; }
 
-    // Intentar descomprimir con inflate/inflateRaw
+    // Buscar endstream
+    const endIdx = indexOfBuffer(pdfBuffer, ENDSTREAM_MARKER, dataStart);
+    if (endIdx === -1) { searchPos = dataStart; continue; }
+
+    // Recortar posible \r\n antes de endstream
+    let dataEnd = endIdx;
+    if (pdfBuffer[dataEnd - 1] === 0x0A) dataEnd--;
+    if (pdfBuffer[dataEnd - 1] === 0x0D) dataEnd--;
+
+    const streamBytes = pdfBuffer.slice(dataStart, dataEnd);
+
+    // Intentar descomprimir
     let decompressed = null;
     for (const decomp of [inflate, inflateRaw, gunzip]) {
       try {
@@ -283,35 +297,52 @@ async function extractPdfText(pdfBuffer, ticker) {
       } catch (_) { /* intentar siguiente */ }
     }
 
-    if (!decompressed) continue;
+    if (decompressed) {
+      streamsDecompressed++;
+      const streamText = decompressed.toString('latin1');
+      const extracted  = extractTextFromPdfStream(streamText);
+      if (extracted && extracted.trim().length > 10) {
+        allText += extracted + '\n';
+      }
+    }
 
-    // Extraer texto del stream PDF descomprimido
-    const streamText = decompressed.toString('latin1');
-    const extracted  = extractTextFromPdfStream(streamText);
-    if (extracted) allText += extracted + '\n';
+    searchPos = endIdx + 9; // saltar "endstream"
   }
 
-  // ── Estrategia 2: texto en literales sin comprimir (objetos simples) ──
-  // Buscar cadenas entre paréntesis en contexto de texto PDF: ( ... ) Tj
-  // y arrays de texto: [( ... ) ... ] TJ
+  console.log(`[NasdaqIndex] ${ticker}: PDF → streams encontrados:${streamsFound} descomprimidos:${streamsDecompressed} texto:${allText.length} chars`);
+
+  // Fallback: buscar texto en literales directos (sin comprimir) si poco texto extraído
   if (allText.length < 200) {
-    const pdfStr = pdf.toString('latin1');
+    console.warn(`[NasdaqIndex] ${ticker}: poco texto desde FlateDecode, intentando fallback literal`);
+    const pdfStr = pdfBuffer.toString('latin1');
     const litRegex = /\(([^)]{1,200})\)\s*(?:Tj|'|")/g;
     let m;
     while ((m = litRegex.exec(pdfStr)) !== null) {
       const decoded = m[1]
-        .replace(/\\n/g, '\n')
-        .replace(/\\r/g, '\r')
-        .replace(/\\t/g, '\t')
-        .replace(/\\\(/g, '(')
-        .replace(/\\\)/g, ')')
-        .replace(/\\\\/g, '\\');
+        .replace(/\\n/g, '\n').replace(/\\r/g, '\r').replace(/\\t/g, ' ')
+        .replace(/\\\(/g, '(').replace(/\\\)/g, ')').replace(/\\\\/g, '\\');
       allText += decoded + ' ';
     }
+    console.log(`[NasdaqIndex] ${ticker}: fallback literal → ${allText.length} chars`);
   }
 
-  console.log(`[NasdaqIndex] ${ticker}: PDF → ${allText.length} chars extraídos`);
   return allText;
+}
+
+/**
+ * Busca un Buffer (needle) dentro de otro Buffer (haystack) desde pos.
+ * Devuelve -1 si no se encuentra.
+ */
+function indexOfBuffer(haystack, needle, fromIndex = 0) {
+  const nLen = needle.length;
+  for (let i = fromIndex; i <= haystack.length - nLen; i++) {
+    let found = true;
+    for (let j = 0; j < nLen; j++) {
+      if (haystack[i + j] !== needle[j]) { found = false; break; }
+    }
+    if (found) return i;
+  }
+  return -1;
 }
 
 /**
