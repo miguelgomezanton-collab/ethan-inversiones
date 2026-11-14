@@ -8,7 +8,7 @@ on:
       preview_url:
         description: 'Preview URL de Vercel (sin trailing slash)'
         required: true
-        default: 'https://ethan-inversiones-himcmj4gz-miguel-angel-s-projects2.vercel.app'
+        default: 'https://ethan-inversiones-6mc75yms5-miguel-angel-s-projects2.vercel.app'
   push:
     branches:
       - feature/etf-holdings-pilot
@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 10
 
     env:
-      PREVIEW_URL: https://ethan-inversiones-himcmj4gz-miguel-angel-s-projects2.vercel.app
+      PREVIEW_URL: https://ethan-inversiones-6mc75yms5-miguel-angel-s-projects2.vercel.app
       BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
     steps:
@@ -135,6 +135,27 @@ jobs:
               print(f'')
               print(f'✅ XBI OK')
           PYEOF
+
+      - name: 🔬 Diagnóstico PDF CIBR (TEMPORAL — debug)
+        run: |
+          echo "=== GET /api/macro-rlab/etf-holdings?ticker=CIBR&debug=pdf ==="
+          HTTP_CODE=$(curl -s -o /tmp/cibr_debug.json -w "%{http_code}" \
+            -H "x-vercel-protection-bypass: $BYPASS_SECRET" \
+            "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=CIBR&debug=pdf")
+          echo "HTTP: $HTTP_CODE"
+          cat /tmp/cibr_debug.json | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+print('isPdf:', d.get('isPdf'))
+print('size:', d.get('size'))
+print('extractedTextLength:', d.get('extractedTextLength'))
+print('extractedTextSample:', repr(d.get('extractedTextSample','')[:300]))
+samples = d.get('streamSamples',[])
+print('streams found:', len(samples))
+for s in samples:
+    print(f'  stream {s[\"idx\"]}: method={s[\"method\"]} decompressedSize={s[\"decompressedSize\"]} hexSamples={s[\"hexSamples\"]}')
+    print(f'    textSample: {repr(s[\"textSample\"][:200])}')
+" || cat /tmp/cibr_debug.json | head -50
 
       - name: 📊 Test CIBR (First Trust — HTML scraping)
         id: cibr
