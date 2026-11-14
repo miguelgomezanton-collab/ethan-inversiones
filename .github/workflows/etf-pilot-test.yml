@@ -432,3 +432,61 @@ jobs:
             echo ""
             echo "  ⛔ main NO ha sido modificado — piloto solo en feature/etf-holdings-pilot"
           fi
+
+  # ═══════════════════════════════════════════════════════════════════
+  # JOB 2: VALIDACIÓN POST-PILOTO
+  # ═══════════════════════════════════════════════════════════════════
+  postpilot-validation:
+    name: Validación Firestore + Screener ETHAN + Arquitectura
+    runs-on: ubuntu-latest
+    needs: pilot-test
+    timeout-minutes: 20
+
+    env:
+      PREVIEW_URL: https://ethan-inversiones-12jmtp5w8-miguel-angel-s-projects2.vercel.app
+      BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          repository: miguelgomezanton-collab/ethan-inversiones
+          ref: feature/etf-holdings-pilot
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Descargar holdings (primera y segunda petición)
+        run: |
+          for TICKER in XBI CIBR SOXX GDX; do
+            # Primera petición — poblar caché si no existe
+            curl -s -o /dev/null \
+              -H "x-vercel-protection-bypass: $BYPASS_SECRET" \
+              "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=${TICKER}"
+            # Segunda petición — medir latencia de caché
+            T1=$(date +%s%N)
+            curl -s -o /tmp/${TICKER}_c2.json \
+              -H "x-vercel-protection-bypass: $BYPASS_SECRET" \
+              "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=${TICKER}"
+            T2=$(date +%s%N)
+            MS=$(( ($T2 - $T1) / 1000000 ))
+            OK=$(python3 -c "import json; d=json.load(open('/tmp/${TICKER}_c2.json')); print('OK' if d.get('ok') else 'FAIL')" 2>/dev/null || echo "ERROR")
+            echo "  ${TICKER}: ${MS}ms | ${OK}"
+            # Copia para screener (misma respuesta)
+            cp /tmp/${TICKER}_c2.json /tmp/${TICKER}_full.json
+          done
+
+      - name: "Firestore: verificar 4 documentos"
+        run: python3 .github/scripts/postpilot_firestore.py
+
+      - name: "Screener ETHAN: cobertura Yahoo Finance"
+        run: python3 .github/scripts/postpilot_screener.py
+
+      - name: "Arquitectura: SOXX vs SMH"
+        run: python3 .github/scripts/postpilot_arch.py
+
+      - name: Informe final de cobertura
+        if: always()
+        run: python3 .github/scripts/postpilot_report.py
