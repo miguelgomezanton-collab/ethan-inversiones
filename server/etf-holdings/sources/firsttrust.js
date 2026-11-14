@@ -188,7 +188,7 @@ function parseHoldingsTable(html, ticker) {
   let headerCols    = null;
 
   for (const tableHtml of tableMatch) {
-    // Buscar la tabla que tiene encabezados de holdings
+    // Estrategia 1: buscar encabezados <th> (formato estándar)
     const thMatches = [...tableHtml.matchAll(/<th[^>]*>([\s\S]*?)<\/th>/gi)];
     const ths = thMatches.map(m => m[1].replace(/<[^>]+>/g, '').trim().toLowerCase());
 
@@ -197,22 +197,56 @@ function parseHoldingsTable(html, ticker) {
       headerCols    = ths;
       break;
     }
+
+    // Estrategia 2: buscar tabla cuya primera fila de <td> tenga 'Ticker' y 'Weight'
+    // (ftportfolios usa <td> para cabeceras en lugar de <th>)
+    const firstRowMatch = tableHtml.match(/<tr[^>]*>([\s\S]*?)<\/tr>/i);
+    if (firstRowMatch) {
+      const tdMatches = [...firstRowMatch[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)];
+      const tds = tdMatches.map(m => m[1].replace(/<[^>]+>/g, '').trim().toLowerCase());
+      if (tds.some(h => h === 'ticker' || h === 'symbol') && tds.some(h => h.includes('weight'))) {
+        holdingsTable = tableHtml;
+        headerCols    = tds;
+        break;
+      }
+    }
+
+    // Estrategia 3: tabla grande (>1000 chars) que contenga tickers típicos de CIBR
+    if (tableHtml.length > 1000 &&
+        (tableHtml.includes('CRWD') || tableHtml.includes('PANW') || tableHtml.includes('CSCO')) &&
+        tableHtml.includes('%')) {
+      // Intentar deducir columnas desde la primera fila con datos
+      const rows = [...tableHtml.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)];
+      for (const row of rows) {
+        const tds2 = [...row[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)]
+          .map(m => m[1].replace(/<[^>]+>/g,'').trim().toLowerCase());
+        if (tds2.some(h => h === 'ticker' || h === 'symbol') && tds2.some(h => h.includes('weight'))) {
+          holdingsTable = tableHtml;
+          headerCols    = tds2;
+          break;
+        }
+      }
+      if (holdingsTable) break;
+    }
   }
 
   if (!holdingsTable || !headerCols) {
     // Diagnóstico detallado — incluir fragmento del HTML en el error
-    const snippet   = html.substring(0, 800).replace(/\s+/g, ' ').trim();
-    const allThs    = [...html.matchAll(/<th[^>]*>([\s\S]{0,60}?)<\/th>/gi)]
-                       .map(m => m[1].replace(/<[^>]+>/g,'').trim())
-                       .slice(0, 15)
-                       .join(' | ');
+    const allThs = [...html.matchAll(/<th[^>]*>([\s\S]{0,60}?)<\/th>/gi)]
+                     .map(m => m[1].replace(/<[^>]+>/g,'').trim()).slice(0,15).join(' | ');
     const titleM    = html.match(/<title[^>]*>([\s\S]{0,120}?)<\/title>/i);
     const pageTitle = titleM ? titleM[1].trim() : '(sin título)';
+    // Buscar todas las tablas y sus primeras filas para diagnóstico
+    const tableInfo = (tableMatch || []).slice(0, 5).map((t, i) => {
+      const rows = [...t.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)];
+      const firstRow = rows[0] ? [...rows[0][1].matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)]
+        .map(m => m[1].replace(/<[^>]+>/g,'').trim()).slice(0,6).join('|') : '(sin filas)';
+      return `tabla[${i}] ${t.length}b primera_fila:[${firstRow}]`;
+    }).join(' | ');
     throw new Error(
       `First Trust ${ticker}: no se encontró tabla con columnas Ticker/Weight. ` +
       `HTML: ${html.length} bytes | título: "${pageTitle}" | ` +
-      `th encontrados: [${allThs || 'ninguno'}] | ` +
-      `fragmento: ${snippet.substring(0, 300)}`
+      `th encontrados: [${allThs || 'ninguno'}] | tablas: ${tableInfo}`
     );
   }
 
