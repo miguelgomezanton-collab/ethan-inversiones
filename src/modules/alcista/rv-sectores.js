@@ -25,7 +25,7 @@ const SECTORS_CONFIG = [
 // NO modificar SECTORS_CONFIG ni SECTOR_TICKERS
 const SUBSECTORS_CONFIG = {
   XLK:  [
-    { ticker: 'SMH',  name: 'Semiconductores',         emoji: '🔬' },
+    { ticker: 'SOXX', name: 'Semiconductores',         emoji: '🔬' },
     { ticker: 'IGV',  name: 'Software',                emoji: '💾' },
     { ticker: 'CIBR', name: 'Ciberseguridad',          emoji: '🔐' },
     { ticker: 'SKYY', name: 'Cloud Computing',         emoji: '☁️' },
@@ -163,25 +163,54 @@ async function fetchOHLC(ticker) {
   throw new Error('Sin datos');
 }
 
-// ── Obtener componentes de un ETF via Yahoo Holdings ──
+// ── Obtener componentes de un ETF via backend oficial ────────────────
+// Usa el endpoint /api/macro-rlab/etf-holdings?ticker=XBI integrado en el
+// dispatcher de macro-rlab para respetar el límite de 12 funciones Vercel Hobby.
+// Fallback transparente: si el backend falla, se mantiene el caché local.
 async function fetchETFHoldings(ticker) {
-  const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${ticker}?modules=topHoldings`;
-  for (const fn of PROXIES) {
-    try {
-      const r = await fetch(fn(url), { signal: (() => { const c = new AbortController(); setTimeout(() => c.abort(), 8000); return c.signal; })() });
-      if (!r.ok) continue;
-      const text = await r.text();
-      let j; try { j = JSON.parse(text); } catch { continue; }
-      const holdings = j?.quoteSummary?.result?.[0]?.topHoldings?.holdings;
-      if (!holdings?.length) continue;
-      return holdings.map(h => ({
-        ticker: h.symbol,
-        name:   h.holdingName || h.symbol,
-        weight: h.holdingPercent ? (h.holdingPercent * 100).toFixed(2) : null,
-      }));
-    } catch {}
+  const BASE = import.meta.env?.VITE_API_BASE || '';
+  const url  = `${BASE}/api/macro-rlab/etf-holdings?ticker=${encodeURIComponent(ticker.toUpperCase())}`;
+
+  try {
+    const ctrl = new AbortController();
+    const to   = setTimeout(() => ctrl.abort(), 20000);
+    const r    = await fetch(url, { signal: ctrl.signal });
+    clearTimeout(to);
+
+    if (!r.ok) {
+      const errBody = await r.json().catch(() => ({}));
+      console.warn(`[holdings] ${ticker}: HTTP ${r.status} — ${errBody.error || 'sin detalle'}`);
+      return null;
+    }
+
+    const data = await r.json();
+    if (!data.ok || !data.holdings?.length) {
+      console.warn(`[holdings] ${ticker}: respuesta sin holdings — ${data.error || ''}`);
+      return null;
+    }
+
+    // Filtrar posiciones sin ticker Yahoo válido (internacionales sin normalización)
+    const validHoldings = data.holdings.filter(h => h.ticker && h.ticker !== 'null');
+
+    return {
+      holdings:      validHoldings,
+      source:        data.source,
+      sourceUrl:     data.sourceUrl,
+      referenceDate: data.referenceDate,
+      fetchedAt:     data.fetchedAt || Date.now(),
+      totalHoldings: data.totalHoldings,
+      cashRows:      data.cashRows,
+      totalWeight:   data.totalWeight,
+      integrityOk:   data.integrityOk,
+      integrityNote: data.integrityNote,
+      fromCache:     data.fromCache,
+      stale:         data.stale,
+      staleWarning:  data.staleWarning,
+    };
+  } catch (err) {
+    console.warn(`[holdings] ${ticker}: error en fetch — ${err.message}`);
+    return null;
   }
-  return null;
 }
 
 function ema(arr, p) {
@@ -851,11 +880,36 @@ export async function render(container, { actionsSlot, savedState }) {
 
     contentEl.innerHTML = `<div class="sc2-empty">⏳ Cargando componentes de ${etfTicker}...</div>`;
 
-    let holdings = cached?.holdings || null;
-    if (!holdings) {
-      holdings = await fetchETFHoldings(etfTicker);
-      if (holdings) {
-        holdingsCache[etfTicker] = { holdings, fetchedAt: NOW };
+    let holdings    = null;
+    let holdingsMeta = null;
+
+    if (cached && cached.holdings) {
+      // Caché local disponible (puede estar stale)
+      holdings     = cached.holdings;
+      holdingsMeta = cached;
+    }
+
+    if (!holdings || isStale) {
+      // Descargar desde backend
+      const result = await fetchETFHoldings(etfTicker);
+      if (result && result.holdings?.length) {
+        holdings     = result.holdings;
+        holdingsMeta = result;
+        // Guardar en caché local (Firestore ya guarda en backend)
+        holdingsCache[etfTicker] = {
+          holdings,
+          fetchedAt:     result.fetchedAt || NOW,
+          source:        result.source,
+          sourceUrl:     result.sourceUrl,
+          referenceDate: result.referenceDate,
+          totalHoldings: result.totalHoldings,
+          cashRows:      result.cashRows,
+          totalWeight:   result.totalWeight,
+          integrityOk:   result.integrityOk,
+          integrityNote: result.integrityNote,
+          stale:         result.stale,
+          staleWarning:  result.staleWarning,
+        };
         saveState();
       }
     }
@@ -863,14 +917,24 @@ export async function render(container, { actionsSlot, savedState }) {
     if (!holdings || holdings.length === 0) {
       contentEl.innerHTML = `
         <div class="sc2-empty" style="flex-direction:column;gap:8px">
-          <span>No se pudieron obtener componentes de ${etfTicker} vía Yahoo Finance</span>
-          <span style="font-size:11px;color:var(--text3)">Los componentes completos pueden no estar disponibles para todos los ETFs</span>
+          <span>No se pudieron obtener componentes de ${etfTicker}</span>
+          <span style="font-size:11px;color:var(--text3)">Este ETF puede no estar aún soportado. Gestoras: SPDR, First Trust, VanEck.</span>
         </div>`;
       return;
     }
 
-    const fetchedDate = cached ? new Date(cached.fetchedAt).toLocaleDateString('es-ES') : new Date().toLocaleDateString('es-ES');
-    const staleWarning = isStale ? `<span style="color:var(--amber);font-size:10px">⚠️ Datos de más de 7 días — actualizar recomendado</span>` : '';
+    const meta         = holdingsMeta || cached || {};
+    const refDate      = meta.referenceDate || (meta.fetchedAt ? new Date(meta.fetchedAt).toLocaleDateString('es-ES') : new Date().toLocaleDateString('es-ES'));
+    const sourceLabel  = meta.source ? `${meta.source}` : 'Fuente desconocida';
+    const posCount     = meta.totalHoldings || holdings.length;
+    const cashInfo     = meta.cashRows > 0 ? ` · ${meta.cashRows} no-accionarias excluidas` : '';
+    const weightInfo   = meta.totalWeight ? ` · peso ${meta.totalWeight.toFixed(1)}%` : '';
+    const integrityBadge = meta.integrityOk === false
+      ? `<span style="color:var(--amber);font-size:10px">⚠️ Integridad: ${meta.integrityNote || 'verificar'}</span>`
+      : (meta.integrityOk === true ? `<span style="color:var(--green);font-size:10px">✓ ${posCount} posiciones${weightInfo}</span>` : '');
+    const staleWarning = (isStale || meta.stale)
+      ? `<span style="color:var(--amber);font-size:10px">⚠️ ${meta.staleWarning || 'Datos de más de 7 días — actualizar recomendado'}</span>`
+      : '';
 
     // Estado del screener de componentes
     if (!compScreenerState[etfTicker]) {
@@ -881,7 +945,8 @@ export async function render(container, { actionsSlot, savedState }) {
     contentEl.innerHTML = `
       <div class="sc2-toolbar" style="margin-bottom:12px">
         <div style="font-size:11px;color:var(--text3);display:flex;flex-direction:column;gap:4px">
-          <span>${holdings.length} componentes · Actualizado: ${fetchedDate}</span>
+          <span>📋 ${posCount} componentes${cashInfo} · <strong style="color:var(--text2)">${sourceLabel}</strong> · ${refDate}</span>
+          ${integrityBadge}
           ${staleWarning}
         </div>
         <div style="display:flex;align-items:center;gap:10px">
@@ -931,8 +996,35 @@ export async function render(container, { actionsSlot, savedState }) {
     });
 
     container.querySelector(`#comp-refresh-btn-${etfTicker}`)?.addEventListener('click', async () => {
-      delete holdingsCache[etfTicker];
-      saveState();
+      // Forzar re-descarga desde fuente oficial (pasar refresh=1 al backend)
+      const BASE = import.meta.env?.VITE_API_BASE || '';
+      const url  = `${BASE}/api/macro-rlab/etf-holdings?ticker=${encodeURIComponent(etfTicker.toUpperCase())}&refresh=1`;
+      contentEl.innerHTML = `<div class="sc2-empty">⏳ Actualizando componentes de ${etfTicker} desde fuente oficial...</div>`;
+      try {
+        const r = await fetch(url, { signal: (() => { const c = new AbortController(); setTimeout(() => c.abort(), 25000); return c.signal; })() });
+        const data = r.ok ? await r.json() : null;
+        if (data?.ok && data.holdings?.length) {
+          holdingsCache[etfTicker] = {
+            holdings:      data.holdings.filter(h => h.ticker && h.ticker !== 'null'),
+            fetchedAt:     data.fetchedAt || Date.now(),
+            source:        data.source,
+            sourceUrl:     data.sourceUrl,
+            referenceDate: data.referenceDate,
+            totalHoldings: data.totalHoldings,
+            cashRows:      data.cashRows,
+            totalWeight:   data.totalWeight,
+            integrityOk:   data.integrityOk,
+            integrityNote: data.integrityNote,
+            stale:         false,
+          };
+          saveState();
+        } else {
+          // Fallo: mantener caché actual y mostrar warning
+          console.warn(`[holdings] refresh ${etfTicker} falló: ${data?.error || 'sin respuesta'}`);
+        }
+      } catch (e) {
+        console.warn(`[holdings] refresh ${etfTicker} error: ${e.message}`);
+      }
       await renderComponentsDrill(etfTicker);
     });
   }
