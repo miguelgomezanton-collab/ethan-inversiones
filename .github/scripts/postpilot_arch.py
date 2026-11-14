@@ -9,18 +9,24 @@ import re
 import subprocess
 import sys
 
-# 1) Referencias activas a SMH en server/ y src/
+# 1) Referencias a SMH en archivos del módulo ETF-holdings (server/etf-holdings/)
+#    Los módulos de sectores (rv-sectores.js) y VanEck (vaneck.js) pueden usar SMH
+#    legítimamente — el check es que el ROUTER (fetcher.js) no lo incluya.
+#    Buscamos SMH solo en los archivos que gestionan el subsistema de holdings.
 smh_grep = subprocess.run(
-    ['grep', '-rn', 'SMH', 'server/', 'src/'],
+    ['grep', '-rn', 'SMH', 'server/etf-holdings/'],
     capture_output=True, text=True
 )
+# Excluir: vaneck.js (SMH es ETF VanEck válido), líneas comentadas
 active_smh = [
     line for line in smh_grep.stdout.splitlines()
-    if not any(c in line for c in ['//#', '// ', '/*'])
+    if not any(c in line for c in ['//#', '// ', '/*', 'vaneck.js'])
     and 'node_modules' not in line
+    # 'fetcher.js' se analiza por separado en check 2
+    and 'fetcher.js' not in line
 ]
 
-print(f"  Referencias activas a SMH: {len(active_smh)}")
+print(f"  Referencias SMH en etf-holdings/ (excl. vaneck.js, fetcher.js): {len(active_smh)}")
 for line in active_smh[:5]:
     print(f"    {line}")
 
