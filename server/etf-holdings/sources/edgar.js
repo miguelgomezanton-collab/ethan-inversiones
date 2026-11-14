@@ -9,6 +9,21 @@
 //
 // ETFs cubiertos (Fase 2 — completo 2026-11):
 //
+//   VanEck ETF Trust (CIK 1137360):
+//     REMX  — VanEck Rare Earth/Strategic Metals ETF   (Series S000030045)
+//     NLR   — VanEck Uranium and Nuclear ETF            (Series S000018475)
+//     ESPO  — VanEck Video Gaming and eSports ETF       (Series S000062930)
+//
+//     ⚠️  Estos tres ETFs usan vaneck.js como fuente primaria.
+//         EDGAR es el fallback cuando vaneck.com devuelve HTTP 502
+//         (bloqueado desde IPs de datacenter de Vercel).
+//
+//   FlexShares Trust (CIK 1491978):
+//     GUNR  — FlexShares Morningstar Global Upstream Natural Resources Index Fund
+//             (Series S000033315)
+//             ⚠️  Erróneamente asignado a vaneck.js — pertenece a Northern Trust FlexShares.
+//
+//
 //   Invesco Exchange-Traded Fund Trust II (CIK 1378872):
 //     KBWB  — Invesco KBW Bank ETF                    (Series S000034530)
 //     TAN   — Invesco Solar ETF                        (Series S000060822)
@@ -60,6 +75,9 @@ const EDGAR_ETF_MAP = {
   // ── SPDR Series Trust (CIK 1064642) ─────────────────────────────────────
   KIE:  { cik: '1064642', seriesId: 'S000006979', name: 'SPDR S&P Insurance ETF' },
   KCE:  { cik: '1064642', seriesId: 'S000006978', name: 'SPDR S&P Capital Markets ETF' },
+  // XME erróneamente asignado a vaneck.js — es SPDR Series Trust (State Street)
+  // CIK 1064642, Series S000012333 verificados en EDGAR (noviembre 2026)
+  XME:  { cik: '1064642', seriesId: 'S000012333', name: 'SPDR S&P Metals & Mining ETF' },
 
   // ── ALPS ETF Trust (CIK 1414040) ─────────────────────────────────────────
   AMLP: { cik: '1414040', seriesId: null, name: 'Alerian MLP ETF' },
@@ -79,6 +97,10 @@ const EDGAR_ETF_MAP = {
   FINX: { cik: '1432353', seriesId: 'S000054691', name: 'Global X FinTech ETF' },
   DTCR: { cik: '1432353', seriesId: 'S000069709', name: 'Global X Data Center & Digital Infrastructure ETF' },
   SOCL: { cik: '1432353', seriesId: 'S000034155', name: 'Global X Social Media ETF' },
+  // SIL y COPX erróneamente asignados a vaneck.js — son fondos de Global X (Mirae Asset)
+  // CIK 1432353, Series IDs verificados en SEC EDGAR (noviembre 2026)
+  SIL:  { cik: '1432353', seriesId: 'S000028730', name: 'Global X Silver Miners ETF' },
+  COPX: { cik: '1432353', seriesId: 'S000028727', name: 'Global X Copper Miners ETF' },
 
   // ── ARK ETF Trust (CIK 1579982) ──────────────────────────────────────────
   // CSV directo en ark-funds.com devuelve HTTP 403 (bloqueado desde servidor).
@@ -105,6 +127,19 @@ const EDGAR_ETF_MAP = {
   // JETS estaba incorrectamente en firsttrust.js. Movido aquí 2026-11.
   // Serie verificada en EDGAR N-PX filing index (accession 0001437749-24-027812).
   JETS: { cik: '1540305', seriesId: 'S000048544', name: 'U.S. Global Jets ETF' },
+
+  // ── VanEck ETF Trust (CIK 1137360) — EDGAR fallback ─────────────────────
+  // Fuente primaria: vaneck.js (XLSX directo). EDGAR se usa cuando vaneck.com
+  // devuelve HTTP 502 desde IPs de datacenter (Vercel).
+  // CIK y Series IDs verificados en SEC EDGAR (noviembre 2026).
+  REMX: { cik: '1137360', seriesId: 'S000030045', name: 'VanEck Rare Earth/Strategic Metals ETF' },
+  NLR:  { cik: '1137360', seriesId: 'S000018475', name: 'VanEck Uranium and Nuclear ETF' },
+  ESPO: { cik: '1137360', seriesId: 'S000062930', name: 'VanEck Video Gaming and eSports ETF' },
+
+  // ── FlexShares Trust (CIK 1491978) ───────────────────────────────────────
+  // GUNR erróneamente asignado a vaneck.js — es FlexShares (Northern Trust).
+  // CIK 1491978, Series S000033315 verificados en EDGAR + equibles.com (noviembre 2026).
+  GUNR: { cik: '1491978', seriesId: 'S000033315', name: 'FlexShares Morningstar Global Upstream Natural Resources Index Fund' },
 
   // ── First Trust Exchange-Traded Fund (I) (CIK 1329377) ───────────────────
   // ftportfolios.com es SPA — HTTP 0 bytes desde servidor. Se mueven a EDGAR 2026-11.

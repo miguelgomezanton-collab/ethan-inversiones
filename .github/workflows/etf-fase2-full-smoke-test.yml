@@ -40,7 +40,7 @@ jobs:
           - XAR    # SPDR S&P Aerospace & Defense ETF
           - PAVE   # Global X U.S. Infrastructure Development ETF
           - AIRR   # First Trust RBA American Industrial Renaissance ETF
-          - JETS   # U.S. Global Jets ETF (First Trust)
+          - JETS   # U.S. Global Jets ETF (EDGAR)
           - IYT    # iShares U.S. Transportation ETF
           - FIW    # First Trust Water ETF
           - PHO    # Invesco Water Resources ETF (EDGAR NPORT-P)
@@ -78,22 +78,23 @@ jobs:
           - AMLP   # Alerian MLP ETF (EDGAR NPORT-P)
           # ── Materiales ─────────────────────────────────────────────────
           - GDX    # VanEck Gold Miners ETF
-          - SIL    # VanEck Silver Miners ETF
-          - REMX   # VanEck Rare Earth/Strategic Metals ETF
-          - XME    # SPDR S&P Metals & Mining ETF
+          - GDXJ   # VanEck Junior Gold Miners ETF
+          - SIL    # Global X Silver Miners ETF (EDGAR — antes asignado a VanEck)
+          - REMX   # VanEck Rare Earth/Strategic Metals ETF (VanEck+EDGAR fallback)
+          - XME    # SPDR S&P Metals & Mining ETF (EDGAR — antes asignado a VanEck)
           - SLX    # VanEck Steel ETF
-          - COPX   # VanEck Copper Miners ETF
+          - COPX   # Global X Copper Miners ETF (EDGAR — antes asignado a VanEck)
           - LIT    # Global X Lithium & Battery Tech ETF
           # ── Real Estate ────────────────────────────────────────────────
           - VNQ    # Vanguard Real Estate ETF
           - REET   # iShares Global REIT ETF
           - REM    # iShares Mortgage Real Estate ETF
           # ── Utilities ──────────────────────────────────────────────────
-          - NLR    # VanEck Uranium+Nuclear Energy ETF
-          - GUNR   # FlexShares Morningstar Global Upstream Natural Resources ETF
+          - NLR    # VanEck Uranium+Nuclear Energy ETF (VanEck+EDGAR fallback)
+          - GUNR   # FlexShares Morningstar Global Upstream Natural Resources ETF (EDGAR)
           # ── Defensa / Especiales ───────────────────────────────────────
           - MOO    # VanEck Agribusiness ETF
-          - ESPO   # VanEck Video Gaming and eSports ETF
+          - ESPO   # VanEck Video Gaming and eSports ETF (VanEck+EDGAR fallback)
 
     steps:
       - name: Test ${{ matrix.ticker }} holdings
@@ -103,14 +104,22 @@ jobs:
         run: |
           TICKER="${{ matrix.ticker }}"
           BASE_URL="${{ inputs.vercel_url }}"
+
+          # Verificar que se proporcionó la URL
+          if [ -z "$BASE_URL" ]; then
+            echo "❌ ERROR: vercel_url no proporcionada"
+            exit 1
+          fi
+
           API_URL="${BASE_URL}/api/macro-rlab/etf-holdings?ticker=${TICKER}"
-
           echo "=== Testing ${TICKER} ==="
+          echo "URL: ${API_URL}"
 
+          # Llamada a la API con timeout generoso para EDGAR (puede tardar)
           RESPONSE=$(curl -s -w "\n__HTTP_STATUS__%{http_code}" \
             -H "x-vercel-protection-bypass: ${BYPASS}" \
             -H "Accept: application/json" \
-            --max-time 45 \
+            --max-time 60 \
             "${API_URL}" 2>&1)
 
           HTTP_STATUS=$(echo "$RESPONSE" | grep -o '__HTTP_STATUS__[0-9]*' | sed 's/__HTTP_STATUS__//')
@@ -118,36 +127,48 @@ jobs:
 
           echo "HTTP Status: ${HTTP_STATUS}"
 
+          # Fallar si no es HTTP 200
           if [ "$HTTP_STATUS" != "200" ]; then
             echo "❌ FAIL: HTTP ${HTTP_STATUS}"
-            echo "Response: $BODY"
+            echo "Response body:"
+            echo "$BODY" | head -c 500
             exit 1
           fi
 
-          # Parsear campos clave con jq — campos reales del handler
-          OK=$(echo "$BODY" | jq -r '.ok // true' 2>/dev/null || echo "true")
-          HOLDINGS_COUNT=$(echo "$BODY" | jq -r '.totalHoldings // (.holdings | length) // 0' 2>/dev/null || echo "0")
-          SOURCE=$(echo "$BODY" | jq -r '.source // "unknown"' 2>/dev/null || echo "unknown")
-          EFFECTIVE_DATE=$(echo "$BODY" | jq -r '.referenceDate // .effectiveDate // "N/A"' 2>/dev/null || echo "N/A")
-          TOTAL_WEIGHT=$(echo "$BODY" | jq -r '.totalWeight // "N/A"' 2>/dev/null || echo "N/A")
-          IS_HISTORICAL=$(echo "$BODY" | jq -r '.stale // false' 2>/dev/null || echo "false")
-          HAS_WARNING=$(echo "$BODY" | jq -r 'if .dataAgeWarning then "YES" else "NO" end' 2>/dev/null || echo "NO")
-          SERIES_ID=$(echo "$BODY" | jq -r '.seriesId // "N/A"' 2>/dev/null || echo "N/A")
-          ERROR_MSG=$(echo "$BODY" | jq -r '.error // ""' 2>/dev/null || echo "")
+          # Verificar que el body es JSON válido
+          if ! echo "$BODY" | jq . > /dev/null 2>&1; then
+            echo "❌ FAIL: respuesta no es JSON válido"
+            echo "Body: $(echo "$BODY" | head -c 200)"
+            exit 1
+          fi
 
-          OK=$(echo "$PARSED" | cut -d'|' -f1)
-          HOLDINGS_COUNT=$(echo "$PARSED" | cut -d'|' -f2)
-          SOURCE=$(echo "$PARSED" | cut -d'|' -f3)
-          EFFECTIVE_DATE=$(echo "$PARSED" | cut -d'|' -f4)
-          TOTAL_WEIGHT=$(echo "$PARSED" | cut -d'|' -f5)
+          # Extraer campos con jq — nombres reales del handler
+          OK=$(echo "$BODY" | jq -r '.ok // "true"')
+          HOLDINGS_COUNT=$(echo "$BODY" | jq -r 'if .totalHoldings then (.totalHoldings | tostring) elif .holdings then (.holdings | length | tostring) else "0" end')
+          SOURCE=$(echo "$BODY" | jq -r '.source // "unknown"')
+          EFFECTIVE_DATE=$(echo "$BODY" | jq -r '.referenceDate // .effectiveDate // "N/A"')
+          TOTAL_WEIGHT=$(echo "$BODY" | jq -r 'if .totalWeight then (.totalWeight | tostring) else "N/A" end')
+          IS_STALE=$(echo "$BODY" | jq -r '.stale // false | tostring')
+          HAS_WARNING=$(echo "$BODY" | jq -r 'if .dataAgeWarning then "YES" else "NO" end')
+          ERROR_MSG=$(echo "$BODY" | jq -r '.error // ""')
+
+          # Validar ok=true
           if [ "$OK" = "false" ]; then
-            echo "❌ FAIL: ok=false — ${ERROR_MSG}"
+            echo "❌ FAIL: ok=false"
+            echo "   Error: ${ERROR_MSG}"
             exit 1
           fi
 
-          if [ "$HOLDINGS_COUNT" = "0" ]; then
-            echo "❌ FAIL: holdings_count=0"
+          # Validar holdings > 0
+          if [ "$HOLDINGS_COUNT" = "0" ] || [ -z "$HOLDINGS_COUNT" ]; then
+            echo "❌ FAIL: holdings_count=0 o vacío"
+            echo "   Body (primeros 300 chars): $(echo "$BODY" | head -c 300)"
             exit 1
+          fi
+
+          # Validar fecha de composición existe
+          if [ "$EFFECTIVE_DATE" = "N/A" ] || [ -z "$EFFECTIVE_DATE" ]; then
+            echo "⚠️  WARN: referenceDate no disponible para ${TICKER}"
           fi
 
           echo ""
@@ -156,19 +177,16 @@ jobs:
           echo "   Fuente:         ${SOURCE}"
           echo "   Fecha efectiva: ${EFFECTIVE_DATE}"
           echo "   Peso total:     ${TOTAL_WEIGHT}%"
-          echo "   Histórico:      ${IS_HISTORICAL}"
-          echo "   Series ID:      ${SERIES_ID}"
+          echo "   Stale:          ${IS_STALE}"
           echo "   Aviso antigüed: ${HAS_WARNING}"
 
-          # Outputs para el resumen
-          echo "ticker=${TICKER}" >> $GITHUB_OUTPUT
+          # Outputs para el resumen del job
           echo "holdings_count=${HOLDINGS_COUNT}" >> $GITHUB_OUTPUT
           echo "source=${SOURCE}" >> $GITHUB_OUTPUT
           echo "effective_date=${EFFECTIVE_DATE}" >> $GITHUB_OUTPUT
           echo "total_weight=${TOTAL_WEIGHT}" >> $GITHUB_OUTPUT
-          echo "is_historical=${IS_HISTORICAL}" >> $GITHUB_OUTPUT
-          echo "series_id=${SERIES_ID}" >> $GITHUB_OUTPUT
-          echo "status=OK" >> $GITHUB_OUTPUT
+          echo "is_stale=${IS_STALE}" >> $GITHUB_OUTPUT
+          echo "has_warning=${HAS_WARNING}" >> $GITHUB_OUTPUT
 
       - name: Report result
         if: always()
@@ -181,8 +199,8 @@ jobs:
             echo "| Fuente | \`${{ steps.test.outputs.source }}\` |" >> $GITHUB_STEP_SUMMARY
             echo "| Fecha efectiva | ${{ steps.test.outputs.effective_date }} |" >> $GITHUB_STEP_SUMMARY
             echo "| Peso total | ${{ steps.test.outputs.total_weight }}% |" >> $GITHUB_STEP_SUMMARY
-            echo "| Histórico | ${{ steps.test.outputs.is_historical }} |" >> $GITHUB_STEP_SUMMARY
-            echo "| Series ID | ${{ steps.test.outputs.series_id }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Stale | ${{ steps.test.outputs.is_stale }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Aviso antigüedad | ${{ steps.test.outputs.has_warning }} |" >> $GITHUB_STEP_SUMMARY
           else
             echo "### ❌ ${{ matrix.ticker }} — FALLO" >> $GITHUB_STEP_SUMMARY
             echo "Ver logs del job para más detalles." >> $GITHUB_STEP_SUMMARY
@@ -205,12 +223,15 @@ jobs:
           echo "### Criterios de éxito:" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ HTTP 200 en cada ETF" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ \`ok: true\` en la respuesta JSON" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ \`holdingsCount > 0\`" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ ETFs EDGAR marcados con \`isHistorical=true\` y \`dataAgeWarning\`" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ \`seriesId\` correcto para ETFs de trusts con múltiples fondos" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ \`totalHoldings > 0\`" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ \`referenceDate\` presente en la respuesta" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ ETFs con EDGAR fallback marcados con \`dataAgeWarning\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### ETFs EDGAR (datos regulatorios, 30-60 días retraso):" >> $GITHUB_STEP_SUMMARY
-          echo "KBWB (S000034530), TAN (S000060822), PHO (S000003048)," >> $GITHUB_STEP_SUMMARY
-          echo "PBS (S000003029), PEJ (S000003028), PSP (S000013789)," >> $GITHUB_STEP_SUMMARY
-          echo "PBJ (S000003027), KIE (S000006979), KCE (S000006978)," >> $GITHUB_STEP_SUMMARY
-          echo "AMLP, QTUM, IBUY" >> $GITHUB_STEP_SUMMARY
+          echo "### Correcciones aplicadas en esta ejecución:" >> $GITHUB_STEP_SUMMARY
+          echo "- XME → SPDR Series Trust (CIK 1064642, Serie S000012333)" >> $GITHUB_STEP_SUMMARY
+          echo "- SIL → Global X Funds (CIK 1432353, Serie S000028730)" >> $GITHUB_STEP_SUMMARY
+          echo "- COPX → Global X Funds (CIK 1432353, Serie S000028727)" >> $GITHUB_STEP_SUMMARY
+          echo "- GUNR → FlexShares Trust (CIK 1491978, Serie S000033315)" >> $GITHUB_STEP_SUMMARY
+          echo "- REMX → VanEck primario + EDGAR fallback (CIK 1137360, Serie S000030045)" >> $GITHUB_STEP_SUMMARY
+          echo "- NLR → VanEck primario + EDGAR fallback (CIK 1137360, Serie S000018475)" >> $GITHUB_STEP_SUMMARY
+          echo "- ESPO → VanEck primario + EDGAR fallback (CIK 1137360, Serie S000062930)" >> $GITHUB_STEP_SUMMARY

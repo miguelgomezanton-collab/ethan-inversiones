@@ -7,12 +7,16 @@
 // GESTORAS SOPORTADAS (fase 2 — 63 subsectores):
 //   SPDR/State Street: XBI, KRE, XOP, XAR, FSTA, XRT + 11 sectores
 //   First Trust:       CIBR, AIQ, SKYY, JETS, PAVE, FDN, AIRR, FIW, FCG, GRID, CARZ
-//   VanEck:            GDX, SIL, REMX, XME, OIH, SLX, COPX, NLR, MOO, ESPO, GUNR, BIZD
+//   VanEck (genuinos): GDX, GDXJ, OIH, SLX, MOO, BIZD
+//                      REMX, NLR, ESPO → VanEck primario + EDGAR fallback automático
 //   iShares:           SOXX, IGV, IBB, IHE, IHI, IHF, ITA, IYT, ITB, IYG, IYZ, REET, REM, ICLN + piloto
 //   Global X:          BOTZ, FINX, LIT, SOCL, URA, DTCR
+//                      SIL, COPX → movidos a edgar.js (eran Global X, no VanEck)
 //   ARK Invest:        ARKG
 //   Vanguard:          VNQ
 //   SEC EDGAR NPORT-P: KBWB, KIE, KCE, TAN, PHO, PEJ, PSP, PBS, PBJ, AMLP, IBUY, QTUM
+//                      + XME (SPDR), SIL, COPX (Global X), GUNR (FlexShares)
+//                      + REMX, NLR, ESPO (VanEck, fallback)
 //                      (Prioridad 3 — datos regulatorios, 30-60 días de retraso)
 //
 // PENDIENTE: ninguno — cobertura completa 63/63
@@ -157,6 +161,10 @@ export async function getHoldings(ticker, forceRefresh = false) {
  * @param {string} ticker
  * @returns {Promise<HoldingsResult>}
  */
+// Tickers que tienen VanEck como fuente primaria pero EDGAR como fallback
+// cuando vaneck.com devuelve HTTP 502 (bloqueado desde IPs de datacenter de Vercel)
+const VANECK_WITH_EDGAR_FALLBACK = new Set(['REMX', 'NLR', 'ESPO']);
+
 async function downloadFromSource(ticker) {
   // Buscar adapter que soporte este ticker
   const adapter = ADAPTERS.find(a => a.supports(ticker));
@@ -164,14 +172,52 @@ async function downloadFromSource(ticker) {
   if (!adapter) {
     throw new Error(
       `No hay adapter disponible para ${ticker}. ` +
-      `Gestoras implementadas: SPDR/SSGA, First Trust, VanEck, iShares, Global X, ARK Invest, Vanguard. ` +
-      `Pendientes: Invesco (KBWB, KIE, KCE, TAN, PHO, PEJ, PSP, PBS, PBJ), Alerian (AMLP), Amplify (IBUY), Defiance (QTUM).`
+      `Gestoras implementadas: SPDR/SSGA, First Trust, VanEck, iShares, Global X, ARK Invest, Vanguard, SEC EDGAR.`
     );
   }
 
-  console.log(`[fetcher] ${ticker}: descargando desde ${adapter.constructor?.name || 'adapter'}`);
-  const result = await adapter.fetchHoldings(ticker);
+  // ── Intentar fuente primaria ──────────────────────────────────────
+  let primaryError = null;
+  try {
+    console.log(`[fetcher] ${ticker}: descargando desde fuente primaria`);
+    const raw = await adapter.fetchHoldings(ticker);
+    if (raw && raw.holdings && raw.holdings.length > 0) {
+      return await _finalizeResult(raw, ticker);
+    }
+    primaryError = new Error(`${ticker}: fuente primaria devolvió 0 holdings`);
+  } catch (err) {
+    primaryError = err;
+  }
 
+  // ── Fallback EDGAR para REMX, NLR, ESPO cuando VanEck falla ──────
+  if (VANECK_WITH_EDGAR_FALLBACK.has(ticker) && edgarAdapter.supports(ticker)) {
+    console.warn(`[fetcher] ${ticker}: fuente primaria VanEck falló (${primaryError.message}), intentando EDGAR NPORT-P como fallback`);
+    try {
+      const edgarRaw = await edgarAdapter.fetchHoldings(ticker);
+      if (edgarRaw && edgarRaw.holdings && edgarRaw.holdings.length > 0) {
+        console.log(`[fetcher] ${ticker}: EDGAR fallback exitoso (${edgarRaw.totalHoldings} holdings, fecha: ${edgarRaw.referenceDate})`);
+        const edgarFinal = await _finalizeResult(edgarRaw, ticker);
+        return {
+          ...edgarFinal,
+          dataAgeWarning: `Fuente primaria VanEck no disponible. Datos EDGAR NPORT-P de ${edgarRaw.referenceDate} (retraso 30-60 días).`,
+        };
+      }
+    } catch (edgarErr) {
+      console.error(`[fetcher] ${ticker}: EDGAR fallback también falló: ${edgarErr.message}`);
+      throw new Error(`${ticker}: VanEck falló (${primaryError.message}) y EDGAR fallback falló (${edgarErr.message})`);
+    }
+  }
+
+  // Si llegamos aquí, la fuente primaria falló y no hay fallback disponible
+  throw primaryError;
+}
+
+/**
+ * Calcula los campos de integridad y retorna el resultado final.
+ * Factorizado para evitar duplicación entre la ruta primaria y el fallback EDGAR.
+ * @internal Solo se usa dentro de downloadFromSource
+ */
+async function _finalizeResult(result, ticker) {
   if (!result || !result.holdings || result.holdings.length === 0) {
     throw new Error(`${ticker}: adapter devolvió 0 holdings`);
   }

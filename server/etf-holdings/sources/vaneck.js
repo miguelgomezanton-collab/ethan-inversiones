@@ -1,7 +1,18 @@
 // server/etf-holdings/sources/vaneck.js
-// Adapter para VanEck
+// Adapter para VanEck ETF Trust
 //
-// ETFs soportados: SMH, GDX, SIL, XME, REMX, GDXJ
+// ETFs soportados (VanEck genuinos): SMH, GDX, GDXJ, OIH, SLX, MOO, BIZD,
+//                                     REMX, NLR, ESPO
+//
+// ⚠️  NOTA IMPORTANTE — ETFs que NO pertenecen a VanEck (eliminados 2026-11):
+//     XME  → SPDR Series Trust (State Street) — movido a edgar.js
+//     SIL  → Global X Funds (Mirae Asset)     — movido a edgar.js
+//     COPX → Global X Funds (Mirae Asset)     — movido a edgar.js
+//     GUNR → FlexShares Trust (Northern Trust) — movido a edgar.js
+//
+// Para REMX, NLR y ESPO: este adapter es la FUENTE PRIMARIA.
+//     Si vaneck.com devuelve HTTP 502 (bloqueado desde Vercel), el handler
+//     hace fallback automático a edgar.js (EDGAR NPORT-P) para estos tres.
 //
 // Fuente: vaneck.com/us/en/etf/equity/{ticker}/holdings/download/xlsx/
 // Descarga directa del XLSX de holdings — rápida y fiable desde Vercel.
@@ -24,38 +35,40 @@ async function importXLSX() {
 // Patrón de URL XLS: /us/en/etf/equity/{ticker-lower}/holdings/download/xlsx/
 // Se confirma que funciona para SMH y GDX (verificado 2026-11-14)
 const VANECK_TICKERS_SUPPORTED = new Set([
-  // ── Fase piloto ──────────────────────────────────────────────────────
-  'SMH', 'GDX', 'SIL', 'REMX', 'XME', 'GDXJ',
-  // ── Fase 2 — 63 subsectores ──────────────────────────────────────────
+  // ── ETFs genuinos de VanEck ETF Trust ───────────────────────────────
+  'SMH',   // Semiconductor ETF
+  'GDX',   // Gold Miners ETF
+  'GDXJ',  // Junior Gold Miners ETF
   'OIH',   // Oil Services ETF
   'SLX',   // Steel ETF
-  'COPX',  // Copper Miners ETF
-  'NLR',   // Uranium and Nuclear ETF
   'MOO',   // Agribusiness ETF
-  'ESPO',  // Video Gaming and eSports ETF
-  'GUNR',  // Global Upstream Natural Resources ETF
   'BIZD',  // BDC Income ETF
+  // Los siguientes tres son VanEck genuinos pero tienden a devolver 502 desde Vercel.
+  // Se mantienen aquí como fuente primaria; el handler hace fallback a edgar.js si fallan.
+  'REMX',  // Rare Earth/Strategic Metals ETF
+  'NLR',   // Uranium and Nuclear ETF
+  'ESPO',  // Video Gaming and eSports ETF
+  // ── ELIMINADOS (no son VanEck) ───────────────────────────────────────
+  // XME  → SPDR Series Trust  — ahora en edgar.js
+  // SIL  → Global X Funds     — ahora en edgar.js
+  // COPX → Global X Funds     — ahora en edgar.js
+  // GUNR → FlexShares Trust   — ahora en edgar.js
 ]);
 
 // Map de tickers a slug en la URL XLS (en minúsculas tal como aparece en la URL)
 // Si el ticker en minúsculas no funciona, añadir aquí el slug correcto
 const VANECK_XLS_SLUG = {
-  // Fase piloto
   SMH:  'smh',
   GDX:  'gdx',
-  SIL:  'sil',
-  REMX: 'remx',
-  XME:  'xme',
   GDXJ: 'gdxj',
-  // Fase 2
   OIH:  'oih',
   SLX:  'slx',
-  COPX: 'copx',
-  NLR:  'nlr',
   MOO:  'moo',
-  ESPO: 'espo',
-  GUNR: 'gunr',
   BIZD: 'bizd',
+  REMX: 'remx',
+  NLR:  'nlr',
+  ESPO: 'espo',
+  // Eliminados (no son VanEck): XME, SIL, COPX, GUNR
 };
 
 /** Verifica si este adapter soporta el ticker */
