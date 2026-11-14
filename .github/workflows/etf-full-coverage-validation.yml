@@ -1,0 +1,78 @@
+name: ETF Holdings — Validación completa de cobertura (universo real)
+
+on:
+  workflow_dispatch:
+    inputs:
+      preview_url:
+        description: 'Vercel preview URL (sin trailing slash)'
+        required: false
+        default: 'https://ethan-inversiones-gcnhpj7nr-miguel-angel-s-projects2.vercel.app'
+
+env:
+  PREVIEW_URL: ${{ github.event.inputs.preview_url || 'https://ethan-inversiones-gcnhpj7nr-miguel-angel-s-projects2.vercel.app' }}
+  BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+
+jobs:
+  full-coverage:
+    name: "Validación completa — 286 componentes (XBI·CIBR·SOXX·GDX)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      # ── 1. Verificar bypass ──────────────────────────────────────────────
+      - name: "Verificar acceso Vercel"
+        run: |
+          if [ -z "$BYPASS_SECRET" ]; then
+            echo "❌ VERCEL_AUTOMATION_BYPASS_SECRET no configurado"
+            exit 1
+          fi
+          echo "✅ Bypass secret configurado (${#BYPASS_SECRET} chars)"
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "x-vercel-protection-bypass: $BYPASS_SECRET" \
+            "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=SOXX")
+          echo "HTTP status (SOXX): $HTTP"
+          if [ "$HTTP" != "200" ]; then
+            echo "❌ API no accesible (HTTP $HTTP)"
+            exit 1
+          fi
+          echo "✅ API accesible"
+
+      # ── 2. Descargar holdings completos (refresh para evitar caché stale) ─
+      - name: "Descargar holdings completos — 4 ETFs"
+        run: |
+          for TICKER in XBI CIBR SOXX GDX; do
+            echo "→ Descargando $TICKER (refresh=1)..."
+            HTTP=$(curl -s -o /tmp/${TICKER}_full.json -w "%{http_code}" \
+              -H "x-vercel-protection-bypass: $BYPASS_SECRET" \
+              "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=${TICKER}&refresh=1")
+            echo "  HTTP $HTTP — $(python3 -c "
+          import json
+          d=json.load(open('/tmp/${TICKER}_full.json'))
+          h=d.get('holdings',[])
+          print(f\"{len(h)} holdings, peso={d.get('totalWeight','?')}%, integridad={d.get('integrityOk','?')}, fecha={d.get('date','?')}, fuente={d.get('source','?')}\")")"
+            if [ "$HTTP" != "200" ]; then
+              echo "❌ Error descargando $TICKER (HTTP $HTTP)"
+              exit 1
+            fi
+          done
+          echo ""
+          echo "✅ Holdings descargados"
+
+      # ── 3. Validación completa Yahoo Finance — 286 componentes ───────────
+      - name: "Screener ETHAN — validación universo completo"
+        run: python3 .github/scripts/full_coverage_screener.py
+
+      # ── 4. Publicar artefacto con resultado JSON ─────────────────────────
+      - name: "Publicar resultado"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-coverage-result
+          path: /tmp/full_coverage_result.json
+          retention-days: 30
