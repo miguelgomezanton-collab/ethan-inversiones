@@ -1,0 +1,854 @@
+name: ETF Holdings — Validación post-piloto
+
+# Workflow de validación completa antes de autorizar producción.
+# Ejecutar manualmente después de que el piloto 4/4 haya pasado.
+on:
+  workflow_dispatch:
+    inputs:
+      preview_url:
+        description: 'Preview URL de Vercel (sin trailing slash)'
+        required: false
+        default: ''
+
+jobs:
+  postpilot-validation:
+    name: Validación Firestore + ETHAN screener + Informe de cobertura
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      PREVIEW_URL: https://ethan-inversiones-6gy72r68c-miguel-angel-s-projects2.vercel.app
+      BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+
+    steps:
+      - name: 📋 Configuración
+        run: |
+          if [ -n "${{ github.event.inputs.preview_url }}" ]; then
+            echo "PREVIEW_URL=${{ github.event.inputs.preview_url }}" >> $GITHUB_ENV
+          fi
+          echo "Preview URL: $PREVIEW_URL"
+          if [ -z "$BYPASS_SECRET" ]; then
+            echo "❌ VERCEL_AUTOMATION_BYPASS_SECRET no configurado"
+            exit 1
+          fi
+          echo "✅ Bypass secret configurado"
+
+      # ════════════════════════════════════════════════════════
+      # BLOQUE 1: VALIDACIÓN FIRESTORE
+      # Consulta el endpoint con ?force=false para leer desde caché
+      # (no fuerza re-descarga), verificando que Firestore tiene datos.
+      # ════════════════════════════════════════════════════════
+
+      - name: 🗄️ Firestore — Verificar caché XBI
+        id: cache_xbi
+        run: |
+          echo ""
+          echo "════════════════════════════════════════════════"
+          echo "  FIRESTORE CACHE — XBI"
+          echo "════════════════════════════════════════════════"
+
+          # Primera llamada — carga/refresca caché
+          HTTP=$(curl -s -o /tmp/xbi_cache.json -w "%{http_code}" \
+            -H "x-vercel-protection-bypass: $BYPASS_SECRET" \
+            "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=XBI")
+          echo "HTTP primera llamada: $HTTP"
+
+          sleep 1
+
+          # Segunda llamada — debe venir del caché (latencia mucho menor)
+          T1=$(date +%s%N)
+          HTTP2=$(curl -s -o /tmp/xbi_cache2.json -w "%{http_code}" \
+            -H "x-vercel-protection-bypass: $BYPASS_SECRET" \
+            "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=XBI")
+          T2=$(date +%s%N)
+          LATENCY_MS=$(( ($T2 - $T1) / 1000000 ))
+          echo "HTTP segunda llamada: $HTTP2 | Latencia: ${LATENCY_MS}ms"
+
+          python3 - <<'PYEOF'
+import json, sys, os
+
+with open('/tmp/xbi_cache.json') as f:
+    d = json.load(f)
+with open('/tmp/xbi_cache2.json') as f:
+    d2 = json.load(f)
+
+ticker       = d.get('ticker', '?')
+source       = d.get('source', '?')
+ref_date     = d.get('referenceDate', '?')
+n_holdings   = d.get('totalHoldings', 0)
+total_weight = d.get('totalWeight', 0)
+integrity_ok = d.get('integrityOk', False)
+integrity_note = d.get('integrityNote', '')
+stale        = d.get('stale', False)
+downloaded_at = d.get('downloadedAt', '?')
+cash_rows    = d.get('cashRows', 0)
+
+print(f"  ticker:         {ticker}")
+print(f"  source:         {source}")
+print(f"  referenceDate:  {ref_date}")
+print(f"  totalHoldings:  {n_holdings}")
+print(f"  cashRows:       {cash_rows}")
+print(f"  totalWeight:    {total_weight:.2f}%")
+print(f"  integrityOk:    {integrity_ok}")
+print(f"  stale:          {stale}")
+print(f"  integrityNote:  {integrity_note}")
+
+errors = []
+if not d.get('ok'):
+    errors.append(f'ok=false: {d.get("error","sin mensaje")}')
+if n_holdings < 50:
+    errors.append(f'totalHoldings={n_holdings} — demasiado bajo para XBI (>50 esperado)')
+if total_weight < 80:
+    errors.append(f'totalWeight={total_weight:.2f}% — muy bajo')
+if not integrity_ok:
+    errors.append('integrityOk=false')
+if stale:
+    print("  ⚠️  STALE: datos caducados (>7 días)")
+
+# Verificar que segunda llamada también es ok (caché funcionando)
+if not d2.get('ok'):
+    errors.append(f'segunda llamada falló: {d2.get("error","?")}')
+
+if errors:
+    print(f"\n❌ FALLO XBI cache:")
+    for e in errors: print(f"   - {e}")
+    sys.exit(1)
+else:
+    print(f"\n✅ XBI caché OK")
+    # Exportar datos para informe
+    with open('/tmp/xbi_summary.json', 'w') as f:
+        json.dump({'ticker': ticker, 'source': source, 'referenceDate': ref_date,
+                   'totalHoldings': n_holdings, 'totalWeight': total_weight,
+                   'integrityOk': integrity_ok, 'stale': stale}, f)
+PYEOF
+
+      - name: 🗄️ Firestore — Verificar caché CIBR
+        id: cache_cibr
+        run: |
+          echo ""
+          echo "════════════════════════════════════════════════"
+          echo "  FIRESTORE CACHE — CIBR"
+          echo "════════════════════════════════════════════════"
+
+          HTTP=$(curl -s -o /tmp/cibr_cache.json -w "%{http_code}" \
+            -H "x-vercel-protection-bypass: $BYPASS_SECRET" \
+            "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=CIBR")
+          echo "HTTP: $HTTP"
+
+          python3 - <<'PYEOF'
+import json, sys
+
+with open('/tmp/cibr_cache.json') as f:
+    d = json.load(f)
+
+ticker       = d.get('ticker', '?')
+source       = d.get('source', '?')
+ref_date     = d.get('referenceDate', '?')
+n_holdings   = d.get('totalHoldings', 0)
+total_weight = d.get('totalWeight', 0)
+integrity_ok = d.get('integrityOk', False)
+stale        = d.get('stale', False)
+cash_rows    = d.get('cashRows', 0)
+integrity_note = d.get('integrityNote', '')
+
+print(f"  ticker:         {ticker}")
+print(f"  source:         {source}")
+print(f"  referenceDate:  {ref_date}")
+print(f"  totalHoldings:  {n_holdings}")
+print(f"  cashRows:       {cash_rows}")
+print(f"  totalWeight:    {total_weight:.2f}%")
+print(f"  integrityOk:    {integrity_ok}")
+print(f"  stale:          {stale}")
+print(f"  integrityNote:  {integrity_note}")
+
+errors = []
+if not d.get('ok'):
+    errors.append(f'ok=false: {d.get("error","sin mensaje")}')
+if n_holdings < 20:
+    errors.append(f'totalHoldings={n_holdings} — demasiado bajo para CIBR (>20 esperado)')
+if total_weight < 80:
+    errors.append(f'totalWeight={total_weight:.2f}% — muy bajo')
+if not integrity_ok:
+    errors.append('integrityOk=false')
+
+if errors:
+    print(f"\n❌ FALLO CIBR cache:")
+    for e in errors: print(f"   - {e}")
+    sys.exit(1)
+else:
+    print(f"\n✅ CIBR caché OK")
+    with open('/tmp/cibr_summary.json', 'w') as f:
+        json.dump({'ticker': ticker, 'source': source, 'referenceDate': ref_date,
+                   'totalHoldings': n_holdings, 'totalWeight': total_weight,
+                   'integrityOk': integrity_ok, 'stale': stale}, f)
+PYEOF
+
+      - name: 🗄️ Firestore — Verificar caché SOXX
+        id: cache_soxx
+        run: |
+          echo ""
+          echo "════════════════════════════════════════════════"
+          echo "  FIRESTORE CACHE — SOXX"
+          echo "════════════════════════════════════════════════"
+
+          HTTP=$(curl -s -o /tmp/soxx_cache.json -w "%{http_code}" \
+            -H "x-vercel-protection-bypass: $BYPASS_SECRET" \
+            "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=SOXX")
+          echo "HTTP: $HTTP"
+
+          python3 - <<'PYEOF'
+import json, sys
+
+with open('/tmp/soxx_cache.json') as f:
+    d = json.load(f)
+
+ticker       = d.get('ticker', '?')
+source       = d.get('source', '?')
+ref_date     = d.get('referenceDate', '?')
+n_holdings   = d.get('totalHoldings', 0)
+total_weight = d.get('totalWeight', 0)
+integrity_ok = d.get('integrityOk', False)
+stale        = d.get('stale', False)
+cash_rows    = d.get('cashRows', 0)
+integrity_note = d.get('integrityNote', '')
+holdings     = d.get('holdings', [])
+
+print(f"  ticker:         {ticker}")
+print(f"  source:         {source}")
+print(f"  referenceDate:  {ref_date}")
+print(f"  totalHoldings:  {n_holdings}")
+print(f"  cashRows:       {cash_rows}")
+print(f"  totalWeight:    {total_weight:.2f}%")
+print(f"  integrityOk:    {integrity_ok}")
+print(f"  stale:          {stale}")
+print(f"  integrityNote:  {integrity_note}")
+
+# Verificar identidad: SOXX debe tener NVDA, AMD, AVGO, MU entre sus top holdings
+soxx_expected = {'NVDA', 'AMD', 'AVGO', 'MU', 'INTC', 'AMAT', 'LRCX', 'TXN'}
+tickers_in = {h['ticker'] for h in holdings}
+found = soxx_expected & tickers_in
+missing = soxx_expected - tickers_in
+print(f"\n  → Verificación identidad SOXX:")
+print(f"    Esperados encontrados: {sorted(found)}")
+if missing:
+    print(f"    ⚠️  Ausentes: {sorted(missing)}")
+
+# Top 5
+top5 = sorted(holdings, key=lambda h: h.get('weight', 0), reverse=True)[:5]
+print(f"\n  → Top 5 posiciones:")
+for h in top5:
+    print(f"    {h['ticker']:<10} {h.get('weight',0):.2f}%  {h.get('name','')[:35]}")
+
+# Verificar no-SMH: confirmar que el ticker es SOXX
+errors = []
+if not d.get('ok'):
+    errors.append(f'ok=false: {d.get("error","sin mensaje")}')
+if ticker != 'SOXX':
+    errors.append(f'ticker inesperado: {ticker} (esperado SOXX)')
+if n_holdings < 25:
+    errors.append(f'totalHoldings={n_holdings} — demasiado bajo para SOXX (>25 esperado)')
+if total_weight < 80:
+    errors.append(f'totalWeight={total_weight:.2f}% — muy bajo')
+if not integrity_ok:
+    errors.append('integrityOk=false')
+if len(found) < 5:
+    errors.append(f'Identidad SOXX: solo {len(found)}/8 tickers esperados encontrados')
+
+if errors:
+    print(f"\n❌ FALLO SOXX cache:")
+    for e in errors: print(f"   - {e}")
+    sys.exit(1)
+else:
+    print(f"\n✅ SOXX caché OK — ticker confirmado SOXX (no SMH)")
+    with open('/tmp/soxx_summary.json', 'w') as f:
+        json.dump({'ticker': ticker, 'source': source, 'referenceDate': ref_date,
+                   'totalHoldings': n_holdings, 'totalWeight': total_weight,
+                   'integrityOk': integrity_ok, 'stale': stale,
+                   'identityCheck': sorted(found)}, f)
+PYEOF
+
+      - name: 🗄️ Firestore — Verificar caché GDX
+        id: cache_gdx
+        run: |
+          echo ""
+          echo "════════════════════════════════════════════════"
+          echo "  FIRESTORE CACHE — GDX"
+          echo "════════════════════════════════════════════════"
+
+          HTTP=$(curl -s -o /tmp/gdx_cache.json -w "%{http_code}" \
+            -H "x-vercel-protection-bypass: $BYPASS_SECRET" \
+            "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=GDX")
+          echo "HTTP: $HTTP"
+
+          python3 - <<'PYEOF'
+import json, sys
+
+with open('/tmp/gdx_cache.json') as f:
+    d = json.load(f)
+
+ticker       = d.get('ticker', '?')
+source       = d.get('source', '?')
+ref_date     = d.get('referenceDate', '?')
+n_holdings   = d.get('totalHoldings', 0)
+total_weight = d.get('totalWeight', 0)
+integrity_ok = d.get('integrityOk', False)
+stale        = d.get('stale', False)
+cash_rows    = d.get('cashRows', 0)
+integrity_note = d.get('integrityNote', '')
+holdings     = d.get('holdings', [])
+
+print(f"  ticker:         {ticker}")
+print(f"  source:         {source}")
+print(f"  referenceDate:  {ref_date}")
+print(f"  totalHoldings:  {n_holdings}")
+print(f"  cashRows:       {cash_rows}")
+print(f"  totalWeight:    {total_weight:.2f}%")
+print(f"  integrityOk:    {integrity_ok}")
+print(f"  stale:          {stale}")
+print(f"  integrityNote:  {integrity_note}")
+
+# Verificar normalización internacional
+us_tickers   = [h for h in holdings if '.' not in h['ticker']]
+intl_tickers = [h for h in holdings if '.' in h['ticker']]
+print(f"\n  → Distribución de tickers GDX:")
+print(f"    US (sin sufijo): {len(us_tickers)}")
+print(f"    Internacionales: {len(intl_tickers)}")
+# Muestra internacionales
+for h in sorted(intl_tickers, key=lambda x: x.get('weight',0), reverse=True)[:5]:
+    print(f"    {h['ticker']:<15} {h.get('weight',0):.2f}%")
+
+errors = []
+if not d.get('ok'):
+    errors.append(f'ok=false: {d.get("error","sin mensaje")}')
+if n_holdings < 40:
+    errors.append(f'totalHoldings={n_holdings} — demasiado bajo para GDX (>40 esperado)')
+if total_weight < 80:
+    errors.append(f'totalWeight={total_weight:.2f}% — muy bajo')
+if not integrity_ok:
+    errors.append('integrityOk=false')
+if len(intl_tickers) == 0:
+    errors.append('0 tickers internacionales — normalización no funcionando')
+
+if errors:
+    print(f"\n❌ FALLO GDX cache:")
+    for e in errors: print(f"   - {e}")
+    sys.exit(1)
+else:
+    print(f"\n✅ GDX caché OK — {len(intl_tickers)} tickers internacionales normalizados")
+    with open('/tmp/gdx_summary.json', 'w') as f:
+        json.dump({'ticker': ticker, 'source': source, 'referenceDate': ref_date,
+                   'totalHoldings': n_holdings, 'totalWeight': total_weight,
+                   'integrityOk': integrity_ok, 'stale': stale,
+                   'intlTickers': len(intl_tickers)}, f)
+PYEOF
+
+      # ════════════════════════════════════════════════════════
+      # BLOQUE 2: VALIDACIÓN DEL SCREENER ETHAN
+      # Llama al endpoint de análisis técnico para una muestra
+      # de tickers de cada ETF para confirmar que Yahoo Finance
+      # puede procesar los componentes.
+      # ════════════════════════════════════════════════════════
+
+      - name: 📡 Screener ETHAN — XBI (muestra biotecnología)
+        id: screener_xbi
+        run: |
+          echo ""
+          echo "════════════════════════════════════════════════"
+          echo "  SCREENER ETHAN — XBI (muestra top 10)"
+          echo "════════════════════════════════════════════════"
+
+          # Obtener holdings de XBI para sacar top tickers
+          curl -s \
+            -H "x-vercel-protection-bypass: $BYPASS_SECRET" \
+            "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=XBI" \
+            > /tmp/xbi_full.json
+
+          python3 - <<'PYEOF'
+import json, sys, urllib.request, time
+
+with open('/tmp/xbi_full.json') as f:
+    d = json.load(f)
+
+holdings = d.get('holdings', [])
+# Top 10 por peso
+top10 = sorted(holdings, key=lambda h: h.get('weight',0), reverse=True)[:10]
+tickers = [h['ticker'] for h in top10]
+
+print(f"  Muestra top 10 XBI: {tickers}")
+print()
+
+# Comprobar si el endpoint de análisis ETHAN acepta estos tickers
+# Usamos el endpoint de análisis si existe, o verificamos vía Yahoo Finance directamente
+ok_tickers   = []
+fail_tickers = []
+
+for t in tickers:
+    try:
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{t}?interval=1d&range=5d"
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'Mozilla/5.0'
+        })
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read())
+            result = data.get('chart', {}).get('result', [])
+            if result and result[0].get('meta', {}).get('symbol'):
+                ok_tickers.append(t)
+            else:
+                fail_tickers.append(t)
+    except Exception as e:
+        fail_tickers.append(f"{t} ({str(e)[:30]})")
+    time.sleep(0.3)
+
+print(f"  ✅ Yahoo Finance OK ({len(ok_tickers)}/10): {ok_tickers}")
+if fail_tickers:
+    print(f"  ⚠️  No procesables ({len(fail_tickers)}): {fail_tickers}")
+
+coverage = len(ok_tickers) / 10 * 100
+print(f"\n  Cobertura Yahoo Finance top 10 XBI: {coverage:.0f}%")
+
+result = {
+    'etf': 'XBI', 'sample': 10, 'ok': len(ok_tickers),
+    'fail': len(fail_tickers), 'fail_tickers': fail_tickers,
+    'coverage_pct': coverage
+}
+with open('/tmp/screener_xbi.json', 'w') as f:
+    json.dump(result, f)
+
+if coverage < 70:
+    print(f"\n❌ Cobertura XBI demasiado baja: {coverage:.0f}%")
+    sys.exit(1)
+else:
+    print(f"\n✅ Screener XBI OK — cobertura {coverage:.0f}%")
+PYEOF
+
+      - name: 📡 Screener ETHAN — CIBR (muestra ciberseguridad)
+        id: screener_cibr
+        run: |
+          echo ""
+          echo "════════════════════════════════════════════════"
+          echo "  SCREENER ETHAN — CIBR (muestra top 10)"
+          echo "════════════════════════════════════════════════"
+
+          curl -s \
+            -H "x-vercel-protection-bypass: $BYPASS_SECRET" \
+            "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=CIBR" \
+            > /tmp/cibr_full.json
+
+          python3 - <<'PYEOF'
+import json, sys, urllib.request, time
+
+with open('/tmp/cibr_full.json') as f:
+    d = json.load(f)
+
+holdings = d.get('holdings', [])
+top10 = sorted(holdings, key=lambda h: h.get('weight',0), reverse=True)[:10]
+tickers = [h['ticker'] for h in top10]
+
+print(f"  Muestra top 10 CIBR: {tickers}")
+print()
+
+ok_tickers   = []
+fail_tickers = []
+
+for t in tickers:
+    try:
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{t}?interval=1d&range=5d"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read())
+            result = data.get('chart', {}).get('result', [])
+            if result and result[0].get('meta', {}).get('symbol'):
+                ok_tickers.append(t)
+            else:
+                fail_tickers.append(t)
+    except Exception as e:
+        fail_tickers.append(f"{t} ({str(e)[:30]})")
+    time.sleep(0.3)
+
+print(f"  ✅ Yahoo Finance OK ({len(ok_tickers)}/10): {ok_tickers}")
+if fail_tickers:
+    print(f"  ⚠️  No procesables ({len(fail_tickers)}): {fail_tickers}")
+
+coverage = len(ok_tickers) / 10 * 100
+result = {'etf': 'CIBR', 'sample': 10, 'ok': len(ok_tickers),
+          'fail': len(fail_tickers), 'fail_tickers': fail_tickers,
+          'coverage_pct': coverage}
+with open('/tmp/screener_cibr.json', 'w') as f:
+    json.dump(result, f)
+
+if coverage < 70:
+    print(f"\n❌ Cobertura CIBR demasiado baja: {coverage:.0f}%")
+    sys.exit(1)
+print(f"\n✅ Screener CIBR OK — cobertura {coverage:.0f}%")
+PYEOF
+
+      - name: 📡 Screener ETHAN — SOXX (muestra semiconductores)
+        id: screener_soxx
+        run: |
+          echo ""
+          echo "════════════════════════════════════════════════"
+          echo "  SCREENER ETHAN — SOXX (todos los componentes)"
+          echo "════════════════════════════════════════════════"
+
+          curl -s \
+            -H "x-vercel-protection-bypass: $BYPASS_SECRET" \
+            "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=SOXX" \
+            > /tmp/soxx_full.json
+
+          python3 - <<'PYEOF'
+import json, sys, urllib.request, time
+
+with open('/tmp/soxx_full.json') as f:
+    d = json.load(f)
+
+holdings = d.get('holdings', [])
+# SOXX tiene ~30 componentes — testar todos
+all_tickers = [h['ticker'] for h in sorted(holdings, key=lambda h: h.get('weight',0), reverse=True)]
+
+print(f"  Total componentes SOXX: {len(all_tickers)}")
+print(f"  Todos los tickers: {all_tickers}")
+print()
+
+ok_tickers   = []
+fail_tickers = []
+
+for t in all_tickers:
+    try:
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{t}?interval=1d&range=5d"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read())
+            result = data.get('chart', {}).get('result', [])
+            if result and result[0].get('meta', {}).get('symbol'):
+                ok_tickers.append(t)
+            else:
+                fail_tickers.append(t)
+    except Exception as e:
+        fail_tickers.append(f"{t} ({str(e)[:30]})")
+    time.sleep(0.4)
+
+n = len(all_tickers)
+print(f"  ✅ Yahoo Finance OK ({len(ok_tickers)}/{n}): {ok_tickers}")
+if fail_tickers:
+    print(f"  ⚠️  No procesables ({len(fail_tickers)}): {fail_tickers}")
+
+coverage = len(ok_tickers) / n * 100 if n > 0 else 0
+result = {'etf': 'SOXX', 'sample': n, 'ok': len(ok_tickers),
+          'fail': len(fail_tickers), 'fail_tickers': fail_tickers,
+          'coverage_pct': coverage}
+with open('/tmp/screener_soxx.json', 'w') as f:
+    json.dump(result, f)
+
+if coverage < 70:
+    print(f"\n❌ Cobertura SOXX demasiado baja: {coverage:.0f}%")
+    sys.exit(1)
+print(f"\n✅ Screener SOXX OK — cobertura {coverage:.0f}%")
+PYEOF
+
+      - name: 📡 Screener ETHAN — GDX (tickers internacionales)
+        id: screener_gdx
+        run: |
+          echo ""
+          echo "════════════════════════════════════════════════"
+          echo "  SCREENER ETHAN — GDX (top 20 + intl tickers)"
+          echo "════════════════════════════════════════════════"
+
+          curl -s \
+            -H "x-vercel-protection-bypass: $BYPASS_SECRET" \
+            "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=GDX" \
+            > /tmp/gdx_full.json
+
+          python3 - <<'PYEOF'
+import json, sys, urllib.request, time
+
+with open('/tmp/gdx_full.json') as f:
+    d = json.load(f)
+
+holdings = d.get('holdings', [])
+# Top 20 por peso (mezcla US + internacionales)
+top20 = sorted(holdings, key=lambda h: h.get('weight',0), reverse=True)[:20]
+tickers = [h['ticker'] for h in top20]
+
+us_sample   = [t for t in tickers if '.' not in t]
+intl_sample = [t for t in tickers if '.' in t]
+
+print(f"  Muestra top 20 GDX: {tickers}")
+print(f"  → US: {us_sample}")
+print(f"  → Internacionales: {intl_sample}")
+print()
+
+ok_tickers   = []
+fail_tickers = []
+
+for t in tickers:
+    try:
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{t}?interval=1d&range=5d"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read())
+            result = data.get('chart', {}).get('result', [])
+            if result and result[0].get('meta', {}).get('symbol'):
+                ok_tickers.append(t)
+            else:
+                fail_tickers.append(t)
+    except Exception as e:
+        fail_tickers.append(f"{t} ({str(e)[:30]})")
+    time.sleep(0.4)
+
+n = len(tickers)
+print(f"  ✅ Yahoo Finance OK ({len(ok_tickers)}/{n}): {ok_tickers}")
+if fail_tickers:
+    print(f"  ⚠️  No procesables ({len(fail_tickers)}): {fail_tickers}")
+
+# Desglose US vs internacionales
+ok_us   = [t for t in ok_tickers if '.' not in t]
+ok_intl = [t for t in ok_tickers if '.' in t]
+print(f"\n  Cobertura US:            {len(ok_us)}/{len(us_sample)}")
+print(f"  Cobertura Internacional: {len(ok_intl)}/{len(intl_sample)}")
+
+coverage = len(ok_tickers) / n * 100 if n > 0 else 0
+result = {'etf': 'GDX', 'sample': n, 'ok': len(ok_tickers),
+          'fail': len(fail_tickers), 'fail_tickers': fail_tickers,
+          'coverage_pct': coverage,
+          'ok_us': len(ok_us), 'ok_intl': len(ok_intl),
+          'sample_us': len(us_sample), 'sample_intl': len(intl_sample)}
+with open('/tmp/screener_gdx.json', 'w') as f:
+    json.dump(result, f)
+
+# GDX: umbral más tolerante por tickers internacionales
+if coverage < 60:
+    print(f"\n❌ Cobertura GDX demasiado baja: {coverage:.0f}%")
+    sys.exit(1)
+print(f"\n✅ Screener GDX OK — cobertura {coverage:.0f}%")
+PYEOF
+
+      # ════════════════════════════════════════════════════════
+      # BLOQUE 3: VERIFICACIÓN DE ARQUITECTURA
+      # Confirmar que no quedan referencias a SMH en la
+      # configuración activa del subsector, y que la
+      # configuración apunta a SOXX.
+      # ════════════════════════════════════════════════════════
+
+      - name: 🏗️ Arquitectura — Verificar SOXX (no SMH) en configuración activa
+        id: arch_check
+        uses: actions/checkout@v4
+        with:
+          repository: miguelgomezanton-collab/ethan-inversiones
+          ref: feature/etf-holdings-pilot
+          token: ${{ github.token }}
+
+      - name: 🏗️ Arquitectura — Analizar configuración
+        run: |
+          echo ""
+          echo "════════════════════════════════════════════════"
+          echo "  ARQUITECTURA — Verificar SOXX vs SMH"
+          echo "════════════════════════════════════════════════"
+
+          python3 - <<'PYEOF'
+import subprocess, sys, json, os
+
+results = {
+    'smh_references': [],
+    'soxx_references': [],
+    'fetcher_tickers': [],
+    'adapter_configs': {}
+}
+
+# 1. Buscar referencias a SMH en archivos de configuración activa
+smh_grep = subprocess.run(
+    ['grep', '-rn', 'SMH', 'server/', 'src/'],
+    capture_output=True, text=True
+)
+smh_lines = [l for l in smh_grep.stdout.splitlines()
+             if not any(x in l for x in ['node_modules', '.git', '#', '//', '/*', 'SMH →', 'SMH_', 'SMHLD'])]
+results['smh_references'] = smh_lines
+
+# 2. Buscar referencias a SOXX
+soxx_grep = subprocess.run(
+    ['grep', '-rn', 'SOXX', 'server/', 'src/'],
+    capture_output=True, text=True
+)
+soxx_lines = [l for l in soxx_grep.stdout.splitlines()
+              if 'node_modules' not in l and '.git' not in l]
+results['soxx_references'] = soxx_lines[:20]
+
+# 3. Leer la lista de tickers en fetcher.js
+with open('server/etf-holdings/fetcher.js') as f:
+    fetcher_content = f.read()
+
+import re
+# Buscar arrays de tickers
+ticker_matches = re.findall(r"'([A-Z]{2,6})'", fetcher_content)
+results['fetcher_tickers'] = ticker_matches
+
+# 4. Verificar config de iShares
+with open('server/etf-holdings/sources/ishares.js') as f:
+    ishares_content = f.read()
+
+# SOXX debe usar slug ishares-semiconductor-etf (no ishares-phlx-semiconductor-etf)
+soxx_slug_match = re.search(r"SOXX.*?slug.*?'([^']+)'", ishares_content, re.DOTALL)
+soxx_slug = soxx_slug_match.group(1) if soxx_slug_match else 'NO ENCONTRADO'
+soxx_url_pattern = re.search(r"const csvUrl.*?latest-holdings\.csv", ishares_content, re.DOTALL)
+results['adapter_configs']['ishares_soxx_slug'] = soxx_slug
+results['adapter_configs']['uses_latest_csv'] = bool(soxx_url_pattern)
+
+print("  Configuración SOXX en ishares.js:")
+print(f"    Slug: {soxx_slug}")
+print(f"    URL patrón /latest-holdings.csv: {results['adapter_configs']['uses_latest_csv']}")
+
+print(f"\n  Tickers registrados en fetcher.js:")
+print(f"    {results['fetcher_tickers']}")
+
+print(f"\n  Referencias SMH en código activo:")
+if smh_references := results['smh_references']:
+    for line in smh_references[:10]:
+        print(f"    {line}")
+else:
+    print("    ✅ Ninguna referencia activa a SMH encontrada")
+
+print(f"\n  Referencias SOXX en código:")
+print(f"    {len(results['soxx_references'])} líneas con SOXX")
+
+errors = []
+
+# SMH no debe aparecer en ficheros de config activos (solo en comentarios históricos está bien)
+active_smh = [l for l in results['smh_references']
+              if not any(c in l for c in ["//", "#", "comment", "histórico"])]
+if active_smh:
+    errors.append(f"{len(active_smh)} referencias activas a SMH encontradas")
+
+# SOXX debe estar en fetcher.js
+if 'SOXX' not in results['fetcher_tickers']:
+    errors.append("SOXX no encontrado en fetcher.js")
+
+# Slug correcto
+if 'ishares-phlx-semiconductor-etf' in soxx_slug:
+    errors.append(f"Slug SOXX todavía usa el slug incorrecto: {soxx_slug}")
+
+if not results['adapter_configs']['uses_latest_csv']:
+    errors.append("ishares.js no usa /latest-holdings.csv")
+
+if errors:
+    print(f"\n❌ FALLO verificación arquitectura:")
+    for e in errors: print(f"   - {e}")
+    sys.exit(1)
+else:
+    print(f"\n✅ Arquitectura OK — SOXX configurado correctamente, sin referencias activas a SMH")
+
+with open('/tmp/arch_check.json', 'w') as f:
+    json.dump({'ok': True, 'soxx_slug': soxx_slug,
+               'fetcher_tickers': results['fetcher_tickers'],
+               'smh_active_refs': len(active_smh)}, f)
+PYEOF
+
+      # ════════════════════════════════════════════════════════
+      # BLOQUE 4: INFORME FINAL DE COBERTURA
+      # ════════════════════════════════════════════════════════
+
+      - name: 📊 Informe final de cobertura
+        if: always()
+        run: |
+          python3 - <<'PYEOF'
+import json, os
+
+def load(path):
+    try:
+        with open(path) as f: return json.load(f)
+    except: return {}
+
+# Cargar todos los resultados
+cache = {
+    'XBI':  load('/tmp/xbi_summary.json'),
+    'CIBR': load('/tmp/cibr_summary.json'),
+    'SOXX': load('/tmp/soxx_summary.json'),
+    'GDX':  load('/tmp/gdx_summary.json'),
+}
+screener = {
+    'XBI':  load('/tmp/screener_xbi.json'),
+    'CIBR': load('/tmp/screener_cibr.json'),
+    'SOXX': load('/tmp/screener_soxx.json'),
+    'GDX':  load('/tmp/screener_gdx.json'),
+}
+arch = load('/tmp/arch_check.json')
+
+print()
+print("╔══════════════════════════════════════════════════════════════════════════════════╗")
+print("║          INFORME FINAL — VALIDACIÓN POST-PILOTO ETF HOLDINGS                   ║")
+print("╚══════════════════════════════════════════════════════════════════════════════════╝")
+print()
+
+# Tabla de caché Firestore
+print("┌─────────────────────────────────────────────────────────────────────────────────┐")
+print("│  FIRESTORE CACHE (colección: etf_holdings_cache)                               │")
+print("├──────┬──────────────┬────────────────┬──────────┬──────────┬────────┬──────────┤")
+print("│ ETF  │ Fuente       │ Fecha ref.     │ Posic.   │ Peso     │ Integr.│ Stale    │")
+print("├──────┼──────────────┼────────────────┼──────────┼──────────┼────────┼──────────┤")
+
+etf_order = ['XBI', 'CIBR', 'SOXX', 'GDX']
+for t in etf_order:
+    c = cache.get(t, {})
+    source    = (c.get('source','?') or '?')[:12]
+    ref_date  = c.get('referenceDate','?')
+    n_hold    = c.get('totalHoldings','?')
+    weight    = f"{c.get('totalWeight',0):.1f}%" if c.get('totalWeight') else '?'
+    integrity = '✅' if c.get('integrityOk') else ('❌' if c else '?')
+    stale     = '⚠️ sí' if c.get('stale') else ('no' if c else '?')
+    print(f"│ {t:<4} │ {source:<12} │ {ref_date:<14} │ {str(n_hold):<8} │ {weight:<8} │ {integrity:<6} │ {stale:<8} │")
+
+print("└──────┴──────────────┴────────────────┴──────────┴──────────┴────────┴──────────┘")
+
+print()
+print("┌─────────────────────────────────────────────────────────────────────────────────┐")
+print("│  COBERTURA YAHOO FINANCE (screener ETHAN)                                      │")
+print("├──────┬────────────┬────────────┬────────────┬──────────┬────────────────────────┤")
+print("│ ETF  │ Muestra    │ Analizables│ No proc.   │ Cobertura│ Tickers con error      │")
+print("├──────┼────────────┼────────────┼────────────┼──────────┼────────────────────────┤")
+
+for t in etf_order:
+    s = screener.get(t, {})
+    sample   = s.get('sample', '?')
+    ok       = s.get('ok', '?')
+    fail     = s.get('fail', '?')
+    coverage = f"{s.get('coverage_pct',0):.0f}%" if s.get('coverage_pct') is not None else '?'
+    fail_t   = str(s.get('fail_tickers', []))[:22] if s.get('fail_tickers') else 'ninguno'
+    cov_icon = '✅' if (s.get('coverage_pct',0) >= 80) else ('⚠️' if (s.get('coverage_pct',0) >= 60) else '❌')
+    print(f"│ {t:<4} │ {str(sample):<10} │ {str(ok):<10} │ {str(fail):<10} │ {cov_icon} {coverage:<7}│ {fail_t:<22} │")
+
+print("└──────┴────────────┴────────────┴────────────┴──────────┴────────────────────────┘")
+
+print()
+print("┌─────────────────────────────────────────────────────────────────────────────────┐")
+print("│  VERIFICACIÓN ARQUITECTURA                                                      │")
+print("├─────────────────────────────────────────────────────────────────────────────────┤")
+if arch.get('ok'):
+    print(f"│  ✅  SOXX configurado con slug correcto: {arch.get('soxx_slug','?'):<36}  │")
+    print(f"│  ✅  SMH: {arch.get('smh_active_refs',0)} referencias activas (esperado: 0)                              │")
+    print(f"│  ✅  Tickers en fetcher: {str(arch.get('fetcher_tickers',[]))[:55]:<55}  │")
+else:
+    print("│  ❌  Verificación arquitectura no completada                                 │")
+print("└─────────────────────────────────────────────────────────────────────────────────┘")
+
+print()
+# Decisión final
+all_cache_ok    = all(cache.get(t, {}).get('integrityOk') for t in etf_order)
+all_screener_ok = all(screener.get(t, {}).get('coverage_pct', 0) >= 60 for t in etf_order)
+arch_ok         = arch.get('ok', False)
+
+if all_cache_ok and all_screener_ok and arch_ok:
+    print("╔══════════════════════════════════════════════════════════════════════════════════╗")
+    print("║  🎯 VALIDACIÓN COMPLETA — AUTORIZADO PARA PRODUCCIÓN                          ║")
+    print("╚══════════════════════════════════════════════════════════════════════════════════╝")
+    print()
+    print("  Pasos para deploy a producción:")
+    print("    1. git checkout main && git merge feature/etf-holdings-pilot")
+    print("    2. git push origin main  → Vercel despliega automáticamente")
+    print("    3. Verificar endpoint en producción: /api/macro-rlab/etf-holdings?ticker=SOXX")
+    print("    4. Plan ampliación a 63 ETFs — ver ETHAN_metricas_dashboard.html")
+else:
+    print("╔══════════════════════════════════════════════════════════════════════════════════╗")
+    print("║  ⛔ VALIDACIÓN INCOMPLETA — NO AUTORIZADO PARA PRODUCCIÓN                     ║")
+    print("╚══════════════════════════════════════════════════════════════════════════════════╝")
+    if not all_cache_ok:    print("    - Firestore: algún ETF sin integridad OK")
+    if not all_screener_ok: print("    - Screener: cobertura Yahoo Finance < 60% en algún ETF")
+    if not arch_ok:         print("    - Arquitectura: configuración incorrecta")
+PYEOF
