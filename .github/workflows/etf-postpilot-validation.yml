@@ -17,10 +17,16 @@ jobs:
     timeout-minutes: 15
 
     env:
-      PREVIEW_URL: https://ethan-inversiones-c6gsmeh5h-miguel-angel-s-projects2.vercel.app
+      PREVIEW_URL: https://ethan-inversiones-1yeyzsvic-miguel-angel-s-projects2.vercel.app
       BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
     steps:
+      - name: 📦 Checkout main
+        uses: actions/checkout@v4
+        with:
+          repository: miguelgomezanton-collab/ethan-inversiones
+          ref: main
+
       - name: 📋 Configuración
         run: |
           if [ -n "${{ github.event.inputs.preview_url }}" ]; then
@@ -629,15 +635,8 @@ PYEOF
       # configuración apunta a SOXX.
       # ════════════════════════════════════════════════════════
 
-      - name: 🏗️ Arquitectura — Verificar SOXX (no SMH) en configuración activa
-        id: arch_check
-        uses: actions/checkout@v4
-        with:
-          repository: miguelgomezanton-collab/ethan-inversiones
-          ref: feature/etf-holdings-pilot
-          token: ${{ github.token }}
-
       - name: 🏗️ Arquitectura — Analizar configuración
+        id: arch_check
         run: |
           echo ""
           echo "════════════════════════════════════════════════"
