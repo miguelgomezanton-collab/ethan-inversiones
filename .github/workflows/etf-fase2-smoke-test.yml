@@ -8,8 +8,8 @@ on:
         required: true
         type: string
 
-# El bypass secret se lee de secrets.VERCEL_AUTOMATION_BYPASS_SECRET
-# NUNCA se pasa como input para evitar exposición en logs
+# El bypass secret se obtiene de secrets.VERCEL_AUTOMATION_BYPASS_SECRET
+# NUNCA debe introducirse manualmente — el secret del repositorio se usa automáticamente
 
 jobs:
   smoke-test:
