@@ -1,4 +1,4 @@
-name: ETF Fase 2 - Smoke Test 63 ETFs
+name: ETF Fase2 Full Smoke Test
 
 on:
   workflow_dispatch:
