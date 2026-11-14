@@ -4,7 +4,7 @@ name: Fase2 63ETF Smoke Test
   workflow_dispatch:
     inputs:
       vercel_url:
-        description: 'URL de Vercel a testear'
+        description: URL de Vercel a testear
         required: false
         default: ''
   push:
@@ -93,12 +93,11 @@ jobs:
           BASE_URL="${{ inputs.vercel_url }}"
 
           if [ -z "$BASE_URL" ]; then
-            echo "⏭️ SKIP: vercel_url no proporcionado (ejecución por push de indexación)"
+            echo "SKIP: vercel_url no proporcionado (run de indexacion)"
             exit 0
           fi
 
           API_URL="${BASE_URL}/api/macro-rlab/etf-holdings?ticker=${TICKER}"
-
           echo "=== Testing ${TICKER} ==="
 
           RESPONSE=$(curl -s -w "\n__HTTP_STATUS__%{http_code}" \
@@ -109,32 +108,15 @@ jobs:
 
           HTTP_STATUS=$(echo "$RESPONSE" | grep -o '__HTTP_STATUS__[0-9]*' | sed 's/__HTTP_STATUS__//')
           BODY=$(echo "$RESPONSE" | sed 's/__HTTP_STATUS__[0-9]*//')
-
           echo "HTTP Status: ${HTTP_STATUS}"
 
           if [ "$HTTP_STATUS" != "200" ]; then
-            echo "❌ FAIL: HTTP ${HTTP_STATUS}"
+            echo "FAIL: HTTP ${HTTP_STATUS}"
             echo "Response: $BODY"
             exit 1
           fi
 
-          PARSED=$(echo "$BODY" | python3 -c "
-import sys, json
-try:
-    d = json.load(sys.stdin)
-    hc = d.get('holdingsCount', len(d.get('holdings', [])))
-    src = d.get('source', 'unknown')
-    ed = d.get('effectiveDate', d.get('referenceDate', 'N/A'))
-    tw = d.get('totalWeight', 'N/A')
-    ih = d.get('isHistorical', False)
-    warn = 'YES' if d.get('dataAgeWarning') else 'NO'
-    ok = d.get('ok', True)
-    sid = d.get('seriesId', 'N/A')
-    err = d.get('error', '')
-    print(f'{ok}|{hc}|{src}|{ed}|{tw}|{ih}|{warn}|{sid}|{err}')
-except Exception as e:
-    print(f'False|0|parse_error|N/A|N/A|False|NO|N/A|{e}')
-" 2>/dev/null || echo "False|0|parse_error|N/A|N/A|False|NO|N/A|parse_failed")
+          PARSED=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); hc=d.get('holdingsCount',len(d.get('holdings',[]))); src=d.get('source','unknown'); ed=d.get('effectiveDate',d.get('referenceDate','N/A')); tw=d.get('totalWeight','N/A'); ih=d.get('isHistorical',False); warn='YES' if d.get('dataAgeWarning') else 'NO'; ok=d.get('ok',True); sid=d.get('seriesId','N/A'); err=d.get('error',''); print(f'{ok}|{hc}|{src}|{ed}|{tw}|{ih}|{warn}|{sid}|{err}')" 2>/dev/null || echo "False|0|parse_error|N/A|N/A|False|NO|N/A|parse_failed")
 
           OK=$(echo "$PARSED" | cut -d'|' -f1)
           HOLDINGS_COUNT=$(echo "$PARSED" | cut -d'|' -f2)
@@ -147,24 +129,23 @@ except Exception as e:
           ERROR_MSG=$(echo "$PARSED" | cut -d'|' -f9)
 
           if [ "$OK" = "False" ]; then
-            echo "❌ FAIL: ok=false — ${ERROR_MSG}"
+            echo "FAIL: ok=false - ${ERROR_MSG}"
             exit 1
           fi
 
           if [ "$HOLDINGS_COUNT" = "0" ]; then
-            echo "❌ FAIL: holdings_count=0"
+            echo "FAIL: holdings_count=0"
             exit 1
           fi
 
-          echo ""
-          echo "✅ OK | ${TICKER}"
-          echo "   Holdings:       ${HOLDINGS_COUNT}"
-          echo "   Fuente:         ${SOURCE}"
-          echo "   Fecha efectiva: ${EFFECTIVE_DATE}"
-          echo "   Peso total:     ${TOTAL_WEIGHT}%"
-          echo "   Histórico:      ${IS_HISTORICAL}"
-          echo "   Series ID:      ${SERIES_ID}"
-          echo "   Aviso antigüed: ${HAS_WARNING}"
+          echo "OK | ${TICKER}"
+          echo "  Holdings:       ${HOLDINGS_COUNT}"
+          echo "  Fuente:         ${SOURCE}"
+          echo "  Fecha efectiva: ${EFFECTIVE_DATE}"
+          echo "  Peso total:     ${TOTAL_WEIGHT}%"
+          echo "  Historico:      ${IS_HISTORICAL}"
+          echo "  Series ID:      ${SERIES_ID}"
+          echo "  Aviso antiguedad: ${HAS_WARNING}"
 
           echo "ticker=${TICKER}" >> $GITHUB_OUTPUT
           echo "holdings_count=${HOLDINGS_COUNT}" >> $GITHUB_OUTPUT
@@ -178,17 +159,17 @@ except Exception as e:
         if: always()
         run: |
           if [ "${{ steps.test.outcome }}" = "success" ]; then
-            echo "### ✅ ${{ matrix.ticker }} — OK" >> $GITHUB_STEP_SUMMARY
+            echo "### OK ${{ matrix.ticker }}" >> $GITHUB_STEP_SUMMARY
             echo "| Campo | Valor |" >> $GITHUB_STEP_SUMMARY
             echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
             echo "| Holdings | ${{ steps.test.outputs.holdings_count }} |" >> $GITHUB_STEP_SUMMARY
-            echo "| Fuente | \`${{ steps.test.outputs.source }}\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| Fuente | ${{ steps.test.outputs.source }} |" >> $GITHUB_STEP_SUMMARY
             echo "| Fecha efectiva | ${{ steps.test.outputs.effective_date }} |" >> $GITHUB_STEP_SUMMARY
             echo "| Peso total | ${{ steps.test.outputs.total_weight }}% |" >> $GITHUB_STEP_SUMMARY
-            echo "| Histórico | ${{ steps.test.outputs.is_historical }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Historico | ${{ steps.test.outputs.is_historical }} |" >> $GITHUB_STEP_SUMMARY
             echo "| Series ID | ${{ steps.test.outputs.series_id }} |" >> $GITHUB_STEP_SUMMARY
           else
-            echo "### ❌ ${{ matrix.ticker }} — FALLO" >> $GITHUB_STEP_SUMMARY
+            echo "### FALLO ${{ matrix.ticker }}" >> $GITHUB_STEP_SUMMARY
           fi
 
   summary:
@@ -199,8 +180,8 @@ except Exception as e:
     steps:
       - name: Resumen del test
         run: |
-          echo "## 🧪 Smoke Test ETF Fase 2 — Resultado Final" >> $GITHUB_STEP_SUMMARY
-          echo "**URL testeada:** ${{ inputs.vercel_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "## Smoke Test ETF Fase 2 - Resultado Final" >> $GITHUB_STEP_SUMMARY
+          echo "URL testeada: ${{ inputs.vercel_url }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### ETFs EDGAR (CIKs verificados):" >> $GITHUB_STEP_SUMMARY
           echo "KBWB (S000034530), TAN (S000060822), PHO (S000003048)" >> $GITHUB_STEP_SUMMARY
