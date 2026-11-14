@@ -23,17 +23,39 @@ async function importXLSX() {
 
 // Patrón de URL XLS: /us/en/etf/equity/{ticker-lower}/holdings/download/xlsx/
 // Se confirma que funciona para SMH y GDX (verificado 2026-11-14)
-const VANECK_TICKERS_SUPPORTED = new Set(['SMH', 'GDX', 'SIL', 'REMX', 'XME', 'GDXJ']);
+const VANECK_TICKERS_SUPPORTED = new Set([
+  // ── Fase piloto ──────────────────────────────────────────────────────
+  'SMH', 'GDX', 'SIL', 'REMX', 'XME', 'GDXJ',
+  // ── Fase 2 — 63 subsectores ──────────────────────────────────────────
+  'OIH',   // Oil Services ETF
+  'SLX',   // Steel ETF
+  'COPX',  // Copper Miners ETF
+  'NLR',   // Uranium and Nuclear ETF
+  'MOO',   // Agribusiness ETF
+  'ESPO',  // Video Gaming and eSports ETF
+  'GUNR',  // Global Upstream Natural Resources ETF
+  'BIZD',  // BDC Income ETF
+]);
 
 // Map de tickers a slug en la URL XLS (en minúsculas tal como aparece en la URL)
 // Si el ticker en minúsculas no funciona, añadir aquí el slug correcto
 const VANECK_XLS_SLUG = {
+  // Fase piloto
   SMH:  'smh',
   GDX:  'gdx',
   SIL:  'sil',
   REMX: 'remx',
   XME:  'xme',
   GDXJ: 'gdxj',
+  // Fase 2
+  OIH:  'oih',
+  SLX:  'slx',
+  COPX: 'copx',
+  NLR:  'nlr',
+  MOO:  'moo',
+  ESPO: 'espo',
+  GUNR: 'gunr',
+  BIZD: 'bizd',
 };
 
 /** Verifica si este adapter soporta el ticker */

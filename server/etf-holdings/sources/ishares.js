@@ -18,6 +18,7 @@ import https from 'https';
 
 // Map de tickers → configuración de URL iShares
 const ISHARES_CONFIG = {
+  // ── Fase piloto ─────────────────────────────────────────────────────
   SOXX: { id: '239705', slug: 'ishares-semiconductor-etf' },
   IWM:  { id: '239710', slug: 'ishares-russell-2000-etf' },
   IJR:  { id: '239714', slug: 'ishares-core-sp-small-cap-etf' },
@@ -26,6 +27,29 @@ const ISHARES_CONFIG = {
   EEM:  { id: '239637', slug: 'ishares-msci-emerging-markets-etf' },
   HYG:  { id: '239565', slug: 'ishares-iboxx-high-yield-corporate-bond-etf' },
   LQD:  { id: '239566', slug: 'ishares-iboxx-investment-grade-corporate-bond-etf' },
+
+  // ── Fase 2 — 63 subsectores ──────────────────────────────────────────
+  // Tecnología
+  IGV:  { id: '239771', slug: 'ishares-expanded-tech-software-sector-etf' },
+  // Salud
+  IBB:  { id: '239458', slug: 'ishares-nasdaq-biotechnology-etf' },
+  IHE:  { id: '239521', slug: 'ishares-us-pharmaceuticals-etf' },
+  IHI:  { id: '239520', slug: 'ishares-us-medical-devices-etf' },
+  IHF:  { id: '239519', slug: 'ishares-us-healthcare-providers-etf' },
+  // Industriales / Defensa
+  ITA:  { id: '239512', slug: 'ishares-us-aerospace-defense-etf' },
+  IYT:  { id: '239501', slug: 'ishares-us-transportation-etf' },
+  // Consumo discrecional
+  ITB:  { id: '239511', slug: 'ishares-us-home-construction-etf' },
+  // Financieros
+  IYG:  { id: '239507', slug: 'ishares-us-financial-services-etf' },
+  // Comunicaciones
+  IYZ:  { id: '239503', slug: 'ishares-us-telecommunications-etf' },
+  // Real Estate
+  REET: { id: '272822', slug: 'ishares-global-reit-etf' },
+  REM:  { id: '239543', slug: 'ishares-mortgage-real-estate-etf' },
+  // Energía
+  ICLN: { id: '239726', slug: 'ishares-global-clean-energy-etf' },
 };
 
 const ISHARES_TICKERS = new Set(Object.keys(ISHARES_CONFIG));

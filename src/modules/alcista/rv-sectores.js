@@ -984,12 +984,53 @@ export async function render(container, { actionsSlot, savedState }) {
           </tbody>
         </table>
       </div>
+      <!-- Filtros Screener ETHAN -->
+      <div class="sc2-filters" id="comp-filters-${etfTicker}" style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:12px 0 6px;padding:8px 10px;background:var(--surface1,#1a1a2e);border-radius:8px;border:1px solid var(--border,rgba(255,255,255,.08))">
+        <span style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-right:4px">Filtros:</span>
+        <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text2)">
+          SCORE MÍN
+          <select id="csfs-${etfTicker}" style="background:var(--bg,#0d0d1a);color:var(--text1,#fff);border:1px solid var(--border,rgba(255,255,255,.12));border-radius:5px;padding:3px 6px;font-size:11px;cursor:pointer">
+            <option value="9">≥ 9</option>
+            <option value="8">≥ 8</option>
+            <option value="7" selected>≥ 7</option>
+            <option value="6">≥ 6</option>
+            <option value="5">≥ 5</option>
+            <option value="0">Todos</option>
+          </select>
+        </label>
+        <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text2)">
+          VOLUMEN
+          <select id="csfv-${etfTicker}" style="background:var(--bg,#0d0d1a);color:var(--text1,#fff);border:1px solid var(--border,rgba(255,255,255,.12));border-radius:5px;padding:3px 6px;font-size:11px;cursor:pointer">
+            <option value="0">Cualquiera</option>
+            <option value="500000">&gt; 500k</option>
+            <option value="990000" selected>&gt; 990k</option>
+            <option value="2000000">&gt; 2M</option>
+            <option value="5000000">&gt; 5M</option>
+          </select>
+        </label>
+        <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text2)">
+          ESTADO
+          <select id="csfe-${etfTicker}" style="background:var(--bg,#0d0d1a);color:var(--text1,#fff);border:1px solid var(--border,rgba(255,255,255,.12));border-radius:5px;padding:3px 6px;font-size:11px;cursor:pointer">
+            <option value="" selected>Todos</option>
+            <option value="ready">Ready</option>
+            <option value="espera_diario">Espera diario</option>
+            <option value="cerca">Cerca</option>
+          </select>
+        </label>
+      </div>
       <!-- Tabla screener ETHAN si ya hay resultados -->
       <div id="comp-screener-results-${etfTicker}"></div>
     `;
 
     // Renderizar screener si ya hay datos
     if (compState.results.length > 0) renderCompScreener(etfTicker, holdings);
+
+    // ── Listeners de filtros: re-renderizar al cambiar cualquiera ────
+    ['csfs', 'csfv', 'csfe'].forEach(prefix => {
+      container.querySelector(`#${prefix}-${etfTicker}`)?.addEventListener('change', () => {
+        renderCompScreener(etfTicker, holdings);
+      });
+    });
 
     container.querySelector(`#comp-scan-btn-${etfTicker}`)?.addEventListener('click', () => {
       startCompScreener(etfTicker, holdings);
@@ -1091,18 +1132,38 @@ export async function render(container, { actionsSlot, savedState }) {
     const state = compScreenerState[etfTicker];
     if (!state || state.results.length === 0) return;
 
+    // ── Leer valores de los 3 filtros ────────────────────────────────
+    const scoreMin  = parseInt(container.querySelector(`#csfs-${etfTicker}`)?.value ?? '7', 10);
+    const volMin    = parseInt(container.querySelector(`#csfv-${etfTicker}`)?.value ?? '990000', 10);
+    const estadoFil = container.querySelector(`#csfe-${etfTicker}`)?.value ?? '';
+
+    // ── Aplicar filtros ───────────────────────────────────────────────
     const sorted = [...state.results]
-      .filter(r => r.score >= 5)
-      .sort((a,b) => b.score - a.score);
+      .filter(r => {
+        if (r.score < scoreMin)                         return false;
+        if (volMin > 0 && (r.avgVol11 || 0) < volMin)  return false;
+        if (estadoFil && r.estado !== estadoFil)        return false;
+        return true;
+      })
+      .sort((a, b) => b.score - a.score);
+
+    // ── Etiqueta del título con resumen de filtros activos ─────────
+    const scoreLabel = scoreMin > 0 ? `Score ≥ ${scoreMin}` : 'Todos los scores';
+    const volLabel   = volMin >= 1e6  ? `Vol &gt; ${(volMin/1e6).toFixed(0)}M`
+                     : volMin >= 1000 ? `Vol &gt; ${Math.round(volMin/1000)}k`
+                     : '';
+    const estLabel   = estadoFil ? ` · ${estadoLabel[estadoFil] || estadoFil}` : '';
+    const filterDesc = [scoreLabel, volLabel].filter(Boolean).join(' · ') + estLabel;
 
     if (sorted.length === 0) {
-      el.innerHTML = `<div class="sc2-empty" style="margin-top:16px">Ningún valor con score ≥ 5</div>`;
+      el.innerHTML = `<div class="sc2-empty" style="margin-top:16px">Ningún valor cumple los filtros actuales (${filterDesc})</div>`;
       return;
     }
 
     el.innerHTML = `
       <div style="font-size:11px;font-weight:600;color:var(--text2);margin:16px 0 8px;text-transform:uppercase;letter-spacing:.06em">
-        Ranking ETHAN — Score ≥ 5
+        Ranking ETHAN — ${filterDesc}
+        <span style="font-weight:400;color:var(--text3);margin-left:8px">${sorted.length} valores</span>
       </div>
       <table class="sc2-table">
         <thead>

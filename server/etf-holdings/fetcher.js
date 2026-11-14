@@ -4,14 +4,21 @@
 // Selecciona el adapter correcto según el ticker y gestora,
 // delega la descarga, y coordina con el caché Firestore.
 //
-// GESTORAS SOPORTADAS (fase piloto):
-//   SPDR/State Street: XBI, KRE, XOP, XAR, FSTA, XRT, XLK, XLF...
-//   First Trust:       CIBR, AIQ, SKYY, JETS, PAVE
-//   VanEck:            GDX, SIL, REMX, XME, GDXJ
-//   iShares:           SOXX, IWM, IJR, IJH, EFA, EEM, HYG, LQD
+// GESTORAS SOPORTADAS (fase 2 — 63 subsectores):
+//   SPDR/State Street: XBI, KRE, XOP, XAR, FSTA, XRT + 11 sectores
+//   First Trust:       CIBR, AIQ, SKYY, JETS, PAVE, FDN, AIRR, FIW, FCG, GRID
+//   VanEck:            GDX, SIL, REMX, XME, OIH, SLX, COPX, NLR, MOO, ESPO, GUNR, BIZD
+//   iShares:           SOXX, IGV, IBB, IHE, IHI, IHF, ITA, IYT, ITB, IYG, IYZ, REET, REM, ICLN + piloto
+//   Global X:          BOTZ, FINX, LIT, SOCL, URA, DTCR
+//   ARK Invest:        ARKG, CARZ
+//   Vanguard:          VNQ
 //
-// PENDIENTE (Condición #9 — KBWB):
-//   Invesco: KBWB, KIE — URL bloqueada por proxy; pendiente de resolución por IT
+// PENDIENTE:
+//   Invesco:   KBWB, KIE, KCE, TAN, PHO, PEJ, PSP, PBS — mayoría bloqueados por proxy
+//   Alerian:   AMLP — scraping complejo
+//   Amplify:   IBUY — SPA JS
+//   Defiance:  QTUM — SPA JS
+//   PBJ:       Invesco PowerShares — bloqueado
 //
 // Arquitectura desacoplada: cada gestora tiene su adapter independiente.
 // El screener ETHAN no se modifica. Solo se cambia fetchETFHoldings() en el frontend.
@@ -21,6 +28,9 @@ import * as spdrAdapter       from './sources/spdr.js';
 import * as firstTrustAdapter from './sources/firsttrust.js';
 import * as vaneckAdapter     from './sources/vaneck.js';
 import * as iSharesAdapter    from './sources/ishares.js';
+import * as globalxAdapter    from './sources/globalx.js';
+import * as arkAdapter        from './sources/ark.js';
+import * as vanguardAdapter   from './sources/vanguard.js';
 import { getCached, setCached } from './cache.js';
 
 // Registro de adapters en orden de prioridad de verificación
@@ -29,12 +39,28 @@ const ADAPTERS = [
   firstTrustAdapter,
   vaneckAdapter,
   iSharesAdapter,
+  globalxAdapter,
+  arkAdapter,
+  vanguardAdapter,
 ];
 
-// Tickers pendientes (bloqueados/sin implementar)
+// Tickers pendientes (bloqueados/sin implementar) — Fase 2
+// Formato: ticker → descripción del bloqueo con fecha
 const PENDING_TICKERS = {
+  // ── Invesco — mayoría bloqueados por proxy de Vercel ──────────────
   KBWB: 'Invesco — URL no accesible desde servidor; pendiente resolución por IT',
   KIE:  'Invesco — URL no accesible desde servidor; pendiente resolución por IT',
+  KCE:  'Invesco — URL no accesible desde servidor (invesco.com bloquea IPs de datacenter)',
+  TAN:  'Invesco — URL no accesible desde servidor (invesco.com bloquea IPs de datacenter)',
+  PHO:  'Invesco — URL no accesible desde servidor (invesco.com bloquea IPs de datacenter)',
+  PEJ:  'Invesco — URL no accesible desde servidor (invesco.com bloquea IPs de datacenter)',
+  PSP:  'Invesco — URL no accesible desde servidor (invesco.com bloquea IPs de datacenter)',
+  PBS:  'Invesco — URL no accesible desde servidor (invesco.com bloquea IPs de datacenter)',
+  PBJ:  'Invesco PowerShares — URL no accesible desde servidor (invesco.com bloquea IPs de datacenter)',
+  // ── Otros proveedores con SPA o bloqueo ──────────────────────────
+  AMLP: 'Alerian — sitio SPA JavaScript, holdings no accesibles en HTML estático desde servidor',
+  IBUY: 'Amplify — sitio SPA JavaScript, holdings no accesibles en HTML estático desde servidor',
+  QTUM: 'Defiance — sitio SPA JavaScript, holdings no accesibles en HTML estático desde servidor',
 };
 
 /**
@@ -151,8 +177,8 @@ async function downloadFromSource(ticker) {
   if (!adapter) {
     throw new Error(
       `No hay adapter disponible para ${ticker}. ` +
-      `Gestoras implementadas: SPDR/SSGA, First Trust, VanEck. ` +
-      `Pendientes: Invesco (KBWB, KIE), iShares, Global X.`
+      `Gestoras implementadas: SPDR/SSGA, First Trust, VanEck, iShares, Global X, ARK Invest, Vanguard. ` +
+      `Pendientes: Invesco (KBWB, KIE, KCE, TAN, PHO, PEJ, PSP, PBS, PBJ), Alerian (AMLP), Amplify (IBUY), Defiance (QTUM).`
     );
   }
 
@@ -232,15 +258,22 @@ function extractPublicFields(data) {
 export function getSupportedTickers() {
   const supported = [];
   const tickers = [
-    // SPDR
+    // SPDR/State Street
     'XBI', 'KRE', 'XOP', 'XAR', 'FSTA', 'XRT',
     'XLK', 'XLF', 'XLV', 'XLE', 'XLY', 'XLP', 'XLI', 'XLB', 'XLU', 'XLRE', 'XLC',
     // First Trust
-    'CIBR', 'AIQ', 'SKYY', 'JETS', 'PAVE',
+    'CIBR', 'AIQ', 'SKYY', 'JETS', 'PAVE', 'FDN', 'AIRR', 'FIW', 'FCG', 'GRID',
     // VanEck
-    'GDX', 'SIL', 'REMX', 'XME', 'GDXJ',
+    'GDX', 'SIL', 'REMX', 'XME', 'GDXJ', 'OIH', 'SLX', 'COPX', 'NLR', 'MOO', 'ESPO', 'GUNR', 'BIZD',
     // iShares
     'SOXX', 'IWM', 'IJR', 'IJH', 'EFA', 'EEM', 'HYG', 'LQD',
+    'IGV', 'IBB', 'IHE', 'IHI', 'IHF', 'ITA', 'IYT', 'ITB', 'IYG', 'IYZ', 'REET', 'REM', 'ICLN',
+    // Global X
+    'BOTZ', 'FINX', 'LIT', 'SOCL', 'URA', 'DTCR',
+    // ARK Invest
+    'ARKG', 'CARZ',
+    // Vanguard
+    'VNQ',
     // Pendientes
     ...Object.keys(PENDING_TICKERS),
   ];

@@ -30,12 +30,19 @@ import * as nasdaqIndexAdapter from './nasdaq-index.js';
 const NASDAQ_INDEX_TICKERS = new Set(['CIBR']);
 
 const FIRSTTRUST_TICKERS = new Set([
+  // ── Fase piloto ──────────────────────────────────────────────────────
   'CIBR', 'AIQ', 'SKYY', 'JETS', 'PAVE',
   'FTXL', 'FTXG', 'FTXN', 'FTXR', 'FTXH',
   'FXL',  'FXO',  'FXR',  'FXU',  'FXZ',
   'LEGR', 'MDIV', 'MLPA', 'FRI',  'FPN',
   'QDIV', 'QDEF', 'RWO',  'FBZ',  'VONE',
   'QTEC', // incluido explícitamente para detectar confusión con CIBR
+  // ── Fase 2 — 63 subsectores ──────────────────────────────────────────
+  'FDN',  // First Trust Dow Jones Internet Index ETF
+  'AIRR', // First Trust RBA American Industrial Renaissance ETF
+  'FIW',  // First Trust Water ETF
+  'FCG',  // First Trust Natural Gas ETF
+  'GRID', // First Trust NASDAQ Clean Edge Smart Grid Infrastructure ETF
 ]);
 
 /** Verifica si este adapter soporta el ticker dado */
