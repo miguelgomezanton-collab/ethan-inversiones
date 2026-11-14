@@ -1,25 +1,24 @@
 // server/etf-holdings/sources/ishares.js
 // Adapter para iShares (BlackRock)
 //
-// ETFs soportados: SOXX, IWM, IJR, IJH, QQQ (y otros iShares con URL conocida)
+// ETFs soportados: SOXX, IWM, IJR, IJH, EFA, EEM, HYG, LQD
 //
-// Fuente: CSV directo desde la API de iShares
-// URL patrón: https://www.ishares.com/us/products/{id}/{slug}/1467271812596.ajax?tab=holdings&fileType=csv
+// Fuente: CSV directo desde la URL /latest-holdings.csv de iShares
+// URL patrón: https://www.ishares.com/us/products/{id}/{slug}/latest-holdings.csv
 //
-// Estructura CSV (cabecera en fila 0, datos desde fila 2):
-//   Name, Ticker, Asset Class, Market Value, Weight (%), Notional Value, Shares, CUSIP, ISIN, ...
-//
-// La fila 0 es el título con la fecha: "iShares Semiconductor ETF,,,..."
-// La fila 1 es la fecha: "Fund Holdings as of,11/13/2026,..."
-// La fila 2 es la cabecera: "Name,Ticker,Asset Class,Market Value,Weight (%),..."
-// Las filas 3+ son los datos
+// Estructura CSV real (verificado Nov 2026):
+//   Fila 0: nombre del fondo  ("iShares Semiconductor ETF")
+//   Fila 1: fecha             ("Fund Holdings as of,\"Nov 12, 2026\"")
+//   Filas 2-5: metadatos      (Inception Date, Shares Outstanding, Stock, Bond, Cash, Other)
+//   Fila 6: cabecera          ("Ticker,Name,Sector,Asset Class,Market Value,Weight (%),...")
+//   Filas 7+: datos
 // ─────────────────────────────────────────────────────────────────────────────────
 
 import https from 'https';
 
 // Map de tickers → configuración de URL iShares
 const ISHARES_CONFIG = {
-  SOXX: { id: '239705', slug: 'ishares-phlx-semiconductor-etf' },
+  SOXX: { id: '239705', slug: 'ishares-semiconductor-etf' },
   IWM:  { id: '239710', slug: 'ishares-russell-2000-etf' },
   IJR:  { id: '239714', slug: 'ishares-core-sp-small-cap-etf' },
   IJH:  { id: '239763', slug: 'ishares-core-sp-mid-cap-etf' },
@@ -50,7 +49,7 @@ export async function fetchHoldings(etfTicker) {
   }
 
   // URL del CSV público de iShares (sin autenticación, funciona desde servidores)
-  const csvUrl = `https://www.ishares.com/us/products/${config.id}/${config.slug}/1467271812596.ajax?tab=holdings&fileType=csv`;
+  const csvUrl = `https://www.ishares.com/us/products/${config.id}/${config.slug}/latest-holdings.csv`;
   const csvText = await fetchCsv(csvUrl, ticker);
 
   // ── Parsear CSV ────────────────────────────────────────────────────
@@ -60,19 +59,27 @@ export async function fetchHoldings(etfTicker) {
     throw new Error(`iShares ${ticker}: CSV demasiado corto (${rows.length} filas)`);
   }
 
-  // ── Extraer fecha de referencia (fila 1: "Fund Holdings as of,MM/DD/YYYY,...")
+  // ── Extraer fecha de referencia ─────────────────────────────────────
+  // Formato numérico: "11/12/2026"  → fila 1: "Fund Holdings as of,11/12/2026,..."
+  // Formato textual:  "Nov 12, 2026" → fila 1: "Fund Holdings as of,\"Nov 12, 2026\",..."
   let referenceDate = new Date().toISOString().split('T')[0];
   for (let i = 0; i < Math.min(5, rows.length); i++) {
     const row = rows[i];
     const joined = row.join(' ');
-    const m = joined.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-    if (m) {
+    // Intento 1: formato numérico MM/DD/YYYY
+    const m1 = joined.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if (m1) {
       try {
-        const d = new Date(`${m[3]}-${m[1].padStart(2,'0')}-${m[2].padStart(2,'0')}`);
-        if (!isNaN(d)) {
-          referenceDate = d.toISOString().split('T')[0];
-          break;
-        }
+        const d = new Date(`${m1[3]}-${m1[1].padStart(2,'0')}-${m1[2].padStart(2,'0')}`);
+        if (!isNaN(d)) { referenceDate = d.toISOString().split('T')[0]; break; }
+      } catch {}
+    }
+    // Intento 2: formato textual "Mon DD, YYYY"
+    const m2 = joined.match(/([A-Za-z]{3})\s+(\d{1,2}),\s*(\d{4})/);
+    if (m2) {
+      try {
+        const d = new Date(`${m2[1]} ${m2[2]}, ${m2[3]}`);
+        if (!isNaN(d)) { referenceDate = d.toISOString().split('T')[0]; break; }
       } catch {}
     }
   }
@@ -220,7 +227,7 @@ async function fetchCsv(url, ticker) {
         'Accept':          'text/csv,application/csv,text/plain,*/*',
         'Accept-Language': 'en-US,en;q=0.9',
         'Connection':      'keep-alive',
-        'Referer':         `https://www.ishares.com/us/products/${url.split('/products/')[1]?.split('/')[0] || ''}/`,
+        'Referer':         `https://www.ishares.com/us/products/${url.split('/products/')[1]?.split('/')[0] || ''}/${url.split('/products/')[1]?.split('/')[1] || ''}`,
       },
       timeout: 8000,
     };
