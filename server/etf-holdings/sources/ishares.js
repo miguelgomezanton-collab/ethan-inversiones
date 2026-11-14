@@ -129,6 +129,38 @@ export async function fetchHoldings(etfTicker) {
     if (!rawTicker && !rawName) continue;
     if (rawTicker === '-') continue;
 
+    // Ignorar filas de disclaimer legal que iShares append al final del CSV
+    // (textos legales, advertencias, etc. — no son holdings reales)
+    const rawNameUpper = rawName.toUpperCase();
+    const isDisclaimer = rawName.includes('©') ||
+                         rawNameUpper.includes('CAREFULLY CONSIDER') ||
+                         rawNameUpper.includes('BLACKROCK INVESTMENTS') ||
+                         rawNameUpper.includes('NOT SPONSORED') ||
+                         rawNameUpper.includes('FOR ILLUSTRATIVE') ||
+                         rawNameUpper.includes('SHOULD NOT BE RELIED') ||
+                         rawNameUpper.includes('INVESTMENT OBJECTIVES') ||
+                         rawNameUpper.includes('GENERALLY REPRESENT') ||
+                         rawNameUpper.includes('PRICING VENDOR') ||
+                         rawNameUpper.includes('NET ASSET VALUE') ||
+                         // Textos muy largos que no pueden ser nombres de empresa
+                         rawName.length > 80;
+    if (isDisclaimer) continue;
+
+    // Ignorar tickers que no son accionarios (derivados, futuros, etc.)
+    // iShares usa "Equity" para acciones; otros asset classes son cash/futures/etc.
+    if (assetCls && assetCls !== 'equity' &&
+        !assetCls.includes('stock') &&
+        !assetCls.includes('depositary receipt') &&
+        !assetCls.includes('real estate') &&
+        assetCls !== '') {
+      // Solo excluir si el assetClass está claramente definido como no-equity
+      if (assetCls === 'futures' || assetCls === 'forward' ||
+          assetCls === 'options' || assetCls === 'rights') {
+        cashRows++;
+        continue;
+      }
+    }
+
     // Detectar cash/collateral/derivados
     const nameLC = rawName.toLowerCase();
     const isCash = assetCls === 'cash' ||

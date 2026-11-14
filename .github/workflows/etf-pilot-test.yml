@@ -458,14 +458,17 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Descargar holdings (primera y segunda petición)
+      - name: Descargar holdings (refresh=1 para invalidar caché + segunda petición caché)
         run: |
           for TICKER in XBI CIBR SOXX GDX; do
-            # Primera petición — poblar caché si no existe
-            curl -s -o /dev/null \
+            # Primera petición con refresh=1 — fuerza re-fetch con el parser actualizado
+            echo "  ${TICKER}: forzando refresh..."
+            curl -s -o /tmp/${TICKER}_r1.json \
               -H "x-vercel-protection-bypass: $BYPASS_SECRET" \
-              "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=${TICKER}"
-            # Segunda petición — medir latencia de caché
+              "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=${TICKER}&refresh=1"
+            OK1=$(python3 -c "import json; d=json.load(open('/tmp/${TICKER}_r1.json')); print('OK' if d.get('ok') else 'FAIL')" 2>/dev/null || echo "ERROR")
+            echo "  ${TICKER} refresh: ${OK1}"
+            # Segunda petición — verificar latencia de caché (debe ser rápida)
             T1=$(date +%s%N)
             curl -s -o /tmp/${TICKER}_c2.json \
               -H "x-vercel-protection-bypass: $BYPASS_SECRET" \
@@ -473,9 +476,9 @@ jobs:
             T2=$(date +%s%N)
             MS=$(( ($T2 - $T1) / 1000000 ))
             OK=$(python3 -c "import json; d=json.load(open('/tmp/${TICKER}_c2.json')); print('OK' if d.get('ok') else 'FAIL')" 2>/dev/null || echo "ERROR")
-            echo "  ${TICKER}: ${MS}ms | ${OK}"
-            # Copia para screener (misma respuesta)
-            cp /tmp/${TICKER}_c2.json /tmp/${TICKER}_full.json
+            echo "  ${TICKER} caché: ${MS}ms | ${OK}"
+            # Copia para screener (usar datos frescos del refresh)
+            cp /tmp/${TICKER}_r1.json /tmp/${TICKER}_full.json
           done
 
       - name: "Firestore: verificar 4 documentos"

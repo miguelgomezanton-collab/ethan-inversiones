@@ -152,11 +152,15 @@ export async function fetchHoldings(etfTicker) {
   }
 
   // ── Normalizar tickers internacionales (Condición #5) ─────────────
-  const normalizedHoldings = holdings.map(h => ({
-    ...h,
-    ticker:         normalizeInternationalTicker(h.ticker, ticker),
-    originalTicker: h.ticker,
-  }));
+  const normalizedHoldings = holdings
+    .map(h => ({
+      ...h,
+      ticker:         normalizeInternationalTicker(h.ticker, ticker),
+      originalTicker: h.ticker,
+    }))
+    // Excluir holdings cuyo ticker normalizado sea null (tickers no soportados por Yahoo Finance,
+    // como PE&OLES* MM que se mapea explícitamente a null en MANUAL_TICKER_MAP)
+    .filter(h => h.ticker !== null && h.ticker !== undefined && h.ticker !== '');
 
   const totalWeight = normalizedHoldings.reduce((sum, h) => sum + h.weight, 0);
 
