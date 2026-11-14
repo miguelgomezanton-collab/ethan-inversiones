@@ -131,7 +131,9 @@ export async function fetchHoldings(etfTicker) {
 
     // Ignorar filas de disclaimer legal que iShares append al final del CSV
     // (textos legales, advertencias, etc. — el texto puede aparecer en Ticker o Name)
-    const checkDisclaimer = (text) => {
+    // NOTA: el check de longitud se aplica SOLO al ticker (tickers válidos ≤15 chars),
+    // NO al nombre de empresa (e.g. "ADVANCED MICRO DEVICES" tiene 22 chars y es válido).
+    const hasDisclaimerKeywords = (text) => {
       if (!text) return false;
       const up = text.toUpperCase();
       return text.includes('©') ||
@@ -143,11 +145,12 @@ export async function fetchHoldings(etfTicker) {
              up.includes('INVESTMENT OBJECTIVES') ||
              up.includes('GENERALLY REPRESENT') ||
              up.includes('PRICING VENDOR') ||
-             up.includes('NET ASSET VALUE') ||
-             // Tickers válidos tienen ≤10 chars; textos legales son mucho más largos
-             text.length > 20;
+             up.includes('NET ASSET VALUE');
     };
-    if (checkDisclaimer(rawTicker) || checkDisclaimer(rawName)) continue;
+    // Para el ticker: también filtramos por longitud (ningún ticker válido supera 15 chars)
+    const isDisclaimerTicker = rawTicker.length > 15 || hasDisclaimerKeywords(rawTicker);
+    const isDisclaimerName   = hasDisclaimerKeywords(rawName);
+    if (isDisclaimerTicker || isDisclaimerName) continue;
 
     // Ignorar tickers que no son accionarios (derivados, futuros, etc.)
     // iShares usa "Equity" para acciones; otros asset classes son cash/futures/etc.
