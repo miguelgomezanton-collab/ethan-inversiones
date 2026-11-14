@@ -24,8 +24,12 @@
 
 import https from 'https';
 
+// NOTA: BOTZ, FINX, LIT, SOCL, URA, DTCR han sido movidos a edgar.js
+// (CIK 1432353 — Global X Funds, con Series IDs verificados en SEC EDGAR nov-2026).
+// Este set queda vacío pero se mantiene el adapter para futuros Global X ETFs
+// que requieran la API JSON o scraping HTML de globalxetfs.com.
 const GLOBALX_TICKERS = new Set([
-  'BOTZ', 'FINX', 'LIT', 'SOCL', 'URA', 'DTCR',
+  // Sin tickers activos — cobertura completa vía edgar.js
 ]);
 
 // Mapa de ticker → slug del fondo (para User-Agent y diagnóstico)

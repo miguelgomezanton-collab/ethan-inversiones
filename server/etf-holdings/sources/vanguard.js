@@ -21,7 +21,11 @@
 
 import https from 'https';
 
-const VANGUARD_TICKERS = new Set(['VNQ']);
+// NOTA: VNQ eliminado — el EDGAR fallback de este adapter devuelve HTTP 403.
+// VNQ ahora cubierto por edgar.js (CIK 734383 — Vanguard Specialized Funds, S000002924).
+const VANGUARD_TICKERS = new Set([
+  // Sin tickers activos — VNQ movido a edgar.js
+]);
 
 // CIK de Vanguard Real Estate Index Fund en SEC EDGAR
 const EDGAR_CIK = {

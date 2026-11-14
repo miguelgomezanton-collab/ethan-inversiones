@@ -77,8 +77,21 @@ export async function fetchHoldings(etfTicker) {
     throw new Error(`VanEck: no hay URL configurada para ${ticker}`);
   }
 
-  const xlsUrl = `https://www.vaneck.com/us/en/etf/equity/${slug}/holdings/download/xlsx/`;
-  const buffer = await downloadBuffer(xlsUrl, ticker);
+  // Algunos ETFs de VanEck están bajo /etf/income/ en lugar de /etf/equity/
+  const VANECK_INCOME_TICKERS = new Set(['BIZD']);
+  const category = VANECK_INCOME_TICKERS.has(ticker) ? 'income' : 'equity';
+  const xlsUrl = `https://www.vaneck.com/us/en/etf/${category}/${slug}/holdings/download/xlsx/`;
+
+  let buffer;
+  try {
+    buffer = await downloadBuffer(xlsUrl, ticker);
+  } catch (err) {
+    // Fallback: intentar con la otra categoría
+    const altCategory = category === 'equity' ? 'income' : 'equity';
+    const altUrl = `https://www.vaneck.com/us/en/etf/${altCategory}/${slug}/holdings/download/xlsx/`;
+    console.warn(`[VanEck] ${ticker}: ${xlsUrl} falló (${err.message}), intentando ${altUrl}`);
+    buffer = await downloadBuffer(altUrl, ticker);
+  }
 
   // ── Parsear XLSX ───────────────────────────────────────────────────
   const XLSX = await importXLSX();
@@ -94,24 +107,39 @@ export async function fetchHoldings(etfTicker) {
   const referenceDate = extractDateFromTitle(titleRow, ticker);
 
   // ── Encontrar fila de cabecera ────────────────────────────────────
-  // Fila 2 debería ser la cabecera, pero buscamos dinámicamente por si varía
+  // Buscar en las primeras 10 filas (VanEck a veces cambia la posición)
   let headerRowIdx = -1;
-  for (let i = 0; i < Math.min(5, rows.length); i++) {
+  for (let i = 0; i < Math.min(10, rows.length); i++) {
     const row = rows[i];
-    if (row.some(cell => typeof cell === 'string' && cell.toLowerCase().includes('ticker'))) {
+    if (row.some(cell => typeof cell === 'string' &&
+      (cell.toLowerCase().includes('ticker') || cell.toLowerCase() === 'symbol'))) {
       headerRowIdx = i;
       break;
     }
   }
+  // Segunda pasada: buscar cualquier columna que identifique una fila de cabecera
   if (headerRowIdx === -1) {
-    throw new Error(`VanEck ${ticker}: no se encontró fila de cabecera en el XLSX`);
+    for (let i = 0; i < Math.min(10, rows.length); i++) {
+      const row = rows[i];
+      const lowerCells = row.map(c => String(c).toLowerCase().trim());
+      if ((lowerCells.includes('name') || lowerCells.some(c => c.includes('holding'))) &&
+          lowerCells.some(c => c.includes('%') || c.includes('weight') || c.includes('net'))) {
+        headerRowIdx = i;
+        break;
+      }
+    }
+  }
+  if (headerRowIdx === -1) {
+    // Diagnóstico: mostrar las primeras filas para debug
+    const preview = rows.slice(0, 5).map((r, i) => `fila${i}:[${r.slice(0,6).join('|')}]`).join(' ');
+    throw new Error(`VanEck ${ticker}: no se encontró fila de cabecera en el XLSX. ${preview}`);
   }
 
   const headers = rows[headerRowIdx].map(h => String(h).toLowerCase().trim());
-  const colTicker  = headers.findIndex(h => h === 'ticker');
-  const colName    = headers.findIndex(h => h === 'holding name' || h.includes('holding'));
-  const colWeight  = headers.findIndex(h => h.includes('% of net') || h.includes('net asset'));
-  const colShares  = headers.findIndex(h => h === 'shares');
+  const colTicker  = headers.findIndex(h => h === 'ticker' || h === 'symbol');
+  const colName    = headers.findIndex(h => h === 'holding name' || h === 'name' || h.includes('holding') || h.includes('security'));
+  const colWeight  = headers.findIndex(h => h.includes('% of net') || h.includes('net asset') || h.includes('weight') || h === '%');
+  const colShares  = headers.findIndex(h => h === 'shares' || h.includes('shares held'));
   const colClass   = headers.findIndex(h => h.includes('asset class'));
 
   if (colTicker === -1 || colWeight === -1) {

@@ -21,7 +21,11 @@
 
 import https from 'https';
 
-const ARK_TICKERS = new Set(['ARKG']);
+// NOTA: ARKG eliminado de este adapter — la URL CSV directa de ark-funds.com
+// devuelve HTTP 403 (bloqueado). Ahora cubierto por edgar.js (CIK 1579982, S000042975).
+const ARK_TICKERS = new Set([
+  // Sin tickers activos — ARKG movido a edgar.js
+]);
 
 // Mapa de ticker → nombre del fondo para construir la URL del CSV
 const ARK_CSV_NAMES = {

@@ -31,20 +31,18 @@ const NASDAQ_INDEX_TICKERS = new Set(['CIBR']);
 
 const FIRSTTRUST_TICKERS = new Set([
   // ── Fase piloto ──────────────────────────────────────────────────────
-  'CIBR', 'AIQ', 'SKYY', 'JETS', 'PAVE',
+  // NOTA 2026-11: AIQ, SKYY, JETS, PAVE, FDN, AIRR, FIW, FCG, GRID, CARZ
+  // han sido MOVIDOS a edgar.js (adaptador EDGAR NPORT-P) porque:
+  //   • ftportfolios.com es una SPA — devuelve 0 bytes desde Node.js (proxy bloquea)
+  //   • AIQ, PAVE pertenecen a Global X Funds (CIK 1432353), NO a First Trust
+  //   • JETS pertenece a ETF Series Solutions / U.S. Global Investors (CIK 1540305)
+  // Solo CIBR permanece aquí (redirigido a nasdaq-index.js, no a ftportfolios.com).
+  'CIBR',
   'FTXL', 'FTXG', 'FTXN', 'FTXR', 'FTXH',
   'FXL',  'FXO',  'FXR',  'FXU',  'FXZ',
   'LEGR', 'MDIV', 'MLPA', 'FRI',  'FPN',
   'QDIV', 'QDEF', 'RWO',  'FBZ',  'VONE',
   'QTEC', // incluido explícitamente para detectar confusión con CIBR
-  // ── Fase 2 — 63 subsectores ──────────────────────────────────────────
-  'FDN',  // First Trust Dow Jones Internet Index ETF
-  'AIRR', // First Trust RBA American Industrial Renaissance ETF
-  'FIW',  // First Trust Water ETF
-  'FCG',  // First Trust Natural Gas ETF
-  'GRID', // First Trust NASDAQ Clean Edge Smart Grid Infrastructure ETF
-  'CARZ', // First Trust S-Network Future Vehicles & Technology ETF (XLY — Consumer Discretionary)
-          // Verificado 2026-11: gestor = First Trust Advisors LP, NO ARK Invest
 ]);
 
 /** Verifica si este adapter soporta el ticker dado */

@@ -15,8 +15,10 @@ import https from 'https';
 import { Readable } from 'stream';
 
 // Tickers gestionados por SPDR/State Street
+// NOTA: FSTA eliminado — es Fidelity MSCI Consumer Staples Index ETF (Fidelity Covington Trust),
+// no un ETF de SSGA/SPDR. Su URL en ssga.com devuelve 404. Ahora cubierto por edgar.js.
 const SPDR_TICKERS = new Set([
-  'XBI', 'KRE', 'XOP', 'XAR', 'FSTA', 'XRT',
+  'XBI', 'KRE', 'XOP', 'XAR', 'XRT',
   'GLD', 'SPY', 'MDY', 'SLY',
   // Sectoriales SPDR
   'XLK', 'XLF', 'XLV', 'XLE', 'XLY', 'XLP', 'XLI', 'XLB', 'XLU', 'XLRE', 'XLC',

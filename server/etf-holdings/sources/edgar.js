@@ -7,7 +7,7 @@
 //     Siempre se etiquetan con la fecha efectiva de las posiciones y la
 //     advertencia de antigüedad.
 //
-// ETFs cubiertos (Fase 2 — 12 pendientes):
+// ETFs cubiertos (Fase 2 — completo 2026-11):
 //
 //   Invesco Exchange-Traded Fund Trust II (CIK 1378872):
 //     KBWB  — Invesco KBW Bank ETF                    (Series S000034530)
@@ -69,6 +69,57 @@ const EDGAR_ETF_MAP = {
 
   // ── Amplify ETF Trust (CIK 1633061) ──────────────────────────────────────
   IBUY: { cik: '1633061', seriesId: null, name: 'Amplify Online Retail ETF' },
+
+  // ── Global X Funds (CIK 1432353) ─────────────────────────────────────────
+  // Series IDs verificados en SEC EDGAR (noviembre 2026).
+  // Reemplaza el fallback buggy en globalx.js (usaba period_of_report como accessionNo).
+  BOTZ: { cik: '1432353', seriesId: 'S000054693', name: 'Global X Robotics & Artificial Intelligence ETF' },
+  URA:  { cik: '1432353', seriesId: 'S000029442', name: 'Global X Uranium ETF' },
+  LIT:  { cik: '1432353', seriesId: 'S000029441', name: 'Global X Lithium & Battery Tech ETF' },
+  FINX: { cik: '1432353', seriesId: 'S000054691', name: 'Global X FinTech ETF' },
+  DTCR: { cik: '1432353', seriesId: 'S000069709', name: 'Global X Data Center & Digital Infrastructure ETF' },
+  SOCL: { cik: '1432353', seriesId: 'S000034155', name: 'Global X Social Media ETF' },
+
+  // ── ARK ETF Trust (CIK 1579982) ──────────────────────────────────────────
+  // CSV directo en ark-funds.com devuelve HTTP 403 (bloqueado desde servidor).
+  // Cobertura via EDGAR NPORT-P (CIK verificado en SEC EDGAR nov-2026).
+  ARKG: { cik: '1579982', seriesId: 'S000042975', name: 'ARK Genomic Revolution ETF' },
+
+  // ── Vanguard Specialized Funds (CIK 734383) ──────────────────────────────
+  // vanguard.js devuelve HTTP 403 en el índice EDGAR. Se mueve aquí con CIK+seriesId
+  // para usar la ruta submissions JSON que evita el problema de rate-limit.
+  VNQ:  { cik: '734383',  seriesId: 'S000002924', name: 'Vanguard Real Estate Index Fund' },
+
+  // ── Fidelity Covington Trust (CIK 945908) ────────────────────────────────
+  // FSTA es de Fidelity (no SSGA). La URL de SPDR/SSGA devuelve 404.
+  // CIK y seriesId verificados en SEC EDGAR (noviembre 2026).
+  FSTA: { cik: '945908',  seriesId: 'S000042572', name: 'Fidelity MSCI Consumer Staples Index ETF' },
+
+  // ── Global X Funds (CIK 1432353) — continuación Fase 2 ───────────────────
+  // AIQ y PAVE estaban incorrectamente en firsttrust.js. Movidos aquí 2026-11.
+  // Series IDs verificados en EDGAR filing index (accession 0000930413-26-002360, etc.)
+  AIQ:  { cik: '1432353', seriesId: 'S000061326', name: 'Global X Artificial Intelligence & Technology ETF' },
+  PAVE: { cik: '1432353', seriesId: 'S000056509', name: 'Global X U.S. Infrastructure Development ETF' },
+
+  // ── ETF Series Solutions (CIK 1540305) — continuación Fase 2 ─────────────
+  // JETS estaba incorrectamente en firsttrust.js. Movido aquí 2026-11.
+  // Serie verificada en EDGAR N-PX filing index (accession 0001437749-24-027812).
+  JETS: { cik: '1540305', seriesId: 'S000048544', name: 'U.S. Global Jets ETF' },
+
+  // ── First Trust Exchange-Traded Fund (I) (CIK 1329377) ───────────────────
+  // ftportfolios.com es SPA — HTTP 0 bytes desde servidor. Se mueven a EDGAR 2026-11.
+  // CIKs y Series IDs verificados en EDGAR NPORT-P filing indexes.
+  FDN:  { cik: '1329377', seriesId: 'S000012479', name: 'First Trust Dow Jones Internet Index Fund' },
+  FCG:  { cik: '1329377', seriesId: 'S000017177', name: 'First Trust Natural Gas ETF' },
+  FIW:  { cik: '1329377', seriesId: 'S000017178', name: 'First Trust Water ETF' },
+
+  // ── First Trust Exchange-Traded Fund II (CIK 1364608) ────────────────────
+  SKYY: { cik: '1364608', seriesId: 'S000033237', name: 'First Trust Cloud Computing ETF' },
+  CARZ: { cik: '1364608', seriesId: 'S000032974', name: 'First Trust S-Network Future Vehicles & Technology ETF' },
+  GRID: { cik: '1364608', seriesId: 'S000026919', name: 'First Trust NASDAQ Clean Edge Smart Grid Infrastructure Index Fund' },
+
+  // ── First Trust Exchange-Traded Fund VI (CIK 1552740) ────────────────────
+  AIRR: { cik: '1552740', seriesId: 'S000044209', name: 'First Trust RBA American Industrial Renaissance ETF' },
 };
 
 const EDGAR_TICKERS = new Set(Object.keys(EDGAR_ETF_MAP));
