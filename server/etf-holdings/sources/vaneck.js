@@ -3,16 +3,12 @@
 //
 // ETFs soportados: SMH, GDX, SIL, XME, REMX, GDXJ
 //
-// Fuente: vaneck.com/offshore/en/ — versión que sirve HTML estático con tabla de holdings.
-// La URL /us/en/ usa React SSR y no incluye la tabla en el HTML crudo del servidor.
-// La URL /offshore/en/ sí incluye la tabla completa en el HTML inicial.
+// Fuente: vaneck.com/us/en/etf/equity/{ticker}/holdings/download/xlsx/
+// Descarga directa del XLSX de holdings — rápida y fiable desde Vercel.
 //
-//   SMH:  https://www.vaneck.com/offshore/en/investments/semiconductor-etf-smh/holdings/
-//   GDX:  https://www.vaneck.com/offshore/en/investments/gold-miners-etf-gdx/holdings/
-//   SIL:  https://www.vaneck.com/offshore/en/investments/silver-miners-etf-sil/holdings/
-//   REMX: https://www.vaneck.com/offshore/en/investments/mvis-us-listed-rare-earth-critical-minerals-etf-remx/holdings/
-//   XME:  https://www.vaneck.com/offshore/en/investments/mvis-us-listed-rare-earth-critical-minerals-etf-remx/holdings/
-//   GDXJ: https://www.vaneck.com/offshore/en/investments/junior-gold-miners-etf-gdxj/holdings/
+// Estructura XLSX (fila 0 = título, fila 1 = vacía, fila 2 = cabecera):
+//   Number | Ticker | Holding Name | Identifier (FIGI) | Shares | Asset Class
+//           | Market Value (US$) | Notional Value | % of Net Assets
 //
 // CONDICIÓN #5: Normalizar tickers internacionales para Yahoo Finance
 //               Formato OTC: "NST AU" → "NST.AX", "EDV LN" → "EDV.L"
@@ -20,68 +16,158 @@
 
 import https from 'https';
 
-// Map de tickers VanEck → slug de URL en vaneck.com/offshore/en/
-const VANECK_URL_MAP = {
-  SMH:  'semiconductor-etf-smh',
-  GDX:  'gold-miners-etf-gdx',
-  SIL:  'silver-miners-etf-sil',
-  REMX: 'mvis-us-listed-rare-earth-critical-minerals-etf-remx',
-  XME:  'mvis-us-listed-rare-earth-critical-minerals-etf-remx',  // usa misma página que REMX
-  GDXJ: 'junior-gold-miners-etf-gdxj',
-};
+async function importXLSX() {
+  const mod = await import('xlsx');
+  return mod.default ?? mod;
+}
 
-const VANECK_TICKERS = new Set(Object.keys(VANECK_URL_MAP));
+// Patrón de URL XLS: /us/en/etf/equity/{ticker-lower}/holdings/download/xlsx/
+// Se confirma que funciona para SMH y GDX (verificado 2026-11-14)
+const VANECK_TICKERS_SUPPORTED = new Set(['SMH', 'GDX', 'SIL', 'REMX', 'XME', 'GDXJ']);
+
+// Map de tickers a slug en la URL XLS (en minúsculas tal como aparece en la URL)
+// Si el ticker en minúsculas no funciona, añadir aquí el slug correcto
+const VANECK_XLS_SLUG = {
+  SMH:  'smh',
+  GDX:  'gdx',
+  SIL:  'sil',
+  REMX: 'remx',
+  XME:  'xme',
+  GDXJ: 'gdxj',
+};
 
 /** Verifica si este adapter soporta el ticker */
 export function supports(ticker) {
-  return VANECK_TICKERS.has(ticker.toUpperCase());
+  return VANECK_TICKERS_SUPPORTED.has(ticker.toUpperCase());
 }
 
 /**
- * Descarga y parsea los holdings del ETF desde vaneck.com.
+ * Descarga y parsea los holdings del ETF desde el XLSX de VanEck.
  * Incluye normalización de tickers internacionales para Yahoo Finance.
  *
  * @param {string} etfTicker  — Ticker del ETF (ej. "SMH", "GDX")
  * @returns {Promise<HoldingsResult>}
  */
 export async function fetchHoldings(etfTicker) {
-  const ticker  = etfTicker.toUpperCase();
-  const urlSlug = VANECK_URL_MAP[ticker];
-  if (!urlSlug) {
+  const ticker = etfTicker.toUpperCase();
+  const slug   = VANECK_XLS_SLUG[ticker];
+  if (!slug) {
     throw new Error(`VanEck: no hay URL configurada para ${ticker}`);
   }
 
-  // /offshore/en/ sirve HTML estático con tabla; /us/en/ requiere JS (React SSR)
-  const pageUrl = `https://www.vaneck.com/offshore/en/investments/${urlSlug}/holdings/`;
-  const html    = await fetchPage(pageUrl, ticker);
+  const xlsUrl = `https://www.vaneck.com/us/en/etf/equity/${slug}/holdings/download/xlsx/`;
+  const buffer = await downloadBuffer(xlsUrl, ticker);
 
-  // ── Extraer fecha de referencia ───────────────────────────────────
-  const referenceDate = extractReferenceDate(html, ticker);
+  // ── Parsear XLSX ───────────────────────────────────────────────────
+  const XLSX = await importXLSX();
+  const wb = XLSX.read(buffer, { type: 'buffer' });
+  const sheetName = wb.SheetNames[0];
+  const ws = wb.Sheets[sheetName];
 
-  // ── Parsear tabla de holdings ──────────────────────────────────────
-  const { holdings: rawHoldings, cashRows } = parseHoldingsTable(html, ticker, pageUrl);
+  // Leer como array de arrays (fila 0 = título, fila 2 = cabecera, fila 3+ = datos)
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
 
-  if (rawHoldings.length === 0) {
-    throw new Error(`VanEck ${ticker}: 0 posiciones extraídas de la tabla HTML`);
+  // ── Extraer fecha de referencia del título (fila 0) ───────────────
+  const titleRow = (rows[0] || [])[0] || '';
+  const referenceDate = extractDateFromTitle(titleRow, ticker);
+
+  // ── Encontrar fila de cabecera ────────────────────────────────────
+  // Fila 2 debería ser la cabecera, pero buscamos dinámicamente por si varía
+  let headerRowIdx = -1;
+  for (let i = 0; i < Math.min(5, rows.length); i++) {
+    const row = rows[i];
+    if (row.some(cell => typeof cell === 'string' && cell.toLowerCase().includes('ticker'))) {
+      headerRowIdx = i;
+      break;
+    }
+  }
+  if (headerRowIdx === -1) {
+    throw new Error(`VanEck ${ticker}: no se encontró fila de cabecera en el XLSX`);
+  }
+
+  const headers = rows[headerRowIdx].map(h => String(h).toLowerCase().trim());
+  const colTicker  = headers.findIndex(h => h === 'ticker');
+  const colName    = headers.findIndex(h => h === 'holding name' || h.includes('holding'));
+  const colWeight  = headers.findIndex(h => h.includes('% of net') || h.includes('net asset'));
+  const colShares  = headers.findIndex(h => h === 'shares');
+  const colClass   = headers.findIndex(h => h.includes('asset class'));
+
+  if (colTicker === -1 || colWeight === -1) {
+    throw new Error(
+      `VanEck ${ticker}: columnas no encontradas. Headers: ${headers.join(', ')}`
+    );
+  }
+
+  // ── Iterar filas de datos ──────────────────────────────────────────
+  const holdings = [];
+  let cashRows = 0;
+
+  for (let i = headerRowIdx + 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || row.every(cell => cell === '' || cell === null || cell === undefined)) continue;
+
+    const rawTicker = String(row[colTicker] || '').trim();
+    const rawName   = colName   >= 0 ? String(row[colName]   || '').trim() : rawTicker;
+    const rawWeight = String(row[colWeight] || '0').replace('%', '').trim();
+    const assetCls  = colClass  >= 0 ? String(row[colClass]  || '').toLowerCase() : '';
+
+    const weight = parseFloat(rawWeight) || 0;
+
+    if (!rawTicker && !rawName) continue;
+    if (weight === 0 && !rawTicker) continue;
+
+    // Detectar cash/collateral
+    const nameLC = rawName.toLowerCase();
+    const isCash = assetCls.includes('cash') ||
+                   nameLC.includes('cash') ||
+                   nameLC.includes('money market') ||
+                   nameLC.includes('collateral') ||
+                   nameLC.includes('receivable') ||
+                   rawTicker === 'CASH' ||
+                   rawTicker === 'USD';
+
+    if (isCash) {
+      cashRows++;
+      continue;
+    }
+
+    // Parsear shares (puede ser "66,457,749" con comas)
+    let shares = null;
+    if (colShares >= 0 && row[colShares]) {
+      const sharesStr = String(row[colShares]).replace(/,/g, '');
+      const sharesNum = parseFloat(sharesStr);
+      if (!isNaN(sharesNum) && sharesNum > 0) shares = sharesNum;
+    }
+
+    holdings.push({
+      ticker:         rawTicker,
+      name:           rawName || rawTicker,
+      weight:         parseFloat(weight.toFixed(4)),
+      shares,
+    });
+  }
+
+  if (holdings.length === 0) {
+    throw new Error(`VanEck ${ticker}: 0 posiciones extraídas del XLSX`);
   }
 
   // ── Normalizar tickers internacionales (Condición #5) ─────────────
-  const holdings = rawHoldings.map(h => ({
+  const normalizedHoldings = holdings.map(h => ({
     ...h,
-    ticker:        normalizeInternationalTicker(h.ticker, ticker),
-    originalTicker: h.ticker,          // preservar ticker original para trazabilidad
+    ticker:         normalizeInternationalTicker(h.ticker, ticker),
+    originalTicker: h.ticker,
   }));
 
-  const totalWeight = holdings.reduce((sum, h) => sum + h.weight, 0);
+  const totalWeight = normalizedHoldings.reduce((sum, h) => sum + h.weight, 0);
 
   return {
     source:        'VanEck',
-    sourceUrl:     pageUrl,
+    sourceUrl:     xlsUrl,
     referenceDate,
-    totalHoldings: holdings.length,
+    totalHoldings: normalizedHoldings.length,
     cashRows,
     totalWeight:   parseFloat(totalWeight.toFixed(4)),
-    holdings,
+    holdings:      normalizedHoldings,
   };
 }
 
@@ -92,7 +178,6 @@ export async function fetchHoldings(etfTicker) {
 // Yahoo Finance usa: "NST.AX", "EDV.L", "LUG.TO"
 
 const EXCHANGE_SUFFIX_MAP = {
-  // VanEck suffix → Yahoo Finance suffix
   'AU': '.AX',   // Australian Securities Exchange
   'LN': '.L',    // London Stock Exchange
   'CN': '.TO',   // Toronto Stock Exchange (Canada)
@@ -116,216 +201,96 @@ const EXCHANGE_SUFFIX_MAP = {
   'NZ': '.NZ',   // NZX (New Zealand)
 };
 
-// Tickers mexicanos con sufijo especial (BMV)
-// VanEck usa "PE&OLES* MM" → no tiene Yahoo Finance directo en USD
-// Map manual para casos conocidos en GDX
 const MANUAL_TICKER_MAP = {
-  'PE&OLES* MM': null,         // Industrias Peñoles — no tiene ADR/Yahoo accesible
-  'DRD SJ':      'DRD.JO',    // DRDGold (alternativa a .JO)
-  'BTG':         'BTG',        // B2Gold — ya es ticker US
-  'AU':          'AU',         // AngloGold — ya es ticker US (NYSE)
-  'AEM':         'AEM',        // Agnico Eagle — ya es ticker US (NYSE)
-  'NEM':         'NEM',        // Newmont — ya es ticker US (NYSE)
-  'WPM':         'WPM',        // Wheaton Precious — ya es ticker US (NYSE)
-  'GFI SJ':      'GFI',        // Gold Fields tiene ADR (NYSE: GFI)
-  'HMY SJ':      'HMY',        // Harmony Gold tiene ADR (NYSE: HMY)
-  'ANG SJ':      'AU',         // AngloGold Ashanti (NYSE: AU)
-  'ANGJ SJ':     'AU',         // AngloGold Ashanti (NYSE: AU)
+  'PE&OLES* MM': null,
+  'DRD SJ':      'DRD.JO',
+  'BTG':         'BTG',
+  'AU':          'AU',
+  'AEM':         'AEM',
+  'NEM':         'NEM',
+  'WPM':         'WPM',
+  'GFI SJ':      'GFI',
+  'HMY SJ':      'HMY',
+  'ANG SJ':      'AU',
+  'ANGJ SJ':     'AU',
 };
 
 /**
  * Convierte un ticker en formato VanEck al formato Yahoo Finance.
- * Preserva tickers US sin modificar.
- *
- * @param {string} rawTicker  — Ticker como aparece en VanEck (ej. "NST AU")
- * @param {string} etfTicker  — ETF padre (para logging)
- * @returns {string}  — Ticker Yahoo Finance (ej. "NST.AX") o null si no mappeable
  */
 export function normalizeInternationalTicker(rawTicker, etfTicker = '') {
   const t = rawTicker.trim();
 
-  // Comprobar mapa manual primero
   if (MANUAL_TICKER_MAP.hasOwnProperty(t)) {
     const mapped = MANUAL_TICKER_MAP[t];
     if (!mapped) {
       console.warn(`[VanEck] ${etfTicker}: ticker sin equivalente Yahoo: ${t}`);
     }
-    return mapped; // puede ser null — el screener lo excluirá
+    return mapped;
   }
 
-  // Tickers US simples (sin espacio, 1-5 chars alfanuméricos)
   if (/^[A-Z]{1,5}$/.test(t)) return t;
 
-  // Formato "BASE SUFFIX" (con espacio)
   const spaceMatch = t.match(/^([A-Z0-9&.*]+)\s+([A-Z]{2,3})$/);
   if (spaceMatch) {
     const base   = spaceMatch[1];
     const suffix = spaceMatch[2];
-
-    // Comprobar mapa de sufijos de bolsa
     if (EXCHANGE_SUFFIX_MAP[suffix]) {
       return `${base}${EXCHANGE_SUFFIX_MAP[suffix]}`;
     }
-
-    // Sufijo desconocido — loguear y devolver como está por si Yahoo lo acepta
     console.warn(`[VanEck] ${etfTicker}: sufijo de bolsa desconocido "${suffix}" para ticker "${t}"`);
     return t;
   }
 
-  // Formato "TICKER.SUFFIX" (ya podría ser Yahoo-compatible)
   if (/^[A-Z0-9]+\.[A-Z]{1,2}$/.test(t)) return t;
 
-  // Formato con número HK: "1234 HK"
   const hkMatch = t.match(/^(\d{4})\s+HK$/);
   if (hkMatch) return `${hkMatch[1]}.HK`;
 
-  // No reconocido
   console.warn(`[VanEck] ${etfTicker}: ticker con formato desconocido: ${t}`);
   return t;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
-function extractReferenceDate(html, ticker) {
-  const patterns = [
-    /as\s+of\s+(\w+\s+\d{1,2},\s+\d{4})/i,     // "as of November 1, 2024"
-    /as\s+of[:\s]+(\d{1,2}\/\d{1,2}\/\d{4})/i, // "as of 11/01/2024"
-    /Holdings\s+Date[^<]*[>:]\s*([^<\n]{6,20})/i,
-    /(\d{1,2}\/\d{1,2}\/\d{4})/,
-  ];
+/**
+ * Extrae la fecha de la fila de título del XLSX.
+ * Ejemplo: "Daily Holdings (%)  11/12/2026"
+ */
+function extractDateFromTitle(titleStr, ticker) {
+  if (!titleStr) return new Date().toISOString().split('T')[0];
 
-  for (const re of patterns) {
-    const m = html.match(re);
-    if (m) {
-      const dateStr = m[1].trim();
-      // Intentar parsear la fecha
-      try {
-        const d = new Date(dateStr);
-        if (!isNaN(d)) return d.toISOString().split('T')[0];
-      } catch {}
-    }
+  // Formato MM/DD/YYYY
+  const m1 = titleStr.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m1) {
+    try {
+      const d = new Date(`${m1[3]}-${m1[1].padStart(2,'0')}-${m1[2].padStart(2,'0')}`);
+      if (!isNaN(d)) return d.toISOString().split('T')[0];
+    } catch {}
   }
 
-  console.warn(`[VanEck] ${ticker}: no se encontró fecha de referencia`);
+  // Formato "Month DD, YYYY"
+  const m2 = titleStr.match(/(\w+\s+\d{1,2},\s*\d{4})/i);
+  if (m2) {
+    try {
+      const d = new Date(m2[1]);
+      if (!isNaN(d)) return d.toISOString().split('T')[0];
+    } catch {}
+  }
+
+  console.warn(`[VanEck] ${ticker}: no se encontró fecha en título "${titleStr}"`);
   return new Date().toISOString().split('T')[0];
 }
 
 /**
- * Parsea la tabla de holdings del HTML de VanEck.
- *
- * VanEck usa tablas con clases de React-rendered. Las columnas típicas son:
- * Company Name | Ticker | ISIN | Shares/Contracts | Net Assets %
- *
- * Como fallback: buscar cualquier tabla con columna de peso/porcentaje.
+ * Descarga un buffer binario desde una URL HTTPS con timeout de 8s.
+ * Sigue redirecciones automáticamente (máx 3).
  */
-function parseHoldingsTable(html, ticker, pageUrl) {
-  const tableMatches = [...html.matchAll(/<table[^>]*>([\s\S]*?)<\/table>/gi)];
-
-  if (tableMatches.length === 0) {
-    throw new Error(
-      `VanEck ${ticker}: no se encontró tabla en ${pageUrl}. ` +
-      `La página puede requerir JS para renderizar. HTML length: ${html.length}`
-    );
+async function downloadBuffer(url, ticker, redirectCount = 0) {
+  if (redirectCount > 3) {
+    throw new Error(`VanEck ${ticker}: demasiadas redirecciones (${url})`);
   }
 
-  let holdingsTable = null;
-  let headerCols    = null;
-
-  for (const match of tableMatches) {
-    const tableHtml = match[1];
-    const thMatches = [...tableHtml.matchAll(/<th[^>]*>([\s\S]*?)<\/th>/gi)];
-    const ths = thMatches.map(m => m[1].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim().toLowerCase());
-
-    // Buscar tabla con columnas de holdings
-    const hasWeight = ths.some(h => h.includes('net asset') || h.includes('weight') || h.includes('%'));
-    const hasTicker = ths.some(h => h === 'ticker' || h.includes('symbol') || h === 'cusip' || h.includes('sedol'));
-
-    if (hasWeight && (hasTicker || ths.some(h => h.includes('company') || h.includes('name')))) {
-      holdingsTable = tableHtml;
-      headerCols    = ths;
-      break;
-    }
-  }
-
-  if (!holdingsTable || !headerCols) {
-    // Intentar con la tabla más larga (heurística)
-    const longestTable = tableMatches.reduce((a, b) => a[1].length > b[1].length ? a : b);
-    const thMatches    = [...longestTable[1].matchAll(/<th[^>]*>([\s\S]*?)<\/th>/gi)];
-    headerCols         = thMatches.map(m => m[1].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim().toLowerCase());
-
-    if (headerCols.length > 0) {
-      holdingsTable = longestTable[1];
-      console.warn(`[VanEck] ${ticker}: usando tabla más larga como fallback. Columnas: ${headerCols.join(', ')}`);
-    } else {
-      throw new Error(
-        `VanEck ${ticker}: no se pudo identificar tabla de holdings. ` +
-        `Tablas encontradas: ${tableMatches.length}. ` +
-        `La página puede ser dinámica (JS-rendered).`
-      );
-    }
-  }
-
-  const colName   = headerCols.findIndex(h => h.includes('company') || h === 'name' || h.includes('security'));
-  const colTicker = headerCols.findIndex(h => h === 'ticker' || h === 'symbol');
-  const colWeight = headerCols.findIndex(h => h.includes('net asset') || h.includes('weight') || (h.includes('%') && !h.includes('ytd')));
-  const colShares = headerCols.findIndex(h => h.includes('shares') || h.includes('contracts'));
-
-  if (colWeight === -1) {
-    throw new Error(`VanEck ${ticker}: columna de peso no encontrada. Columnas: ${headerCols.join(', ')}`);
-  }
-
-  const rowMatches = [...holdingsTable.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)];
-  const holdings   = [];
-  let cashRows     = 0;
-
-  for (const rowMatch of rowMatches) {
-    const tdMatches = [...rowMatch[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)];
-    const cells     = tdMatches.map(m => m[1].replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ').replace(/,/g, '').trim());
-
-    if (cells.length <= colWeight) continue;
-
-    const rawWeight  = cells[colWeight] || '0';
-    const weight     = parseFloat(rawWeight.replace('%', '')) || 0;
-
-    // Intentar obtener ticker de la columna dedicada, o del nombre
-    let rawTicker = '';
-    if (colTicker >= 0 && cells[colTicker]) {
-      rawTicker = cells[colTicker].trim();
-    }
-
-    const rawName = colName >= 0 ? (cells[colName] || '') : rawTicker;
-
-    if (!rawTicker && !rawName) continue;
-    if (weight === 0 && !rawTicker) continue;
-
-    // Detectar cash/collateral
-    const nameLC  = rawName.toLowerCase();
-    const isCash  = nameLC.includes('cash') ||
-                    nameLC.includes('money market') ||
-                    nameLC.includes('collateral') ||
-                    nameLC.includes('receivable') ||
-                    (!rawTicker && weight < 0.001);
-
-    if (isCash) {
-      cashRows++;
-      continue;
-    }
-
-    // Si no hay ticker pero hay nombre, usar nombre como identifier temporal
-    const effectiveTicker = rawTicker || rawName.substring(0, 10).toUpperCase().replace(/\s/g, '');
-
-    holdings.push({
-      ticker: effectiveTicker,
-      name:   rawName || effectiveTicker,
-      weight: parseFloat(weight.toFixed(4)),
-      shares: colShares >= 0 ? (parseFloat(cells[colShares] || '0') || null) : null,
-    });
-  }
-
-  return { holdings, cashRows };
-}
-
-async function fetchPage(url, ticker) {
   return new Promise((resolve, reject) => {
     const reqUrl = new URL(url);
     const options = {
@@ -333,22 +298,29 @@ async function fetchPage(url, ticker) {
       path:     reqUrl.pathname + reqUrl.search,
       method:   'GET',
       headers: {
-        'User-Agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept':          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-GB,en;q=0.9',  // offshore/en sirve mejor con en-GB
+        'User-Agent':      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept':          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel, */*',
+        'Accept-Language': 'en-US,en;q=0.9',
         'Connection':      'keep-alive',
         'Cache-Control':   'no-cache',
+        'Referer':         `https://www.vaneck.com/us/en/investments/`,
       },
-      timeout: 20000,
+      timeout: 8000,
     };
 
     const req = https.request(options, (res) => {
-      if (res.statusCode === 302 || res.statusCode === 301) {
+      // Seguir redirecciones
+      if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 303 || res.statusCode === 307) {
         const loc = res.headers.location;
-        const abs = loc.startsWith('http') ? loc : `https://${reqUrl.hostname}${loc}`;
-        fetchPage(abs, ticker).then(resolve).catch(reject);
+        if (!loc) {
+          reject(new Error(`VanEck ${ticker}: redirección sin Location header`));
+          return;
+        }
+        const absUrl = loc.startsWith('http') ? loc : `https://${reqUrl.hostname}${loc}`;
+        downloadBuffer(absUrl, ticker, redirectCount + 1).then(resolve).catch(reject);
         return;
       }
+
       if (res.statusCode !== 200) {
         reject(new Error(`VanEck ${ticker}: HTTP ${res.statusCode} desde ${url}`));
         return;
@@ -357,12 +329,12 @@ async function fetchPage(url, ticker) {
       const chunks = [];
       res.on('data', chunk => chunks.push(chunk));
       res.on('end', () => {
-        const html = Buffer.concat(chunks).toString('utf-8');
-        if (!html || html.length < 500) {
-          reject(new Error(`VanEck ${ticker}: respuesta HTML vacía (${html.length} bytes)`));
+        const buffer = Buffer.concat(chunks);
+        if (!buffer || buffer.length < 100) {
+          reject(new Error(`VanEck ${ticker}: respuesta vacía (${buffer.length} bytes)`));
           return;
         }
-        resolve(html);
+        resolve(buffer);
       });
       res.on('error', reject);
     });
@@ -370,7 +342,7 @@ async function fetchPage(url, ticker) {
     req.on('error', reject);
     req.on('timeout', () => {
       req.destroy();
-      reject(new Error(`VanEck ${ticker}: timeout descargando página`));
+      reject(new Error(`VanEck ${ticker}: timeout descargando XLSX (8s)`));
     });
     req.end();
   });
