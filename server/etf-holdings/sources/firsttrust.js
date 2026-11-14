@@ -38,9 +38,31 @@ export function supports(ticker) {
  */
 export async function fetchHoldings(etfTicker) {
   const ticker = etfTicker.toUpperCase();
-  const url = `https://www.ftportfolios.com/Retail/Etf/EtfHoldings.aspx?Ticker=${ticker}`;
+  // Intentar primero con la URL normal, luego con Print=Y (versión impresión, más limpia)
+  const urlNormal = `https://www.ftportfolios.com/Retail/Etf/EtfHoldings.aspx?Ticker=${ticker}`;
+  const urlPrint  = `https://www.ftportfolios.com/Retail/Etf/EtfHoldings.aspx?Ticker=${ticker}&Print=Y`;
 
-  const html = await fetchPage(url, ticker);
+  let html = await fetchPage(urlNormal, ticker);
+
+  // Si la página normal no contiene tabla de holdings, intentar versión Print
+  if (!html.includes('Ticker') || !html.includes('Weight')) {
+    console.log(`[FirstTrust] ${ticker}: página normal sin tabla — intentando versión Print=Y`);
+    html = await fetchPage(urlPrint, ticker);
+  }
+
+  const url = urlNormal;
+
+  // ── DIAGNÓSTICO: loguear estructura del HTML recibido ─────────────
+  const tableCount  = (html.match(/<table/gi) || []).length;
+  const thTexts     = [...html.matchAll(/<th[^>]*>([\s\S]{0,50}?)<\/th>/gi)]
+                        .map(m => m[1].replace(/<[^>]+>/g,'').trim())
+                        .slice(0, 10)
+                        .join(' | ');
+  const titleMatch  = html.match(/<title[^>]*>([\s\S]{0,120}?)<\/title>/i);
+  const pageTitle   = titleMatch ? titleMatch[1].trim() : '(no title)';
+  console.log(`[FirstTrust] ${ticker} HTML diagnóstico: ${html.length} bytes, ${tableCount} tablas, title="${pageTitle}"`);
+  console.log(`[FirstTrust] ${ticker} Primeras <th>: ${thTexts || '(ninguna)'}`);
+  console.log(`[FirstTrust] ${ticker} Fragmento HTML[0:500]: ${html.substring(0, 500).replace(/\s+/g,' ')}`);
 
   // ── VERIFICACIÓN DE IDENTIDAD (Condición #3) ──────────────────────
   // El HTML contiene el nombre del fondo en el título y/o en un elemento <h1>
