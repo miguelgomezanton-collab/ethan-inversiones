@@ -18,15 +18,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import https from 'https';
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
-// pdf-parse se importa con require (CJS) ya que el módulo no tiene export ESM
-let pdfParse = null;
-try {
-  pdfParse = require('pdf-parse');
-} catch (e) {
-  console.warn('[NasdaqIndex] pdf-parse no disponible:', e.message);
-}
+import zlib from 'zlib';
+import { promisify } from 'util';
+
+const inflateRaw = promisify(zlib.inflateRaw);
+const inflate    = promisify(zlib.inflate);
+const gunzip     = promisify(zlib.gunzip);
 
 // Mapa ETF ticker → índice Nasdaq que replica
 const ETF_TO_INDEX = {
@@ -237,6 +234,140 @@ function parseIndexText(text, etfTicker, indexTicker) {
 }
 
 /**
+ * Extrae texto de un PDF binario sin dependencias externas.
+ * Estrategia:
+ *  1. Buscar streams FlateDecode comprimidos con zlib → descomprimir → extraer operadores PDF texto
+ *  2. Buscar strings de texto en objetos no comprimidos (BT...ET, Tj, TJ operators)
+ *  3. Reconstruir el texto en orden de aparición
+ *
+ * Los PDFs de Nasdaq son generados por acrobat con estructura simple,
+ * sin cifrado, con texto en streams FlateDecode estándar.
+ */
+async function extractPdfText(pdfBuffer, ticker) {
+  const pdf = pdfBuffer;
+  let allText = '';
+
+  // ── Estrategia 1: extraer y descomprimir streams FlateDecode ──────────
+  // Patrón: << ... /Filter /FlateDecode ... >> stream\r\n<bytes>\r\nendstream
+  const streamRegex = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
+  const filterRegex  = /\/Filter\s*\/FlateDecode/;
+
+  // Encontrar objetos con FlateDecode: buscar la secuencia completa
+  const objRegex = /(\d+\s+\d+\s+obj[\s\S]*?endobj)/g;
+  let objMatch;
+  while ((objMatch = objRegex.exec(pdf.toString('latin1'))) !== null) {
+    const objText = objMatch[1];
+    if (!filterRegex.test(objText)) continue;
+
+    // Localizar el stream dentro del objeto
+    const streamStart = objText.indexOf('stream');
+    if (streamStart === -1) continue;
+
+    // Encontrar inicio del contenido (después de \n)
+    const contentStart = objText.indexOf('\n', streamStart) + 1;
+    const contentEnd   = objText.lastIndexOf('endstream');
+    if (contentStart <= 0 || contentEnd <= contentStart) continue;
+
+    // Obtener los bytes reales del buffer (latin1 → offset correcto)
+    const objOffset   = objMatch.index;
+    const rawStart    = objOffset + contentStart;
+    const rawEnd      = objOffset + contentEnd;
+    const streamBytes = pdf.slice(rawStart, rawEnd);
+
+    // Intentar descomprimir con inflate/inflateRaw
+    let decompressed = null;
+    for (const decomp of [inflate, inflateRaw, gunzip]) {
+      try {
+        decompressed = await decomp(streamBytes);
+        break;
+      } catch (_) { /* intentar siguiente */ }
+    }
+
+    if (!decompressed) continue;
+
+    // Extraer texto del stream PDF descomprimido
+    const streamText = decompressed.toString('latin1');
+    const extracted  = extractTextFromPdfStream(streamText);
+    if (extracted) allText += extracted + '\n';
+  }
+
+  // ── Estrategia 2: texto en literales sin comprimir (objetos simples) ──
+  // Buscar cadenas entre paréntesis en contexto de texto PDF: ( ... ) Tj
+  // y arrays de texto: [( ... ) ... ] TJ
+  if (allText.length < 200) {
+    const pdfStr = pdf.toString('latin1');
+    const litRegex = /\(([^)]{1,200})\)\s*(?:Tj|'|")/g;
+    let m;
+    while ((m = litRegex.exec(pdfStr)) !== null) {
+      const decoded = m[1]
+        .replace(/\\n/g, '\n')
+        .replace(/\\r/g, '\r')
+        .replace(/\\t/g, '\t')
+        .replace(/\\\(/g, '(')
+        .replace(/\\\)/g, ')')
+        .replace(/\\\\/g, '\\');
+      allText += decoded + ' ';
+    }
+  }
+
+  console.log(`[NasdaqIndex] ${ticker}: PDF → ${allText.length} chars extraídos`);
+  return allText;
+}
+
+/**
+ * Extrae el texto visible de un stream PDF descomprimido.
+ * El stream contiene instrucciones como: BT ... (texto) Tj ... ET
+ */
+function extractTextFromPdfStream(stream) {
+  let result = '';
+  let inText = false;
+
+  // BT / ET delimitan bloques de texto
+  const parts = stream.split(/\b(BT|ET)\b/);
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+    if (part === 'BT') { inText = true; continue; }
+    if (part === 'ET') { inText = false; continue; }
+    if (!inText) continue;
+
+    // Dentro de BT...ET: extraer strings de texto
+    // Formato 1: (texto) Tj
+    // Formato 2: (texto) ' o "
+    // Formato 3: [(texto) n (texto) n ...] TJ
+    const tjRegex = /\(([^)]*)\)\s*(?:Tj|'|")/g;
+    let m;
+    while ((m = tjRegex.exec(part)) !== null) {
+      const decoded = m[1]
+        .replace(/\\n/g, '\n')
+        .replace(/\\r/g, '\r')
+        .replace(/\\t/g, ' ')
+        .replace(/\\\(/g, '(')
+        .replace(/\\\)/g, ')')
+        .replace(/\\\\/g, '\\');
+      result += decoded + ' ';
+    }
+
+    // Formato TJ: [(t1) n1 (t2) n2 ...] TJ
+    const tjArrayRegex = /\[([^\]]*)\]\s*TJ/g;
+    while ((m = tjArrayRegex.exec(part)) !== null) {
+      const inner = m[1];
+      const strRegex = /\(([^)]*)\)/g;
+      let sm;
+      while ((sm = strRegex.exec(inner)) !== null) {
+        const decoded = sm[1]
+          .replace(/\\\(/g, '(')
+          .replace(/\\\)/g, ')')
+          .replace(/\\\\/g, '\\');
+        result += decoded;
+      }
+      result += ' ';
+    }
+  }
+
+  return result;
+}
+
+/**
  * Descarga el documento desde nasdaq.com/docs/
  * Detecta automáticamente si es PDF o HTML/texto y extrae el texto.
  * Funciona desde IPs de datacenter (sin bloqueo IP).
@@ -250,15 +381,10 @@ async function fetchTextPage(url, ticker) {
   const magic = rawBuffer.slice(0, 4).toString('ascii');
   if (magic === '%PDF') {
     console.log(`[NasdaqIndex] ${ticker}: respuesta es PDF (${rawBuffer.length} bytes), extrayendo texto`);
-    if (!pdfParse) {
-      throw new Error(`NasdaqIndex ${ticker}: respuesta es PDF pero pdf-parse no está disponible`);
-    }
     try {
-      const data = await pdfParse(rawBuffer);
-      const text = data.text || '';
-      console.log(`[NasdaqIndex] ${ticker}: PDF → ${text.length} chars extraídos, ${data.numpages} páginas`);
+      const text = await extractPdfText(rawBuffer, ticker);
       if (!text || text.trim().length < 100) {
-        throw new Error(`NasdaqIndex ${ticker}: PDF extraído vacío o demasiado corto`);
+        throw new Error(`NasdaqIndex ${ticker}: PDF extraído vacío o demasiado corto (${text?.length || 0} chars)`);
       }
       return text;
     } catch (pdfErr) {
