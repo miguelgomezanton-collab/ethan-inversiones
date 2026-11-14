@@ -3,16 +3,31 @@
 //
 // ETFs soportados: CIBR, AIQ, SKYY, JETS, PAVE (y otros de ftportfolios.com)
 //
-// Fuente: https://www.ftportfolios.com/Retail/Etf/EtfHoldings.aspx?Ticker={TICKER}
-// Método: scraping de tabla HTML (no hay descarga CSV directa disponible)
+// Fuente por defecto: https://www.ftportfolios.com/Retail/Etf/EtfHoldings.aspx?Ticker={TICKER}
+// Método: scraping de tabla HTML
+//
+// EXCEPCIÓN — CIBR:
+//   ftportfolios.com es una SPA (Single Page App). Los holdings se cargan vía JavaScript
+//   (AJAX) después de que el navegador ejecuta el bundle JS. Desde Node.js (sin headless
+//   browser) solo se obtiene el shell de navegación (335KB de menús, 0 holdings).
+//
+//   Solución alternativa validada 2025-11:
+//     CIBR replica el Nasdaq CTA Cybersecurity Index (NQCYBR/NQCYBRE).
+//     Nasdaq publica la composición completa en texto plano desde:
+//       https://www.nasdaq.com/docs/NQCYBRE  (con exclusiones, versión que replica CIBR)
+//       https://www.nasdaq.com/docs/NQCYBR   (fallback)
+//     42 componentes, Name | Symbol | Weight(%) accesibles desde IPs de datacenter.
 //
 // CONDICIÓN #3 de autorización:
 //   El backend DEBE verificar que el ETF devuelto corresponde al ticker solicitado.
-//   Incidencia conocida: proxy de sesión retornó datos de QTEC en lugar de CIBR.
-//   Fix: verificar el título de la página y/o la cabecera "Fund Name" del HTML.
 // ─────────────────────────────────────────────────────────────────────────────────
 
 import https from 'https';
+import * as nasdaqIndexAdapter from './nasdaq-index.js';
+
+// Tickers que se redirigen al adapter de índices Nasdaq en lugar de ftportfolios.com
+// Razón: ftportfolios.com es JavaScript SPA — holdings no disponibles en HTML estático
+const NASDAQ_INDEX_TICKERS = new Set(['CIBR']);
 
 const FIRSTTRUST_TICKERS = new Set([
   'CIBR', 'AIQ', 'SKYY', 'JETS', 'PAVE',
@@ -29,15 +44,21 @@ export function supports(ticker) {
 }
 
 /**
- * Descarga y parsea los holdings del ETF desde ftportfolios.com.
- * Incluye verificación de identidad: lanza error si los datos corresponden
- * a un ETF diferente al solicitado.
+ * Descarga y parsea los holdings del ETF.
+ * Para CIBR usa el adapter de índices Nasdaq (ftportfolios.com es JS SPA).
+ * Para el resto usa ftportfolios.com scraping.
  *
  * @param {string} etfTicker  — Ticker del ETF (ej. "CIBR")
  * @returns {Promise<HoldingsResult>}
  */
 export async function fetchHoldings(etfTicker) {
   const ticker = etfTicker.toUpperCase();
+
+  // ── Redirigir a Nasdaq Index adapter para tickers con SPA bloqueada ──
+  if (NASDAQ_INDEX_TICKERS.has(ticker)) {
+    console.log(`[FirstTrust] ${ticker}: redirigiendo a NasdaqIndex (ftportfolios.com es JS SPA)`);
+    return nasdaqIndexAdapter.fetchHoldings(ticker);
+  }
   // Intentar primero con la URL normal, luego con Print=Y (versión impresión, más limpia)
   const urlNormal = `https://www.ftportfolios.com/Retail/Etf/EtfHoldings.aspx?Ticker=${ticker}`;
   const urlPrint  = `https://www.ftportfolios.com/Retail/Etf/EtfHoldings.aspx?Ticker=${ticker}&Print=Y`;
