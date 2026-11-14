@@ -7,7 +7,8 @@
 // GESTORAS SOPORTADAS (fase piloto):
 //   SPDR/State Street: XBI, KRE, XOP, XAR, FSTA, XRT, XLK, XLF...
 //   First Trust:       CIBR, AIQ, SKYY, JETS, PAVE
-//   VanEck:            SMH, GDX, SIL, REMX, XME
+//   VanEck:            GDX, SIL, REMX, XME, GDXJ
+//   iShares:           SOXX, IWM, IJR, IJH, EFA, EEM, HYG, LQD
 //
 // PENDIENTE (Condición #9 — KBWB):
 //   Invesco: KBWB, KIE — URL bloqueada por proxy; pendiente de resolución por IT
@@ -19,6 +20,7 @@
 import * as spdrAdapter       from './sources/spdr.js';
 import * as firstTrustAdapter from './sources/firsttrust.js';
 import * as vaneckAdapter     from './sources/vaneck.js';
+import * as iSharesAdapter    from './sources/ishares.js';
 import { getCached, setCached } from './cache.js';
 
 // Registro de adapters en orden de prioridad de verificación
@@ -26,6 +28,7 @@ const ADAPTERS = [
   spdrAdapter,
   firstTrustAdapter,
   vaneckAdapter,
+  iSharesAdapter,
 ];
 
 // Tickers pendientes (bloqueados/sin implementar)
@@ -235,7 +238,9 @@ export function getSupportedTickers() {
     // First Trust
     'CIBR', 'AIQ', 'SKYY', 'JETS', 'PAVE',
     // VanEck
-    'SMH', 'GDX', 'SIL', 'REMX', 'XME', 'GDXJ',
+    'GDX', 'SIL', 'REMX', 'XME', 'GDXJ',
+    // iShares
+    'SOXX', 'IWM', 'IJR', 'IJH', 'EFA', 'EEM', 'HYG', 'LQD',
     // Pendientes
     ...Object.keys(PENDING_TICKERS),
   ];

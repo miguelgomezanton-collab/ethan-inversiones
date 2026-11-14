@@ -15,7 +15,7 @@ on:
 
 jobs:
   pilot-test:
-    name: Pruebas piloto XBI · CIBR · SMH · GDX
+    name: Pruebas piloto XBI · CIBR · SOXX · GDX
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -55,8 +55,8 @@ jobs:
           supported = [t['ticker'] for t in tickers if t['status'] == 'supported']
           pending   = [t['ticker'] for t in tickers if t['status'] == 'pending']
           print(f'✅ Endpoint activo — {len(supported)} tickers soportados, {len(pending)} pendientes')
-          pilot = [t for t in supported if t in ['XBI','CIBR','SMH','GDX']]
-          missing = [t for t in ['XBI','CIBR','SMH','GDX'] if t not in pilot]
+          pilot = [t for t in supported if t in ['XBI','CIBR','SOXX','GDX']]
+          missing = [t for t in ['XBI','CIBR','SOXX','GDX'] if t not in pilot]
           print(f'   Piloto disponible: {pilot}')
           if missing:
               print(f'   ⚠️  Faltan en /supported: {missing}')
@@ -225,30 +225,30 @@ jobs:
               print(f'✅ CIBR OK')
           PYEOF
 
-      - name: 📊 Test SMH (VanEck — HTML estático offshore)
-        id: smh
+      - name: 📊 Test SOXX (iShares — CSV directo)
+        id: soxx
         run: |
           echo ""
           echo "════════════════════════════════════════════"
-          echo "  SMH — VanEck Semiconductor ETF"
+          echo "  SOXX — iShares Semiconductor ETF (BlackRock)"
           echo "════════════════════════════════════════════"
           START=$(date +%s%3N)
-          HTTP_CODE=$(curl -s -o /tmp/smh.json -w "%{http_code}" \
+          HTTP_CODE=$(curl -s -o /tmp/soxx.json -w "%{http_code}" \
             -H "x-vercel-protection-bypass: $BYPASS_SECRET" \
-            "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=SMH")
+            "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=SOXX")
           END=$(date +%s%3N)
           ELAPSED=$((END - START))
           echo "HTTP: $HTTP_CODE | Tiempo: ${ELAPSED}ms"
 
           if [ "$HTTP_CODE" != "200" ]; then
             echo "❌ FALLO — HTTP $HTTP_CODE (esperado 200)"
-            cat /tmp/smh.json | head -10
+            cat /tmp/soxx.json | head -10
             exit 1
           fi
 
           python3 - <<'PYEOF'
           import json, sys
-          with open('/tmp/smh.json') as f:
+          with open('/tmp/soxx.json') as f:
               d = json.load(f)
           ok = d.get('ok', False)
           holdings = d.get('holdings', [])
@@ -267,6 +267,17 @@ jobs:
           pct = 100*len(valid)//len(holdings) if holdings else 0
           print(f'')
           print(f'  → ETHAN-analizables: {len(valid)}/{len(holdings)} ({pct}%)')
+
+          # Verificar identidad: SOXX debe tener semiconductores
+          tickers_set = set(h.get('ticker','') for h in holdings)
+          soxx_expected = {'NVDA', 'AMD', 'AVGO', 'MU', 'INTC', 'AMAT', 'LRCX', 'TXN'}
+          found_soxx = tickers_set & soxx_expected
+          print(f'  → Verificación identidad SOXX: ', end='')
+          if found_soxx:
+              print(f'✅ OK (encontradas: {found_soxx})')
+          else:
+              print(f'⚠️  No se encontraron tickers esperados de SOXX ({soxx_expected})')
+
           print(f'  → Top 5 posiciones:')
           top5 = sorted(holdings, key=lambda x: x.get('weight',0), reverse=True)[:5]
           for h in top5:
@@ -284,13 +295,13 @@ jobs:
 
           if errors:
               print(f'')
-              print(f'❌ FALLO SMH:')
+              print(f'❌ FALLO SOXX:')
               for e in errors:
                   print(f'   - {e}')
               sys.exit(1)
           else:
               print(f'')
-              print(f'✅ SMH OK')
+              print(f'✅ SOXX OK')
           PYEOF
 
       - name: 📊 Test GDX (VanEck — HTML estático + normalización internacional)
@@ -389,21 +400,21 @@ jobs:
           echo ""
           XBI_STATUS="${{ steps.xbi.outcome }}"
           CIBR_STATUS="${{ steps.cibr.outcome }}"
-          SMH_STATUS="${{ steps.smh.outcome }}"
+          SOXX_STATUS="${{ steps.soxx.outcome }}"
           GDX_STATUS="${{ steps.gdx.outcome }}"
 
           icon() { [ "$1" = "success" ] && echo "✅" || echo "❌"; }
 
-          echo "  $(icon $XBI_STATUS)  XBI  (SPDR/SSGA XLSX)         → $XBI_STATUS"
-          echo "  $(icon $CIBR_STATUS)  CIBR (First Trust HTML)       → $CIBR_STATUS"
-          echo "  $(icon $SMH_STATUS)  SMH  (VanEck HTML offshore)    → $SMH_STATUS"
-          echo "  $(icon $GDX_STATUS)  GDX  (VanEck HTML + intl norm) → $GDX_STATUS"
+          echo "  $(icon $XBI_STATUS)  XBI  (SPDR/SSGA XLSX)          → $XBI_STATUS"
+          echo "  $(icon $CIBR_STATUS)  CIBR (First Trust HTML)        → $CIBR_STATUS"
+          echo "  $(icon $SOXX_STATUS)  SOXX (iShares CSV)             → $SOXX_STATUS"
+          echo "  $(icon $GDX_STATUS)  GDX  (VanEck XLSX + intl norm) → $GDX_STATUS"
           echo ""
 
           FAILED=0
           [ "$XBI_STATUS"  != "success" ] && FAILED=$((FAILED+1))
           [ "$CIBR_STATUS" != "success" ] && FAILED=$((FAILED+1))
-          [ "$SMH_STATUS"  != "success" ] && FAILED=$((FAILED+1))
+          [ "$SOXX_STATUS" != "success" ] && FAILED=$((FAILED+1))
           [ "$GDX_STATUS"  != "success" ] && FAILED=$((FAILED+1))
 
           if [ "$FAILED" -gt 0 ]; then
