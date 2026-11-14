@@ -1,0 +1,200 @@
+name: Fase2 63ETF Smoke Test
+
+"on":
+  workflow_dispatch:
+    inputs:
+      vercel_url:
+        description: 'URL de Vercel a testear'
+        required: false
+        default: ''
+
+jobs:
+  smoke-test:
+    name: Test ${{ matrix.ticker }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ticker:
+          - SOXX
+          - IGV
+          - CIBR
+          - AIQ
+          - SKYY
+          - BOTZ
+          - QTUM
+          - FDN
+          - IBB
+          - XBI
+          - IHE
+          - IHI
+          - IHF
+          - ARKG
+          - ITA
+          - XAR
+          - PAVE
+          - AIRR
+          - JETS
+          - IYT
+          - FIW
+          - PHO
+          - XRT
+          - ITB
+          - CARZ
+          - PEJ
+          - IBUY
+          - PBS
+          - PBJ
+          - FSTA
+          - KRE
+          - KBWB
+          - KIE
+          - KCE
+          - IYG
+          - BIZD
+          - PSP
+          - SOCL
+          - IYZ
+          - DTCR
+          - FINX
+          - XOP
+          - FCG
+          - TAN
+          - ICLN
+          - GRID
+          - OIH
+          - URA
+          - AMLP
+          - GDX
+          - SIL
+          - REMX
+          - XME
+          - SLX
+          - COPX
+          - LIT
+          - VNQ
+          - REET
+          - REM
+          - NLR
+          - GUNR
+          - MOO
+          - ESPO
+
+    steps:
+      - name: Test ${{ matrix.ticker }} holdings
+        id: test
+        env:
+          BYPASS: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: |
+          TICKER="${{ matrix.ticker }}"
+          BASE_URL="${{ inputs.vercel_url }}"
+          API_URL="${BASE_URL}/api/macro-rlab/etf-holdings?ticker=${TICKER}"
+
+          echo "=== Testing ${TICKER} ==="
+
+          RESPONSE=$(curl -s -w "\n__HTTP_STATUS__%{http_code}" \
+            -H "x-vercel-protection-bypass: ${BYPASS}" \
+            -H "Accept: application/json" \
+            --max-time 45 \
+            "${API_URL}" 2>&1)
+
+          HTTP_STATUS=$(echo "$RESPONSE" | grep -o '__HTTP_STATUS__[0-9]*' | sed 's/__HTTP_STATUS__//')
+          BODY=$(echo "$RESPONSE" | sed 's/__HTTP_STATUS__[0-9]*//')
+
+          echo "HTTP Status: ${HTTP_STATUS}"
+
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "❌ FAIL: HTTP ${HTTP_STATUS}"
+            echo "Response: $BODY"
+            exit 1
+          fi
+
+          PARSED=$(echo "$BODY" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    hc = d.get('holdingsCount', len(d.get('holdings', [])))
+    src = d.get('source', 'unknown')
+    ed = d.get('effectiveDate', d.get('referenceDate', 'N/A'))
+    tw = d.get('totalWeight', 'N/A')
+    ih = d.get('isHistorical', False)
+    warn = 'YES' if d.get('dataAgeWarning') else 'NO'
+    ok = d.get('ok', True)
+    sid = d.get('seriesId', 'N/A')
+    err = d.get('error', '')
+    print(f'{ok}|{hc}|{src}|{ed}|{tw}|{ih}|{warn}|{sid}|{err}')
+except Exception as e:
+    print(f'False|0|parse_error|N/A|N/A|False|NO|N/A|{e}')
+" 2>/dev/null || echo "False|0|parse_error|N/A|N/A|False|NO|N/A|parse_failed")
+
+          OK=$(echo "$PARSED" | cut -d'|' -f1)
+          HOLDINGS_COUNT=$(echo "$PARSED" | cut -d'|' -f2)
+          SOURCE=$(echo "$PARSED" | cut -d'|' -f3)
+          EFFECTIVE_DATE=$(echo "$PARSED" | cut -d'|' -f4)
+          TOTAL_WEIGHT=$(echo "$PARSED" | cut -d'|' -f5)
+          IS_HISTORICAL=$(echo "$PARSED" | cut -d'|' -f6)
+          HAS_WARNING=$(echo "$PARSED" | cut -d'|' -f7)
+          SERIES_ID=$(echo "$PARSED" | cut -d'|' -f8)
+          ERROR_MSG=$(echo "$PARSED" | cut -d'|' -f9)
+
+          if [ "$OK" = "False" ]; then
+            echo "❌ FAIL: ok=false — ${ERROR_MSG}"
+            exit 1
+          fi
+
+          if [ "$HOLDINGS_COUNT" = "0" ]; then
+            echo "❌ FAIL: holdings_count=0"
+            exit 1
+          fi
+
+          echo ""
+          echo "✅ OK | ${TICKER}"
+          echo "   Holdings:       ${HOLDINGS_COUNT}"
+          echo "   Fuente:         ${SOURCE}"
+          echo "   Fecha efectiva: ${EFFECTIVE_DATE}"
+          echo "   Peso total:     ${TOTAL_WEIGHT}%"
+          echo "   Histórico:      ${IS_HISTORICAL}"
+          echo "   Series ID:      ${SERIES_ID}"
+          echo "   Aviso antigüed: ${HAS_WARNING}"
+
+          echo "ticker=${TICKER}" >> $GITHUB_OUTPUT
+          echo "holdings_count=${HOLDINGS_COUNT}" >> $GITHUB_OUTPUT
+          echo "source=${SOURCE}" >> $GITHUB_OUTPUT
+          echo "effective_date=${EFFECTIVE_DATE}" >> $GITHUB_OUTPUT
+          echo "total_weight=${TOTAL_WEIGHT}" >> $GITHUB_OUTPUT
+          echo "is_historical=${IS_HISTORICAL}" >> $GITHUB_OUTPUT
+          echo "series_id=${SERIES_ID}" >> $GITHUB_OUTPUT
+
+      - name: Report result
+        if: always()
+        run: |
+          if [ "${{ steps.test.outcome }}" = "success" ]; then
+            echo "### ✅ ${{ matrix.ticker }} — OK" >> $GITHUB_STEP_SUMMARY
+            echo "| Campo | Valor |" >> $GITHUB_STEP_SUMMARY
+            echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Holdings | ${{ steps.test.outputs.holdings_count }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Fuente | \`${{ steps.test.outputs.source }}\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| Fecha efectiva | ${{ steps.test.outputs.effective_date }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Peso total | ${{ steps.test.outputs.total_weight }}% |" >> $GITHUB_STEP_SUMMARY
+            echo "| Histórico | ${{ steps.test.outputs.is_historical }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Series ID | ${{ steps.test.outputs.series_id }} |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ❌ ${{ matrix.ticker }} — FALLO" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  summary:
+    name: Resumen Final
+    runs-on: ubuntu-latest
+    needs: smoke-test
+    if: always()
+    steps:
+      - name: Resumen del test
+        run: |
+          echo "## 🧪 Smoke Test ETF Fase 2 — Resultado Final" >> $GITHUB_STEP_SUMMARY
+          echo "**URL testeada:** ${{ inputs.vercel_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ETFs EDGAR (CIKs verificados):" >> $GITHUB_STEP_SUMMARY
+          echo "KBWB (S000034530), TAN (S000060822), PHO (S000003048)" >> $GITHUB_STEP_SUMMARY
+          echo "PBS (S000003029), PEJ (S000003028), PSP (S000013789)" >> $GITHUB_STEP_SUMMARY
+          echo "PBJ (S000003027), KIE (S000006979), KCE (S000006978)" >> $GITHUB_STEP_SUMMARY
+          echo "AMLP, QTUM, IBUY" >> $GITHUB_STEP_SUMMARY
