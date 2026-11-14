@@ -9,6 +9,12 @@ on:
         description: 'Preview URL de Vercel (sin trailing slash)'
         required: true
         default: 'https://ethan-inversiones-jnuid0zxg-miguel-angel-s-projects2.vercel.app'
+      full_coverage:
+        description: 'Ejecutar validación completa (universo real, ~286 tickers)'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
   push:
     branches:
       - feature/etf-holdings-pilot
@@ -493,3 +499,66 @@ jobs:
       - name: Informe final de cobertura
         if: always()
         run: python3 .github/scripts/postpilot_report.py
+
+  full-coverage-validation:
+    name: "Validación completa — universo real (286 componentes)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: postpilot-validation
+    if: github.event.inputs.full_coverage == 'true'
+    env:
+      PREVIEW_URL: https://ethan-inversiones-gcnhpj7nr-miguel-angel-s-projects2.vercel.app
+      BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: "Verificar acceso Vercel"
+        run: |
+          if [ -z "$BYPASS_SECRET" ]; then
+            echo "❌ VERCEL_AUTOMATION_BYPASS_SECRET no configurado"
+            exit 1
+          fi
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "x-vercel-protection-bypass: $BYPASS_SECRET" \
+            "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=SOXX")
+          echo "HTTP status (SOXX): $HTTP"
+          if [ "$HTTP" != "200" ]; then
+            echo "❌ API no accesible (HTTP $HTTP)"
+            exit 1
+          fi
+          echo "✅ API accesible"
+
+      - name: "Descargar holdings completos — 4 ETFs"
+        run: |
+          for TICKER in XBI CIBR SOXX GDX; do
+            echo "→ Descargando $TICKER (refresh=1)..."
+            HTTP=$(curl -s -o /tmp/${TICKER}_full.json -w "%{http_code}" \
+              -H "x-vercel-protection-bypass: $BYPASS_SECRET" \
+              "${PREVIEW_URL}/api/macro-rlab/etf-holdings?ticker=${TICKER}&refresh=1")
+            echo "  HTTP $HTTP — $(python3 -c "
+          import json
+          d=json.load(open('/tmp/${TICKER}_full.json'))
+          h=d.get('holdings',[])
+          print(f\"{len(h)} holdings, peso={d.get('totalWeight','?')}%, integridad={d.get('integrityOk','?')}, fecha={d.get('date','?')}, fuente={d.get('source','?')}\")")"
+            if [ "$HTTP" != "200" ]; then
+              echo "❌ Error descargando $TICKER (HTTP $HTTP)"
+              exit 1
+            fi
+          done
+          echo "✅ Holdings descargados"
+
+      - name: "Screener ETHAN — validación universo completo"
+        run: python3 .github/scripts/full_coverage_screener.py
+
+      - name: "Publicar resultado JSON"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-coverage-result
+          path: /tmp/full_coverage_result.json
+          retention-days: 30
