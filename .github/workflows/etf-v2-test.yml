@@ -4,7 +4,7 @@ name: ETF v2 Test (63 ETFs)
   workflow_dispatch:
     inputs:
       vercel_url:
-        description: 'URL de Vercel a testear (ej. https://ethan-xxx.vercel.app)'
+        description: 'Vercel deployment URL (ej. https://ethan-xxx.vercel.app)'
         required: true
         type: string
 
