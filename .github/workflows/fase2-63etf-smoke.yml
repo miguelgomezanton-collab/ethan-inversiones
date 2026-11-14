@@ -9,7 +9,7 @@ name: Fase2 63ETF Smoke Test
         default: ''
   push:
     branches:
-      - 'NEVER-TRIGGER-BRANCH'
+      - main
 
 jobs:
   smoke-test:
@@ -91,6 +91,12 @@ jobs:
         run: |
           TICKER="${{ matrix.ticker }}"
           BASE_URL="${{ inputs.vercel_url }}"
+
+          if [ -z "$BASE_URL" ]; then
+            echo "⏭️ SKIP: vercel_url no proporcionado (ejecución por push de indexación)"
+            exit 0
+          fi
+
           API_URL="${BASE_URL}/api/macro-rlab/etf-holdings?ticker=${TICKER}"
 
           echo "=== Testing ${TICKER} ==="
