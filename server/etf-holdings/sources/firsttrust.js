@@ -236,61 +236,47 @@ function parseHoldingsTable(html, ticker) {
 }
 
 /**
- * Descarga una página HTML desde ftportfolios.com.
- * Usa cookies mínimas para evitar redirecciones a página de selección de región.
+ * Cabeceras comunes que imitan un browser real.
+ * Usadas tanto en el handshake de sesión como en la descarga de holdings.
  */
-async function fetchPage(url, ticker) {
+const BROWSER_HEADERS = {
+  'User-Agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Accept':          'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Accept-Encoding': 'identity',
+  'Connection':      'keep-alive',
+  'DNT':             '1',
+  'Upgrade-Insecure-Requests': '1',
+  'Sec-Fetch-Dest':  'document',
+  'Sec-Fetch-Mode':  'navigate',
+  'Sec-Fetch-Site':  'same-origin',
+  'Sec-Fetch-User':  '?1',
+  'sec-ch-ua':       '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+  'sec-ch-ua-mobile': '?0',
+  'sec-ch-ua-platform': '"Windows"',
+};
+
+/**
+ * Realiza una petición HTTP GET y devuelve { statusCode, headers, body }.
+ * Sigue redirecciones manualmente para preservar cookies.
+ */
+function httpGet(url, extraHeaders = {}, timeout = 15000) {
   return new Promise((resolve, reject) => {
     const reqUrl = new URL(url);
     const options = {
       hostname: reqUrl.hostname,
       path:     reqUrl.pathname + reqUrl.search,
       method:   'GET',
-      headers: {
-        'User-Agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept':          'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'identity',         // evitar gzip para simplificar chunks
-        'Connection':      'keep-alive',
-        'Referer':         'https://www.ftportfolios.com/',
-        'DNT':             '1',
-        'Upgrade-Insecure-Requests': '1',
-        'Cache-Control':   'no-cache',
-        'Pragma':          'no-cache',
-      },
-      timeout: 25000,
+      headers:  { ...BROWSER_HEADERS, ...extraHeaders },
+      timeout,
     };
 
     const req = https.request(options, (res) => {
-      if (res.statusCode === 302 || res.statusCode === 301) {
-        const redirectUrl = res.headers.location;
-        const absRedirect = redirectUrl.startsWith('http') ? redirectUrl : `https://${reqUrl.hostname}${redirectUrl}`;
-        fetchPage(absRedirect, ticker).then(resolve).catch(reject);
-        return;
-      }
-      if (res.statusCode !== 200) {
-        reject(new Error(`First Trust ${ticker}: HTTP ${res.statusCode} desde ${url}`));
-        return;
-      }
-
       const chunks = [];
       res.on('data', chunk => chunks.push(chunk));
       res.on('end', () => {
-        const html = Buffer.concat(chunks).toString('utf-8');
-        if (!html || html.length < 500) {
-          reject(new Error(`First Trust ${ticker}: respuesta HTML vacía o demasiado corta (${html.length} bytes)`));
-          return;
-        }
-        // Detectar páginas de error o redirección JS (sin tabla de datos)
-        if (html.length < 5000 && !html.includes('Holdings')) {
-          reject(new Error(
-            `First Trust ${ticker}: respuesta demasiado corta y sin tabla de holdings ` +
-            `(${html.length} bytes). Posible bloqueo de sesión/cookie. ` +
-            `URL: ${url}`
-          ));
-          return;
-        }
-        resolve(html);
+        const body = Buffer.concat(chunks).toString('utf-8');
+        resolve({ statusCode: res.statusCode, headers: res.headers, body });
       });
       res.on('error', reject);
     });
@@ -298,8 +284,103 @@ async function fetchPage(url, ticker) {
     req.on('error', reject);
     req.on('timeout', () => {
       req.destroy();
-      reject(new Error(`First Trust ${ticker}: timeout descargando página HTML (${options.timeout}ms). URL: ${url}`));
+      reject(new Error(`timeout ${timeout}ms — ${url}`));
     });
     req.end();
   });
+}
+
+/**
+ * Extrae las cookies Set-Cookie de los headers de respuesta
+ * y las devuelve como string "Cookie: ..." para reutilizar.
+ */
+function extractCookies(responseHeaders) {
+  const setCookie = responseHeaders['set-cookie'];
+  if (!setCookie || setCookie.length === 0) return '';
+  return setCookie
+    .map(c => c.split(';')[0].trim())
+    .filter(Boolean)
+    .join('; ');
+}
+
+/**
+ * Descarga una página HTML desde ftportfolios.com.
+ *
+ * Estrategia two-step para superar el bloqueo por IP de datacenter:
+ *   1. GET homepage → obtener cookies de sesión ASP.NET (__RequestVerificationToken, etc.)
+ *   2. GET holdings con esas cookies → la petición parece legítima al servidor
+ *
+ * Si el handshake falla, intenta una carga directa como fallback.
+ */
+async function fetchPage(url, ticker) {
+  // ── Paso 1: handshake de sesión en el homepage ────────────────────
+  let sessionCookies = '';
+  try {
+    const homeResp = await httpGet(
+      'https://www.ftportfolios.com/',
+      { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' },
+      10000
+    );
+    sessionCookies = extractCookies(homeResp.headers);
+    console.log(`[FirstTrust] Session handshake: HTTP ${homeResp.statusCode}, cookies: ${sessionCookies.length} chars`);
+  } catch (err) {
+    console.warn(`[FirstTrust] ${ticker}: handshake fallido (${err.message}), intentando carga directa`);
+  }
+
+  // ── Paso 2: carga de la página de holdings con cookies de sesión ──
+  const extraHeaders = {
+    'Referer':       'https://www.ftportfolios.com/',
+    'Cache-Control': 'no-cache',
+    'Pragma':        'no-cache',
+  };
+  if (sessionCookies) {
+    extraHeaders['Cookie'] = sessionCookies;
+  }
+
+  let resp;
+  try {
+    resp = await httpGet(url, extraHeaders, 25000);
+  } catch (err) {
+    throw new Error(`First Trust ${ticker}: error de red — ${err.message}. URL: ${url}`);
+  }
+
+  // Seguir redirecciones manualmente (preservando cookies)
+  if (resp.statusCode === 301 || resp.statusCode === 302) {
+    const location = resp.headers.location;
+    if (!location) throw new Error(`First Trust ${ticker}: redireccionado sin Location header`);
+    const absUrl = location.startsWith('http') ? location : `https://www.ftportfolios.com${location}`;
+    console.log(`[FirstTrust] ${ticker}: redirigido a ${absUrl}`);
+    // Acumular cookies de la redirección
+    const redirectCookies = extractCookies(resp.headers);
+    const allCookies = [sessionCookies, redirectCookies].filter(Boolean).join('; ');
+    const redirectHeaders = { ...extraHeaders };
+    if (allCookies) redirectHeaders['Cookie'] = allCookies;
+    try {
+      resp = await httpGet(absUrl, redirectHeaders, 25000);
+    } catch (err) {
+      throw new Error(`First Trust ${ticker}: error en redirección — ${err.message}. URL: ${absUrl}`);
+    }
+  }
+
+  if (resp.statusCode !== 200) {
+    throw new Error(
+      `First Trust ${ticker}: HTTP ${resp.statusCode} desde ${url}. ` +
+      `Posible bloqueo de IP de datacenter por parte de ftportfolios.com.`
+    );
+  }
+
+  const html = resp.body;
+
+  if (!html || html.length < 500) {
+    throw new Error(`First Trust ${ticker}: respuesta HTML vacía o demasiado corta (${html.length} bytes)`);
+  }
+
+  if (html.length < 5000 && !html.includes('Holdings')) {
+    throw new Error(
+      `First Trust ${ticker}: respuesta demasiado corta y sin tabla de holdings ` +
+      `(${html.length} bytes). Posible bloqueo de sesión/cookie. URL: ${url}`
+    );
+  }
+
+  return html;
 }
