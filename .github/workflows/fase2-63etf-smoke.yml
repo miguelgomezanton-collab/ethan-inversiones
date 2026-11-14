@@ -7,6 +7,9 @@ name: Fase2 63ETF Smoke Test
         description: 'URL de Vercel a testear'
         required: false
         default: ''
+  push:
+    branches:
+      - 'NEVER-TRIGGER-BRANCH'
 
 jobs:
   smoke-test:
