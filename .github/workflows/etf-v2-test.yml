@@ -5,8 +5,8 @@ name: ETF v2 Test (63 ETFs)
     inputs:
       vercel_url:
         description: 'Vercel deployment URL (ej. https://ethan-xxx.vercel.app)'
-        required: true
-        type: string
+        required: false
+        default: ''
 
 # El bypass secret se obtiene de secrets.VERCEL_AUTOMATION_BYPASS_SECRET
 # NUNCA debe introducirse manualmente — el secret del repositorio se usa automáticamente
