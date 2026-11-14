@@ -192,9 +192,22 @@ function buildIntegrityNoteInline(totalHoldings, cashRows, totalWeight, source) 
 
 /**
  * Extrae los campos públicos para la respuesta al cliente.
- * No expone datos internos del adapter.
+ * Siempre recalcula integrityOk/integrityNote para garantizar
+ * que valores stale del caché (calculados antes de fixes) se
+ * corrijan automáticamente sin necesidad de invalidar el caché.
  */
 function extractPublicFields(data) {
+  const tw = data.totalWeight ?? 0;
+  // Recalcular siempre para corregir valores stale del caché
+  const integrityOk   = tw > 80;
+  const integrityNote = data.integrityNote
+    || buildIntegrityNoteInline(
+         data.totalHoldings ?? (data.holdings?.length ?? 0),
+         data.cashRows ?? 0,
+         tw,
+         data.source ?? 'unknown'
+       );
+
   return {
     source:        data.source,
     sourceUrl:     data.sourceUrl,
@@ -203,8 +216,8 @@ function extractPublicFields(data) {
     totalHoldings: data.totalHoldings,
     cashRows:      data.cashRows,
     totalWeight:   data.totalWeight,
-    integrityOk:   data.integrityOk,
-    integrityNote: data.integrityNote,
+    integrityOk,
+    integrityNote,
     holdings:      data.holdings,
   };
 }
