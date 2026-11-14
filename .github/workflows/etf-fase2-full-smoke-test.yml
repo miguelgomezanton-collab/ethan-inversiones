@@ -124,13 +124,13 @@ jobs:
             exit 1
           fi
 
-          # Parsear campos clave con jq
+          # Parsear campos clave con jq — campos reales del handler
           OK=$(echo "$BODY" | jq -r '.ok // true' 2>/dev/null || echo "true")
-          HOLDINGS_COUNT=$(echo "$BODY" | jq -r 'if .holdingsCount then .holdingsCount else (.holdings | length) end' 2>/dev/null || echo "0")
+          HOLDINGS_COUNT=$(echo "$BODY" | jq -r '.totalHoldings // (.holdings | length) // 0' 2>/dev/null || echo "0")
           SOURCE=$(echo "$BODY" | jq -r '.source // "unknown"' 2>/dev/null || echo "unknown")
-          EFFECTIVE_DATE=$(echo "$BODY" | jq -r '.effectiveDate // .referenceDate // "N/A"' 2>/dev/null || echo "N/A")
+          EFFECTIVE_DATE=$(echo "$BODY" | jq -r '.referenceDate // .effectiveDate // "N/A"' 2>/dev/null || echo "N/A")
           TOTAL_WEIGHT=$(echo "$BODY" | jq -r '.totalWeight // "N/A"' 2>/dev/null || echo "N/A")
-          IS_HISTORICAL=$(echo "$BODY" | jq -r '.isHistorical // false' 2>/dev/null || echo "false")
+          IS_HISTORICAL=$(echo "$BODY" | jq -r '.stale // false' 2>/dev/null || echo "false")
           HAS_WARNING=$(echo "$BODY" | jq -r 'if .dataAgeWarning then "YES" else "NO" end' 2>/dev/null || echo "NO")
           SERIES_ID=$(echo "$BODY" | jq -r '.seriesId // "N/A"' 2>/dev/null || echo "N/A")
           ERROR_MSG=$(echo "$BODY" | jq -r '.error // ""' 2>/dev/null || echo "")
