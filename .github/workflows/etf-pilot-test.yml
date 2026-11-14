@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 10
 
     env:
-      PREVIEW_URL: https://ethan-inversiones-2xsgdrooe-miguel-angel-s-projects2.vercel.app
+      PREVIEW_URL: https://ethan-inversiones-hfiazd6j8-miguel-angel-s-projects2.vercel.app
       BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
     steps:
@@ -443,7 +443,7 @@ jobs:
     timeout-minutes: 20
 
     env:
-      PREVIEW_URL: https://ethan-inversiones-2xsgdrooe-miguel-angel-s-projects2.vercel.app
+      PREVIEW_URL: https://ethan-inversiones-hfiazd6j8-miguel-angel-s-projects2.vercel.app
       BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
     steps:
