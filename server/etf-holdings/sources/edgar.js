@@ -8,16 +8,21 @@
 //     advertencia de antigüedad.
 //
 // ETFs cubiertos (Fase 2 — 12 pendientes):
-//   Invesco ETF Trust II (CIK 1378872):
-//     KBWB  — Invesco KBW Bank ETF
-//     KIE   — Invesco KBW Insurance ETF
-//     KCE   — Invesco KBW Capital Markets ETF
-//     TAN   — Invesco Solar ETF
-//     PHO   — Invesco Water Resources ETF
-//     PEJ   — Invesco Dynamic Leisure and Entertainment ETF
-//     PSP   — Invesco Global Listed Private Equity ETF
-//     PBS   — Invesco Dynamic Media ETF
-//     PBJ   — Invesco Dynamic Food & Beverage ETF
+//
+//   Invesco Exchange-Traded Fund Trust II (CIK 1378872):
+//     KBWB  — Invesco KBW Bank ETF                    (Series S000034530)
+//     TAN   — Invesco Solar ETF                        (Series S000060822)
+//
+//   Invesco Exchange-Traded Fund Trust I (CIK 1209466):
+//     PHO   — Invesco Water Resources ETF              (Series S000003048)
+//     PBS   — Invesco Dynamic Media ETF                (Series S000003029)
+//     PEJ   — Invesco Dynamic Leisure and Entertainment ETF (Series S000003028)
+//     PSP   — Invesco Global Listed Private Equity ETF (Series S000013789)
+//     PBJ   — Invesco Dynamic Food & Beverage ETF      (Series S000003027)
+//
+//   SPDR Series Trust (CIK 1064642):
+//     KIE   — SPDR S&P Insurance ETF                  (Series S000006979)
+//     KCE   — SPDR S&P Capital Markets ETF            (Series S000006978)
 //
 //   ALPS ETF Trust (CIK 1414040):
 //     AMLP  — Alerian MLP ETF
@@ -26,38 +31,47 @@
 //     QTUM  — Defiance Quantum ETF
 //
 //   Amplify ETF Trust (CIK 1633061):
-//     IBUY  — Amplify Online Retail ETF (serie S000052601)
+//     IBUY  — Amplify Online Retail ETF
 //
 // Fuente: SEC EDGAR EFTS + NPORT-P XML
-//   Búsqueda: https://efts.sec.gov/LATEST/search-index?q=%22{TICKER}%22&forms=NPORT-P&dateRange=custom&startdt={90daysago}
-//   Submissions: https://data.sec.gov/submissions/CIK{cik_padded}.json
-//   Filing: https://www.sec.gov/Archives/edgar/data/{cik}/{accession}/{filename}.xml
+//   Búsqueda EFTS: https://efts.sec.gov/LATEST/search-index?q=%22{TICKER}%22&forms=NPORT-P&dateRange=custom&startdt={90daysago}
+//   Submissions:   https://data.sec.gov/submissions/CIK{cik_padded}.json
+//   Filing index:  https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type=NPORT-P&dateb=&owner=include&count=10&search_text=
 // ─────────────────────────────────────────────────────────────────────────────
 
 import https from 'https';
 
-// CIK conocidos (trust/issuer, no fondo individual)
-// El adaptador usa EFTS para encontrar el filing más reciente por ticker
-const KNOWN_CIKS = {
-  // Invesco Exchange-Traded Fund Trust II
-  KBWB: '1378872',
-  KIE:  '1378872',
-  KCE:  '1378872',
-  TAN:  '1378872',
-  PHO:  '1378872',
-  PEJ:  '1378872',
-  PSP:  '1378872',
-  PBS:  '1378872',
-  PBJ:  '1378872',
-  // ALPS ETF Trust
-  AMLP: '1414040',
-  // ETF Series Solutions
-  QTUM: '1540305',
-  // Amplify ETF Trust
-  IBUY: '1633061',
+// Mapa completo: ticker → { cik, seriesId?, entityName }
+// CIKs verificados contra SEC EDGAR (noviembre 2026)
+// seriesId: SEC Series Identifier — permite filtrar el fondo correcto dentro
+//           de un trust que contiene múltiples ETFs
+const EDGAR_ETF_MAP = {
+  // ── Invesco Exchange-Traded Fund Trust II (CIK 1378872) ──────────────────
+  KBWB: { cik: '1378872', seriesId: 'S000034530', name: 'Invesco KBW Bank ETF' },
+  TAN:  { cik: '1378872', seriesId: 'S000060822', name: 'Invesco Solar ETF' },
+
+  // ── Invesco Exchange-Traded Fund Trust I (CIK 1209466) ───────────────────
+  PHO:  { cik: '1209466', seriesId: 'S000003048', name: 'Invesco Water Resources ETF' },
+  PBS:  { cik: '1209466', seriesId: 'S000003029', name: 'Invesco Dynamic Media ETF' },
+  PEJ:  { cik: '1209466', seriesId: 'S000003028', name: 'Invesco Dynamic Leisure and Entertainment ETF' },
+  PSP:  { cik: '1209466', seriesId: 'S000013789', name: 'Invesco Global Listed Private Equity ETF' },
+  PBJ:  { cik: '1209466', seriesId: 'S000003027', name: 'Invesco Dynamic Food & Beverage ETF' },
+
+  // ── SPDR Series Trust (CIK 1064642) ─────────────────────────────────────
+  KIE:  { cik: '1064642', seriesId: 'S000006979', name: 'SPDR S&P Insurance ETF' },
+  KCE:  { cik: '1064642', seriesId: 'S000006978', name: 'SPDR S&P Capital Markets ETF' },
+
+  // ── ALPS ETF Trust (CIK 1414040) ─────────────────────────────────────────
+  AMLP: { cik: '1414040', seriesId: null, name: 'Alerian MLP ETF' },
+
+  // ── ETF Series Solutions (CIK 1540305) ───────────────────────────────────
+  QTUM: { cik: '1540305', seriesId: null, name: 'Defiance Quantum ETF' },
+
+  // ── Amplify ETF Trust (CIK 1633061) ──────────────────────────────────────
+  IBUY: { cik: '1633061', seriesId: null, name: 'Amplify Online Retail ETF' },
 };
 
-const EDGAR_TICKERS = new Set(Object.keys(KNOWN_CIKS));
+const EDGAR_TICKERS = new Set(Object.keys(EDGAR_ETF_MAP));
 
 /** Verifica si este adapter soporta el ticker */
 export function supports(ticker) {
@@ -66,47 +80,57 @@ export function supports(ticker) {
 
 /**
  * Obtiene holdings vía SEC EDGAR NPORT-P.
- * Estrategia: EFTS full-text search → accession number → parsing XML
+ * Estrategia:
+ *   1. EFTS full-text search filtrado por seriesId (si disponible)
+ *   2. Fallback: submissions JSON del CIK → primer NPORT-P que coincida
  *
  * @param {string} etfTicker  — Ticker del ETF (ej. "KBWB")
  * @returns {Promise<HoldingsResult>}
  */
 export async function fetchHoldings(etfTicker) {
   const ticker = etfTicker.toUpperCase();
-  if (!EDGAR_TICKERS.has(ticker)) {
+  const meta = EDGAR_ETF_MAP[ticker];
+  if (!meta) {
     throw new Error(`EDGAR: ticker no soportado: ${ticker}`);
   }
 
-  const cik = KNOWN_CIKS[ticker];
-
-  // 1. Buscar el NPORT-P más reciente para este ticker vía EFTS
-  const filing = await findLatestNportP(ticker, cik);
+  // 1. Buscar el NPORT-P más reciente para este ticker/serie
+  const filing = await findLatestNportP(ticker, meta);
   if (!filing) {
-    throw new Error(`EDGAR: no se encontró NPORT-P reciente para ${ticker} (CIK ${cik})`);
+    throw new Error(`EDGAR: no se encontró NPORT-P reciente para ${ticker} (CIK ${meta.cik})`);
   }
 
   // 2. Descargar y parsear el XML del filing
-  const holdings = await parseNportPFiling(filing, ticker, cik);
-  return holdings;
+  return parseNportPFiling(filing, ticker, meta);
 }
 
 /**
  * Busca el NPORT-P más reciente para el ticker dado.
- * Usa EFTS full-text search primero; fallback a submissions JSON.
+ * Para trusts con múltiples ETFs, filtra por seriesId para obtener el fondo correcto.
  */
-async function findLatestNportP(ticker, cik) {
+async function findLatestNportP(ticker, meta) {
+  const { cik, seriesId } = meta;
+
   // Calcular fecha de inicio: 90 días atrás
   const startDate = new Date();
   startDate.setDate(startDate.getDate() - 90);
   const startdt = startDate.toISOString().slice(0, 10);
 
   // Intentar EFTS full-text search
+  // Si tenemos seriesId, filtramos directamente por él para evitar cruces entre fondos del mismo trust
   try {
-    const eftsUrl = `https://efts.sec.gov/LATEST/search-index?q=%22${ticker}%22&forms=NPORT-P&dateRange=custom&startdt=${startdt}&_source=period_of_report,file_date,accession_no,entity_name,period_of_report`;
+    let eftsUrl;
+    if (seriesId) {
+      // Filtro preciso: buscar el seriesId exacto en filings NPORT-P de este CIK
+      eftsUrl = `https://efts.sec.gov/LATEST/search-index?q=%22${seriesId}%22&forms=NPORT-P&dateRange=custom&startdt=${startdt}&entity=${cik}&_source=period_of_report,file_date,accession_no,entity_name,period_of_report,series_id`;
+    } else {
+      // Fallback: buscar por ticker en texto del filing
+      eftsUrl = `https://efts.sec.gov/LATEST/search-index?q=%22${ticker}%22&forms=NPORT-P&dateRange=custom&startdt=${startdt}&entity=${cik}&_source=period_of_report,file_date,accession_no,entity_name,period_of_report,series_id`;
+    }
+
     const eftsData = await fetchJson(eftsUrl);
 
     if (eftsData?.hits?.hits?.length > 0) {
-      // Ordenar por fecha descendente y tomar el más reciente
       const hits = eftsData.hits.hits
         .filter(h => h._source?.accession_no)
         .sort((a, b) => {
@@ -120,25 +144,27 @@ async function findLatestNportP(ticker, cik) {
         return {
           accessionNo: hit.accession_no,
           periodOfReport: hit.period_of_report || hit.file_date,
-          entityName: hit.entity_name,
+          entityName: hit.entity_name || meta.name,
           cik,
+          seriesId,
           source: 'efts',
         };
       }
     }
   } catch (err) {
-    // EFTS falló, intentar submissions
     console.warn(`EDGAR EFTS falló para ${ticker}: ${err.message} — intentando submissions JSON`);
   }
 
   // Fallback: submissions JSON del CIK
-  return findLatestNportPFromSubmissions(ticker, cik);
+  return findLatestNportPFromSubmissions(ticker, meta);
 }
 
 /**
  * Busca el NPORT-P más reciente desde el submissions JSON del CIK.
+ * Para trusts con múltiples series, intenta filtrar por seriesId en los reportes.
  */
-async function findLatestNportPFromSubmissions(ticker, cik) {
+async function findLatestNportPFromSubmissions(ticker, meta) {
+  const { cik, seriesId } = meta;
   const paddedCik = cik.padStart(10, '0');
   const submissionsUrl = `https://data.sec.gov/submissions/CIK${paddedCik}.json`;
   const data = await fetchJson(submissionsUrl);
@@ -147,76 +173,96 @@ async function findLatestNportPFromSubmissions(ticker, cik) {
     throw new Error(`EDGAR: no se encontraron filings para CIK ${cik}`);
   }
 
-  const { form, accessionNumber, reportDate, filingDate } = data.filings.recent;
+  const { form, accessionNumber, reportDate, filingDate, series: seriesArr } = data.filings.recent;
   if (!form || !accessionNumber) {
     throw new Error(`EDGAR: estructura de submissions inesperada para CIK ${cik}`);
   }
 
-  // Buscar el NPORT-P más reciente
+  // Si tenemos seriesId, buscar el NPORT-P de esa serie concreta
   for (let i = 0; i < form.length; i++) {
-    if (form[i] === 'NPORT-P') {
-      return {
-        accessionNo: accessionNumber[i],
-        periodOfReport: reportDate?.[i] || filingDate?.[i],
-        entityName: data.name,
-        cik,
-        source: 'submissions',
-      };
+    if (form[i] !== 'NPORT-P') continue;
+
+    // Verificar si el filing corresponde a nuestra serie
+    if (seriesId && seriesArr && seriesArr[i] && seriesArr[i] !== seriesId) {
+      continue; // Pertenece a otra serie del mismo trust
     }
+
+    return {
+      accessionNo: accessionNumber[i],
+      periodOfReport: reportDate?.[i] || filingDate?.[i],
+      entityName: data.name,
+      cik,
+      seriesId,
+      source: 'submissions',
+    };
   }
 
-  throw new Error(`EDGAR: no se encontró NPORT-P en submissions para CIK ${cik}`);
+  throw new Error(`EDGAR: no se encontró NPORT-P en submissions para ${ticker} (CIK ${cik}, serie ${seriesId || 'N/A'})`);
 }
 
 /**
  * Descarga el índice del filing y parsea el XML de posiciones.
  */
-async function parseNportPFiling(filing, ticker, cik) {
+async function parseNportPFiling(filing, ticker, meta) {
   const { accessionNo, periodOfReport, entityName } = filing;
+  const { cik } = meta;
 
   // Construir URL del índice del filing
   const accessionFormatted = accessionNo.replace(/-/g, '');
-  const indexUrl = `https://www.sec.gov/Archives/edgar/data/${cik}/${accessionFormatted}/${accessionNo}-index.htm`;
 
-  // Obtener el nombre del archivo XML principal
-  let xmlFilename;
+  // Obtener el nombre del archivo XML principal desde el índice
+  let xmlFilename = null;
   try {
+    const indexUrl = `https://www.sec.gov/Archives/edgar/data/${cik}/${accessionFormatted}/${accessionNo}-index.htm`;
     const indexHtml = await fetchText(indexUrl);
-    // Buscar el archivo .xml del NPORT-P (suele llamarse nport*.xml o similar)
+    // Buscar archivos XML en el índice (NPORT-P suele llamarse primary_doc.xml o similar)
     const xmlMatch = indexHtml.match(/href="([^"]*\.xml)"/i);
     if (xmlMatch) {
       xmlFilename = xmlMatch[1].split('/').pop();
     }
   } catch {
-    // Si el índice falla, intentar nombre canónico
-    xmlFilename = null;
+    // Continuar con nombre canónico
   }
 
-  // Si no encontramos el nombre, construir URL alternativa
-  let xmlUrl;
-  if (xmlFilename) {
-    xmlUrl = `https://www.sec.gov/Archives/edgar/data/${cik}/${accessionFormatted}/${xmlFilename}`;
-  } else {
-    // Muchos NPORT-P tienen el accession number como nombre base
-    xmlUrl = `https://www.sec.gov/Archives/edgar/data/${cik}/${accessionFormatted}/primary_doc.xml`;
-  }
+  // URL del XML
+  const xmlUrl = xmlFilename
+    ? `https://www.sec.gov/Archives/edgar/data/${cik}/${accessionFormatted}/${xmlFilename}`
+    : `https://www.sec.gov/Archives/edgar/data/${cik}/${accessionFormatted}/primary_doc.xml`;
 
   const xmlText = await fetchText(xmlUrl);
-  return parseNportXml(xmlText, ticker, periodOfReport, entityName, accessionNo);
+  return parseNportXml(xmlText, ticker, periodOfReport, entityName || meta.name, accessionNo, meta);
 }
 
 /**
  * Parsea el XML de NPORT-P y extrae holdings.
  * El XML de NPORT-P contiene elementos <invstOrSec> con los valores de posición.
+ *
+ * Para trusts con múltiples series en un mismo filing XML, busca primero
+ * la sección correspondiente al seriesId correcto.
  */
-function parseNportXml(xmlText, ticker, periodOfReport, entityName, accessionNo) {
-  const holdings = [];
+function parseNportXml(xmlText, ticker, periodOfReport, entityName, accessionNo, meta) {
+  // Si el XML contiene múltiples series (Invesco Trust I/II), intentar aislar la sección
+  // del fondo correcto usando el nombre del ETF o el seriesId
+  let workingXml = xmlText;
 
-  // Extraer elementos <invstOrSec> (investment or security)
+  if (meta.seriesId) {
+    // Intentar localizar el bloque <seriesInfo> o <series> para esta serie
+    // y limitar el parsing al bloque de invstOrSec siguiente
+    const seriesPattern = new RegExp(
+      `<seriesId>[^<]*${meta.seriesId}[^<]*<\\/seriesId>[\\s\\S]*?(?=<seriesId>|$)`,
+      'i'
+    );
+    const seriesMatch = xmlText.match(seriesPattern);
+    if (seriesMatch) {
+      workingXml = seriesMatch[0];
+    }
+  }
+
+  const holdings = [];
   const invstRegex = /<invstOrSec>([\s\S]*?)<\/invstOrSec>/gi;
   let match;
 
-  while ((match = invstRegex.exec(xmlText)) !== null) {
+  while ((match = invstRegex.exec(workingXml)) !== null) {
     const block = match[1];
     const name     = extractXmlField(block, 'name') || extractXmlField(block, 'issuerName') || '';
     const cusip    = extractXmlField(block, 'cusip') || '';
@@ -224,8 +270,7 @@ function parseNportXml(xmlText, ticker, periodOfReport, entityName, accessionNo)
     const lei      = extractXmlField(block, 'lei') || '';
     const pctVal   = parseFloat(extractXmlField(block, 'pctVal') || '0');
     const valUSD   = parseFloat(extractXmlField(block, 'valUSD') || extractXmlField(block, 'val') || '0');
-    // ticker del holding (puede no existir para todos los valores)
-    const holdingTicker = extractXmlField(block, 'ticker') || extractXmlField(block, 'identifiers/ticker') || '';
+    const holdingTicker = extractXmlField(block, 'ticker') || '';
 
     if (!name) continue;
     if (pctVal === 0 && valUSD === 0) continue;
@@ -233,8 +278,8 @@ function parseNportXml(xmlText, ticker, periodOfReport, entityName, accessionNo)
     holdings.push({
       ticker:   holdingTicker.toUpperCase() || null,
       name,
-      weight:   pctVal,          // % del portfolio
-      value:    valUSD,          // valor en USD
+      weight:   pctVal,
+      value:    valUSD,
       cusip,
       isin,
       lei,
@@ -245,11 +290,8 @@ function parseNportXml(xmlText, ticker, periodOfReport, entityName, accessionNo)
     throw new Error(`EDGAR: no se encontraron posiciones en el XML para ${ticker} (accession: ${accessionNo})`);
   }
 
-  // Calcular fecha efectiva y advertencia de antigüedad
   const effectiveDate = periodOfReport || 'desconocida';
   const ageWarning = buildAgeWarning(effectiveDate);
-
-  // Suma total de pesos (debería ser ~100%)
   const totalWeight = holdings.reduce((s, h) => s + h.weight, 0);
 
   return {
@@ -258,18 +300,18 @@ function parseNportXml(xmlText, ticker, periodOfReport, entityName, accessionNo)
     totalWeight: Math.round(totalWeight * 100) / 100,
     holdingsCount: holdings.length,
     source: 'SEC EDGAR NPORT-P',
-    sourceUrl: `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${KNOWN_CIKS[ticker]}&type=NPORT-P&dateb=&owner=include&count=10`,
+    sourceUrl: `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${meta.cik}&type=NPORT-P&dateb=&owner=include&count=10`,
     isHistorical: true,
     effectiveDate,
     dataAgeWarning: ageWarning,
     entityName,
     accessionNo,
+    seriesId: meta.seriesId || null,
   };
 }
 
 /** Extrae el texto de un tag XML simple */
 function extractXmlField(xml, tag) {
-  // Manejar tanto <tag> como <ns:tag>
   const pattern = new RegExp(`<(?:[^:>]+:)?${tag}[^>]*>([^<]*)<\\/(?:[^:>]+:)?${tag}>`, 'i');
   const m = xml.match(pattern);
   return m ? m[1].trim() : null;
@@ -327,7 +369,6 @@ function fetchText(url) {
       timeout: 20000,
     }, (res) => {
       if (res.statusCode === 302 || res.statusCode === 301) {
-        // Seguir redirect
         return fetchText(res.headers.location).then(resolve).catch(reject);
       }
       if (res.statusCode !== 200) {

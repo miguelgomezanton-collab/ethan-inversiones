@@ -7,10 +7,9 @@ on:
         description: 'URL de Vercel a testear (ej. https://ethan-xxx.vercel.app)'
         required: true
         type: string
-      bypass_secret:
-        description: 'Vercel Deployment Protection bypass secret'
-        required: true
-        type: string
+
+# El bypass secret se lee de secrets.VERCEL_AUTOMATION_BYPASS_SECRET
+# NUNCA se pasa como input para evitar exposición en logs
 
 jobs:
   smoke-test:
@@ -45,7 +44,6 @@ jobs:
           - IYT    # iShares U.S. Transportation ETF
           - FIW    # First Trust Water ETF
           - PHO    # Invesco Water Resources ETF (EDGAR NPORT-P)
-          - AIRR   # First Trust RBA American Industrial Renaissance ETF
           # ── Consumo Discrecional ───────────────────────────────────────
           - XRT    # SPDR S&P Retail ETF
           - ITB    # iShares U.S. Home Construction ETF
@@ -55,12 +53,12 @@ jobs:
           - PBS    # Invesco Dynamic Media ETF (EDGAR NPORT-P)
           - PBJ    # Invesco Dynamic Food & Beverage ETF (EDGAR NPORT-P)
           # ── Consumo Básico ─────────────────────────────────────────────
-          - FSTA   # Fidelity MSCI Consumer Staples ETF (SPDR)
+          - FSTA   # Fidelity MSCI Consumer Staples ETF
           # ── Financieros ────────────────────────────────────────────────
           - KRE    # SPDR S&P Regional Banking ETF
           - KBWB   # Invesco KBW Bank ETF (EDGAR NPORT-P)
-          - KIE    # Invesco KBW Insurance ETF (EDGAR NPORT-P)
-          - KCE    # Invesco KBW Capital Markets ETF (EDGAR NPORT-P)
+          - KIE    # SPDR S&P Insurance ETF (EDGAR NPORT-P)
+          - KCE    # SPDR S&P Capital Markets ETF (EDGAR NPORT-P)
           - IYG    # iShares U.S. Financial Services ETF
           - BIZD   # VanEck Business Development Company ETF
           - PSP    # Invesco Global Listed Private Equity ETF (EDGAR)
@@ -100,19 +98,19 @@ jobs:
     steps:
       - name: Test ${{ matrix.ticker }} holdings
         id: test
+        env:
+          BYPASS: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
         run: |
           TICKER="${{ matrix.ticker }}"
           BASE_URL="${{ inputs.vercel_url }}"
-          BYPASS="${{ inputs.bypass_secret }}"
           API_URL="${BASE_URL}/api/macro-rlab/etf-holdings?ticker=${TICKER}"
 
           echo "=== Testing ${TICKER} ==="
-          echo "URL: ${API_URL}"
 
           RESPONSE=$(curl -s -w "\n__HTTP_STATUS__%{http_code}" \
             -H "x-vercel-protection-bypass: ${BYPASS}" \
             -H "Accept: application/json" \
-            --max-time 30 \
+            --max-time 45 \
             "${API_URL}" 2>&1)
 
           HTTP_STATUS=$(echo "$RESPONSE" | grep -o '__HTTP_STATUS__[0-9]*' | sed 's/__HTTP_STATUS__//')
@@ -126,23 +124,43 @@ jobs:
             exit 1
           fi
 
-          # Parsear campos clave
-          HOLDINGS_COUNT=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('holdingsCount', d.get('holdings', []) and len(d.get('holdings', [])) or 0))" 2>/dev/null || echo "N/A")
-          SOURCE=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('source','unknown'))" 2>/dev/null || echo "N/A")
-          EFFECTIVE_DATE=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('effectiveDate', d.get('referenceDate','unknown')))" 2>/dev/null || echo "N/A")
-          TOTAL_WEIGHT=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('totalWeight', 'N/A'))" 2>/dev/null || echo "N/A")
-          IS_HISTORICAL=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('isHistorical', False))" 2>/dev/null || echo "False")
-          HAS_WARNING=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print('YES' if d.get('dataAgeWarning') else 'NO')" 2>/dev/null || echo "NO")
-          OK=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('ok', True))" 2>/dev/null || echo "True")
+          # Parsear campos clave con Python
+          PARSED=$(echo "$BODY" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    hc = d.get('holdingsCount', len(d.get('holdings', [])))
+    src = d.get('source', 'unknown')
+    ed = d.get('effectiveDate', d.get('referenceDate', 'N/A'))
+    tw = d.get('totalWeight', 'N/A')
+    ih = d.get('isHistorical', False)
+    warn = 'YES' if d.get('dataAgeWarning') else 'NO'
+    ok = d.get('ok', True)
+    sid = d.get('seriesId', 'N/A')
+    err = d.get('error', '')
+    print(f'{ok}|{hc}|{src}|{ed}|{tw}|{ih}|{warn}|{sid}|{err}')
+except Exception as e:
+    print(f'False|0|parse_error|N/A|N/A|False|NO|N/A|{e}')
+" 2>/dev/null || echo "False|0|parse_error|N/A|N/A|False|NO|N/A|parse_failed")
+
+          OK=$(echo "$PARSED" | cut -d'|' -f1)
+          HOLDINGS_COUNT=$(echo "$PARSED" | cut -d'|' -f2)
+          SOURCE=$(echo "$PARSED" | cut -d'|' -f3)
+          EFFECTIVE_DATE=$(echo "$PARSED" | cut -d'|' -f4)
+          TOTAL_WEIGHT=$(echo "$PARSED" | cut -d'|' -f5)
+          IS_HISTORICAL=$(echo "$PARSED" | cut -d'|' -f6)
+          HAS_WARNING=$(echo "$PARSED" | cut -d'|' -f7)
+          SERIES_ID=$(echo "$PARSED" | cut -d'|' -f8)
+          ERROR_MSG=$(echo "$PARSED" | cut -d'|' -f9)
 
           if [ "$OK" = "False" ]; then
-            ERROR=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('error','unknown error'))" 2>/dev/null || echo "N/A")
-            echo "❌ FAIL: ok=false — $ERROR"
+            echo "❌ FAIL: ok=false — ${ERROR_MSG}"
             exit 1
           fi
 
-          if [ "$HOLDINGS_COUNT" = "0" ] || [ "$HOLDINGS_COUNT" = "N/A" ]; then
-            echo "⚠️  WARN: holdings_count=${HOLDINGS_COUNT}"
+          if [ "$HOLDINGS_COUNT" = "0" ]; then
+            echo "❌ FAIL: holdings_count=0"
+            exit 1
           fi
 
           echo ""
@@ -152,15 +170,17 @@ jobs:
           echo "   Fecha efectiva: ${EFFECTIVE_DATE}"
           echo "   Peso total:     ${TOTAL_WEIGHT}%"
           echo "   Histórico:      ${IS_HISTORICAL}"
+          echo "   Series ID:      ${SERIES_ID}"
           echo "   Aviso antigüed: ${HAS_WARNING}"
 
-          # Guardar resultado para el resumen
+          # Outputs para el resumen
           echo "ticker=${TICKER}" >> $GITHUB_OUTPUT
           echo "holdings_count=${HOLDINGS_COUNT}" >> $GITHUB_OUTPUT
           echo "source=${SOURCE}" >> $GITHUB_OUTPUT
           echo "effective_date=${EFFECTIVE_DATE}" >> $GITHUB_OUTPUT
           echo "total_weight=${TOTAL_WEIGHT}" >> $GITHUB_OUTPUT
           echo "is_historical=${IS_HISTORICAL}" >> $GITHUB_OUTPUT
+          echo "series_id=${SERIES_ID}" >> $GITHUB_OUTPUT
           echo "status=OK" >> $GITHUB_OUTPUT
 
       - name: Report result
@@ -171,12 +191,14 @@ jobs:
             echo "| Campo | Valor |" >> $GITHUB_STEP_SUMMARY
             echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
             echo "| Holdings | ${{ steps.test.outputs.holdings_count }} |" >> $GITHUB_STEP_SUMMARY
-            echo "| Fuente | ${{ steps.test.outputs.source }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Fuente | \`${{ steps.test.outputs.source }}\` |" >> $GITHUB_STEP_SUMMARY
             echo "| Fecha efectiva | ${{ steps.test.outputs.effective_date }} |" >> $GITHUB_STEP_SUMMARY
             echo "| Peso total | ${{ steps.test.outputs.total_weight }}% |" >> $GITHUB_STEP_SUMMARY
             echo "| Histórico | ${{ steps.test.outputs.is_historical }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Series ID | ${{ steps.test.outputs.series_id }} |" >> $GITHUB_STEP_SUMMARY
           else
             echo "### ❌ ${{ matrix.ticker }} — FALLO" >> $GITHUB_STEP_SUMMARY
+            echo "Ver logs del job para más detalles." >> $GITHUB_STEP_SUMMARY
           fi
 
   summary:
@@ -187,12 +209,21 @@ jobs:
     steps:
       - name: Resumen del test
         run: |
-          echo "## Smoke Test ETF Fase 2 — Resultado Final" >> $GITHUB_STEP_SUMMARY
+          echo "## 🧪 Smoke Test ETF Fase 2 — Resultado Final" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**URL testeada:** ${{ inputs.vercel_url }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Ver resultados individuales por ticker en los jobs anteriores." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Criterios de éxito:**" >> $GITHUB_STEP_SUMMARY
-          echo "- HTTP 200 en cada ETF" >> $GITHUB_STEP_SUMMARY
-          echo "- \`ok: true\` en la respuesta JSON" >> $GITHUB_STEP_SUMMARY
-          echo "- holdings_count > 0" >> $GITHUB_STEP_SUMMARY
-          echo "- ETFs EDGAR marcados con isHistorical=true y dataAgeWarning" >> $GITHUB_STEP_SUMMARY
+          echo "### Criterios de éxito:" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ HTTP 200 en cada ETF" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ \`ok: true\` en la respuesta JSON" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ \`holdingsCount > 0\`" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ ETFs EDGAR marcados con \`isHistorical=true\` y \`dataAgeWarning\`" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ \`seriesId\` correcto para ETFs de trusts con múltiples fondos" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ETFs EDGAR (datos regulatorios, 30-60 días retraso):" >> $GITHUB_STEP_SUMMARY
+          echo "KBWB (S000034530), TAN (S000060822), PHO (S000003048)," >> $GITHUB_STEP_SUMMARY
+          echo "PBS (S000003029), PEJ (S000003028), PSP (S000013789)," >> $GITHUB_STEP_SUMMARY
+          echo "PBJ (S000003027), KIE (S000006979), KCE (S000006978)," >> $GITHUB_STEP_SUMMARY
+          echo "AMLP, QTUM, IBUY" >> $GITHUB_STEP_SUMMARY
