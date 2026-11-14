@@ -46,6 +46,91 @@ export function supports(ticker) {
 }
 
 /**
+ * DIAGNÓSTICO TEMPORAL: Retorna texto extraído del PDF sin parsear holdings.
+ * Usado para depurar el parser cuando falla.
+ * DELETE antes de ir a producción.
+ */
+export async function debugPdfText(etfTicker) {
+  const ticker = etfTicker.toUpperCase();
+  const indexTickers = ETF_TO_INDEX[ticker];
+  if (!indexTickers) throw new Error(`ticker no soportado: ${ticker}`);
+
+  const indexTicker = indexTickers[0];
+  const url = `https://www.nasdaq.com/docs/${indexTicker}`;
+  const rawBuffer = await fetchRawBuffer(url, ticker);
+
+  const magic = rawBuffer.slice(0, 8).toString('ascii');
+  const isPdf = magic.startsWith('%PDF');
+
+  if (!isPdf) {
+    const text = rawBuffer.toString('utf-8');
+    return { isPdf: false, magic, size: rawBuffer.length, textSample: text.slice(0, 2000) };
+  }
+
+  // Buscar streams y extraer samples
+  const STREAM_MARKER    = Buffer.from('stream');
+  const ENDSTREAM_MARKER = Buffer.from('endstream');
+  const FLATEDECODE      = Buffer.from('FlateDecode');
+
+  const streamSamples = [];
+  let searchPos = 0;
+  while (searchPos < rawBuffer.length && streamSamples.length < 3) {
+    const streamIdx = rawBuffer.indexOf(STREAM_MARKER, searchPos);
+    if (streamIdx === -1) break;
+
+    const lookback = rawBuffer.slice(Math.max(0, streamIdx - 500), streamIdx);
+    const hasFlateDecode = lookback.indexOf(FLATEDECODE) !== -1;
+
+    let dataStart = streamIdx + 6;
+    if (rawBuffer[dataStart] === 0x0D) dataStart++;
+    if (rawBuffer[dataStart] === 0x0A) dataStart++;
+    else { searchPos = dataStart; continue; }
+
+    const endIdx = rawBuffer.indexOf(ENDSTREAM_MARKER, dataStart);
+    if (endIdx === -1) { searchPos = dataStart; continue; }
+
+    const streamBytes = rawBuffer.slice(dataStart, endIdx);
+
+    let decompressed = null;
+    let method = '';
+    const syncFns = [['inflate', zlib.inflateSync], ['inflateRaw', zlib.inflateRawSync], ['gunzip', zlib.gunzipSync]];
+    for (const [name, fn] of syncFns) {
+      try { decompressed = fn(streamBytes); method = name; break; } catch (_) {}
+    }
+
+    if (decompressed) {
+      const text = decompressed.toString('latin1');
+      // Extraer primeras hex strings
+      const hexMatches = [...text.matchAll(/<([0-9A-Fa-f]{4,})>\s*(?:Tj|'|"|\[)/g)].slice(0, 5);
+      const hexSamples = hexMatches.map(m => m[1].slice(0, 40));
+      streamSamples.push({
+        idx: streamSamples.length,
+        hasFlateDecode,
+        method,
+        compressedSize: streamBytes.length,
+        decompressedSize: decompressed.length,
+        textSample: text.slice(0, 300),
+        hexSamples,
+      });
+    }
+
+    searchPos = endIdx + 9;
+  }
+
+  // También texto completo extraído
+  const fullText = await extractPdfText(rawBuffer, ticker);
+
+  return {
+    isPdf: true,
+    magic,
+    size: rawBuffer.length,
+    streamSamples,
+    extractedTextLength: fullText.length,
+    extractedTextSample: fullText.slice(0, 1000),
+  };
+}
+
+/**
  * Descarga y parsea los holdings del ETF desde la API de composición de índices de Nasdaq.
  *
  * @param {string} etfTicker  — Ticker del ETF (ej. "CIBR")

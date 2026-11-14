@@ -37,6 +37,17 @@ export default async function etfHoldingsHandler(req, res) {
   const ticker       = rawTicker.toUpperCase();
   const forceRefresh = req.query.refresh === '1' || req.query.refresh === 'true';
 
+  // ── Endpoint de diagnóstico PDF (TEMPORAL — eliminar antes de producción) ──
+  if (req.query.debug === 'pdf') {
+    try {
+      const { debugPdfText } = await import('../etf-holdings/sources/nasdaq-index.js');
+      const debugResult = await debugPdfText(ticker);
+      return res.status(200).json({ ok: true, debug: true, ...debugResult });
+    } catch (err) {
+      return res.status(500).json({ ok: false, debug: true, error: err.message });
+    }
+  }
+
   console.log(`[etf-holdings] GET /${ticker}${forceRefresh ? ' (force refresh)' : ''}`);
 
   // ── Obtener holdings (caché o descarga) ───────────────────────────
