@@ -200,9 +200,19 @@ function parseHoldingsTable(html, ticker) {
   }
 
   if (!holdingsTable || !headerCols) {
+    // Diagnóstico detallado — incluir fragmento del HTML en el error
+    const snippet   = html.substring(0, 800).replace(/\s+/g, ' ').trim();
+    const allThs    = [...html.matchAll(/<th[^>]*>([\s\S]{0,60}?)<\/th>/gi)]
+                       .map(m => m[1].replace(/<[^>]+>/g,'').trim())
+                       .slice(0, 15)
+                       .join(' | ');
+    const titleM    = html.match(/<title[^>]*>([\s\S]{0,120}?)<\/title>/i);
+    const pageTitle = titleM ? titleM[1].trim() : '(sin título)';
     throw new Error(
       `First Trust ${ticker}: no se encontró tabla con columnas Ticker/Weight. ` +
-      `¿Cambió la estructura de la página?`
+      `HTML: ${html.length} bytes | título: "${pageTitle}" | ` +
+      `th encontrados: [${allThs || 'ninguno'}] | ` +
+      `fragmento: ${snippet.substring(0, 300)}`
     );
   }
 
