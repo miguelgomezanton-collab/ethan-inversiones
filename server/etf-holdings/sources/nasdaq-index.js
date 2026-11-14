@@ -408,14 +408,39 @@ function decodePdfString(s) {
     .replace(/\\(\d{3})/g, (_, oct) => String.fromCharCode(parseInt(oct, 8)));
 }
 
-/** Convierte hex string PDF a texto ASCII/Latin-1 */
+/**
+ * Convierte hex string PDF a texto.
+ * Los PDFs modernos con CIDFont usan UTF-16BE (2 bytes por carácter),
+ * por eso cada 4 hex chars = 1 carácter. También soporta Latin-1 (2 hex = 1 char).
+ */
 function hexToText(hex) {
-  if (!hex || hex.length % 2 !== 0) return '';
+  if (!hex || hex.length < 2) return '';
+  // Pad a longitud par
+  if (hex.length % 2 !== 0) hex = '0' + hex;
+
+  // Detectar si es UTF-16BE: BOM 0xFEFF al inicio o si tiene muchos bytes nulos
+  const isUtf16 = hex.startsWith('FEFF') || hex.startsWith('feff') ||
+    // Heurística: si muchos pares son '00' (byte alto de ASCII en UTF-16BE)
+    (hex.length >= 8 && (hex.slice(0,2) === '00' || hex.slice(2,4) === '00'));
+
+  if (isUtf16) {
+    // UTF-16BE: cada 4 hex chars = 1 codepoint de 2 bytes
+    const start = hex.startsWith('FEFF') || hex.startsWith('feff') ? 4 : 0;
+    let result = '';
+    for (let i = start; i < hex.length - 2; i += 4) {
+      const code = parseInt(hex.slice(i, i + 4), 16);
+      if (code >= 32) result += String.fromCharCode(code);
+      else if (code === 0x000A || code === 0x000D) result += '\n';
+    }
+    return result;
+  }
+
+  // Latin-1 / Windows-1252: cada 2 hex chars = 1 byte
   let result = '';
   for (let i = 0; i < hex.length; i += 2) {
     const code = parseInt(hex.slice(i, i + 2), 16);
     if (code >= 32 && code < 127) result += String.fromCharCode(code);
-    else if (code === 0) continue; // null byte en UTF-16 → skip
+    else if (code === 0) continue;
     else result += ' ';
   }
   return result;
