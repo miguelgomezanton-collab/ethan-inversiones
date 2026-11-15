@@ -1,0 +1,37 @@
+name: ETF EDGAR XML Tags Debug
+
+on:
+  workflow_dispatch:
+    inputs:
+      cik:
+        description: 'CIK'
+        required: true
+        default: '1329377'
+      accession:
+        description: 'AccessionNo'
+        required: true
+        default: '0000940400-26-033095'
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Show XML tags structure
+        run: |
+          CIK="${{ github.event.inputs.cik }}"
+          ACC="${{ github.event.inputs.accession }}"
+          ACCF="${ACC//-/}"
+          URL="https://www.sec.gov/Archives/edgar/data/${CIK}/${ACCF}/primary_doc.xml"
+          
+          XML=$(curl -s "$URL" -A "Mozilla/5.0 (compatible; research@sec.gov)")
+          
+          echo "=== Tags con ángulo ==="
+          echo "$XML" | grep -oE '</?invstOrSec[^>]*>' | head -6
+          
+          echo ""
+          echo "=== Primeros 500 chars del XML ==="
+          echo "${XML:0:500}"
+          
+          echo ""
+          echo "=== Context alrededor del primer invstOrSec ==="
+          echo "$XML" | grep -o '.\{0,100\}invstOrSec.\{0,100\}' | head -3
