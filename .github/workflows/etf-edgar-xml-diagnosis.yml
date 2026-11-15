@@ -1,0 +1,66 @@
+name: ETF EDGAR XML Diagnosis
+
+on:
+  workflow_dispatch:
+    inputs:
+      ticker:
+        description: 'Ticker del ETF'
+        required: true
+        default: 'FDN'
+      cik:
+        description: 'CIK del emisor'
+        required: true
+        default: '1329377'
+      accession:
+        description: 'AccessionNo (con guiones, ej 0000940400-26-033095)'
+        required: true
+        default: '0000940400-26-033095'
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Diagnose XML structure
+        run: |
+          CIK="${{ github.event.inputs.cik }}"
+          ACCESSION="${{ github.event.inputs.accession }}"
+          TICKER="${{ github.event.inputs.ticker }}"
+          ACCESSION_FMT="${ACCESSION//-/}"
+          
+          echo "=== Diagnosticando $TICKER ==="
+          echo "CIK: $CIK"
+          echo "AccessionNo: $ACCESSION"
+          echo "AccessionFormatted: $ACCESSION_FMT"
+          echo ""
+          
+          # 1. Obtener el índice del filing
+          INDEX_URL="https://www.sec.gov/Archives/edgar/data/${CIK}/${ACCESSION_FMT}/${ACCESSION}-index.htm"
+          echo "--- Índice del filing ---"
+          echo "URL: $INDEX_URL"
+          curl -s "$INDEX_URL" -A "Mozilla/5.0 (compatible; research@sec.gov)" | \
+            grep -oE 'href="[^"]*\.(xml|XML)"' | head -10 || echo "(no se encontraron archivos XML en el índice)"
+          echo ""
+          
+          # 2. Intentar primary_doc.xml
+          PRIMARY_URL="https://www.sec.gov/Archives/edgar/data/${CIK}/${ACCESSION_FMT}/primary_doc.xml"
+          echo "--- primary_doc.xml primeros 2000 chars ---"
+          curl -s "$PRIMARY_URL" -A "Mozilla/5.0 (compatible; research@sec.gov)" | head -c 2000
+          echo ""
+          echo "--- Conteo de <invstOrSec> en primary_doc.xml ---"
+          curl -s "$PRIMARY_URL" -A "Mozilla/5.0 (compatible; research@sec.gov)" | \
+            grep -oc "<invstOrSec" || echo "0"
+          echo ""
+          
+          # 3. Buscar el XML correcto desde el índice HTML
+          INDEX_HTML=$(curl -s "$INDEX_URL" -A "Mozilla/5.0 (compatible; research@sec.gov)")
+          XML_FILE=$(echo "$INDEX_HTML" | grep -oE 'href="[^"]*\.xml"' | head -1 | grep -oE '"[^"]*"' | tr -d '"')
+          if [ -n "$XML_FILE" ]; then
+            echo "--- XML encontrado en índice: $XML_FILE ---"
+            XML_URL="https://www.sec.gov/Archives/edgar/data/${CIK}/${ACCESSION_FMT}/${XML_FILE##*/}"
+            echo "URL: $XML_URL"
+            curl -s "$XML_URL" -A "Mozilla/5.0 (compatible; research@sec.gov)" | head -c 2000
+            echo ""
+            echo "--- Conteo de invstOrSec en XML del índice ---"
+            curl -s "$XML_URL" -A "Mozilla/5.0 (compatible; research@sec.gov)" | \
+              grep -oc "invstOrSec" || echo "0"
+          fi
