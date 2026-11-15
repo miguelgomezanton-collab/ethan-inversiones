@@ -1,0 +1,38 @@
+name: ETF Debug CSV IHI ITA
+on:
+  push:
+    paths:
+      - '.github/workflows/etf-debug-csv-ihi-ita.yml'
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verificar CSV de IHI e ITA
+        run: |
+          for TICKER_ID in "IHI:239516:ishares-us-medical-devices-etf" "ITA:239502:ishares-us-aerospace-defense-etf"; do
+            TICKER=$(echo $TICKER_ID | cut -d: -f1)
+            ID=$(echo $TICKER_ID | cut -d: -f2)
+            SLUG=$(echo $TICKER_ID | cut -d: -f3)
+            URL="https://www.ishares.com/us/products/${ID}/${SLUG}/latest-holdings.csv"
+            echo "=== $TICKER ==="
+            echo "URL: $URL"
+            CSV=$(curl -sf --max-time 20 -A "Mozilla/5.0" "$URL" 2>/dev/null | head -10)
+            if [ -z "$CSV" ]; then
+              echo "ERROR: sin respuesta"
+            else
+              echo "$CSV"
+            fi
+            echo ""
+          done
+      - name: Test API Vercel para IHI e ITA
+        env:
+          BYPASS: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: |
+          for TICKER in IHI ITA; do
+            echo "=== API Vercel $TICKER ==="
+            RESP=$(curl -sf --max-time 60 \
+              -H "x-vercel-protection-bypass: ${BYPASS}" \
+              "https://ethan-inversiones.vercel.app/api/macro-rlab/etf-holdings?ticker=${TICKER}" || echo '{"error":"curl_failed"}')
+            echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print('ok=',d.get('ok'), 'holdings=',len(d.get('holdings',[])), 'error=',d.get('error',''))"
+            echo ""
+          done
