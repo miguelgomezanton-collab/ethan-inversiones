@@ -1,0 +1,29 @@
+name: ETF Debug — IHI CSV structure
+
+on:
+  workflow_dispatch:
+
+jobs:
+  debug-ihi:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download and analyze IHI CSV
+        run: |
+          URL="https://www.ishares.com/us/products/239520/ishares-us-medical-devices-etf/latest-holdings.csv"
+          
+          echo "=== Downloading IHI CSV ==="
+          CSV=$(curl -s -L "$URL" -A "Mozilla/5.0 (compatible; research@sec.gov)" --max-time 15)
+          echo "CSV length: ${#CSV}"
+          echo ""
+          
+          echo "=== First 10 rows ==="
+          echo "$CSV" | head -10
+          echo ""
+          
+          echo "=== Looking for 'Ticker' header ==="
+          echo "$CSV" | grep -n "Ticker\|ticker\|TICKER" | head -5
+          echo ""
+          
+          echo "=== HTTP status ==="
+          curl -s -L -o /dev/null -w "%{http_code}" "$URL" -A "Mozilla/5.0 (compatible; research@sec.gov)"
+          echo ""
