@@ -434,19 +434,27 @@ async function parseNportPFiling(filing, ticker, meta) {
     const indexUrl = `https://www.sec.gov/Archives/edgar/data/${cik}/${accessionFormatted}/${accessionNo}-index.htm`;
     const indexHtml = await fetchText(indexUrl);
     // Buscar archivos XML en el índice (NPORT-P suele llamarse primary_doc.xml o similar)
-    const xmlMatch = indexHtml.match(/href="([^"]*\.xml)"/i);
+    // Preferir la versión con estilo xslFormNPORT-P_X01 si existe, si no la raíz
+    const xmlMatchStyled = indexHtml.match(/href="([^"]*xslFormNPORT[^"]*\.xml)"/i);
+    const xmlMatchPlain  = indexHtml.match(/href="([^"]*\.xml)"/i);
+    const xmlMatch = xmlMatchStyled || xmlMatchPlain;
     if (xmlMatch) {
-      // FIX (2026-11-15): conservar el path relativo completo (ej: xslFormNPORT-P_X01/primary_doc.xml)
-      // No usar .split('/').pop() — eso descarta subdirectorios y genera HTTP 404
-      xmlFilename = xmlMatch[1];
+      // FIX (2026-11-15): el href puede ser una ruta absoluta del servidor (empieza con '/')
+      // ej: /Archives/edgar/data/1658645/000119312526322938/xslFormNPORT-P_X01/primary_doc.xml
+      // En ese caso, construir la URL completa directamente desde sec.gov
+      const href = xmlMatch[1];
+      xmlFilename = href.startsWith('/') ? href : href;
     }
   } catch {
     // Continuar con nombre canónico
   }
 
   // URL del XML
+  // Si xmlFilename empieza con '/', es ruta absoluta → usar sec.gov como base
   const xmlUrl = xmlFilename
-    ? `https://www.sec.gov/Archives/edgar/data/${cik}/${accessionFormatted}/${xmlFilename}`
+    ? (xmlFilename.startsWith('/')
+        ? `https://www.sec.gov${xmlFilename}`
+        : `https://www.sec.gov/Archives/edgar/data/${cik}/${accessionFormatted}/${xmlFilename}`)
     : `https://www.sec.gov/Archives/edgar/data/${cik}/${accessionFormatted}/primary_doc.xml`;
 
   const xmlText = await fetchText(xmlUrl);
