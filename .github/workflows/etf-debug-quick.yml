@@ -1,7 +1,12 @@
 name: ETF Debug Quick — Sin fail on error
 
 "on":
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      vercel_url:
+        description: 'URL de Vercel preview (ej. https://ethan-xxx.vercel.app)'
+        required: true
+        type: string
 
 jobs:
   debug:
@@ -10,25 +15,25 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ticker: [IHI, LIT, COPX, KBWB, PBS, REMX, TAN, AIQ, BOTZ]
+        ticker: [PBS, AIQ, IHI, PAVE, BOTZ, ESPO, FINX, IBUY, AMLP, LIT, NLR, TAN, URA, SIL, REMX, COPX, DTCR, PEJ, PSP, SOCL, KBWB]
     steps:
       - name: Debug ${{ matrix.ticker }}
         env:
           TICKER: ${{ matrix.ticker }}
           BYPASS: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
-          PROD: "https://ethan-inversiones.vercel.app"
+          BASE_URL: ${{ inputs.vercel_url }}
         run: |
-          # curl sin -f para ver el status HTTP real
+          API_URL="${BASE_URL}/api/macro-rlab/etf-holdings?ticker=${TICKER}"
+          
           RESPONSE=$(curl -s -w "\nHTTP_STATUS_CODE:%{http_code}" \
             -H "x-vercel-protection-bypass: ${BYPASS}" \
-            "${PROD}/api/etf-holdings?ticker=${TICKER}" 2>/dev/null)
+            "${API_URL}" 2>/dev/null)
           
           HTTP_CODE=$(echo "$RESPONSE" | tail -1 | sed 's/HTTP_STATUS_CODE://')
           BODY=$(echo "$RESPONSE" | sed '/HTTP_STATUS_CODE:/d')
           
           echo "=== ${TICKER} ==="
-          echo "HTTP_CODE: ${HTTP_CODE}"
-          echo "BODY_LENGTH: ${#BODY}"
+          echo "HTTP: ${HTTP_CODE}"
           
           if [ "$HTTP_CODE" = "200" ]; then
             OK=$(echo "$BODY" | jq -r '.ok // "?"' 2>/dev/null)
@@ -47,12 +52,12 @@ jobs:
               echo "error: ${ERROR}"
             fi
             
-            echo "--- Muestra holdings CON ticker ---"
+            echo "--- Con ticker ---"
             echo "$BODY" | jq -r '[.holdings[]? | select(.ticker != null and .ticker != "" and .ticker != "null")] | .[0:3][] | "  ticker=\(.ticker) name=\(.name)"' 2>/dev/null || echo "  (ninguno)"
             
-            echo "--- Muestra holdings SIN ticker ---"
+            echo "--- Sin ticker ---"
             echo "$BODY" | jq -r '[.holdings[]? | select(.ticker == null or .ticker == "" or .ticker == "null")] | .[0:3][] | "  name=\(.name) cusip=\(.cusip // "N/A")"' 2>/dev/null || echo "  (ninguno)"
           else
-            echo "ERROR: HTTP ${HTTP_CODE}"
-            echo "BODY: $(echo "$BODY" | head -c 500)"
+            echo "HTTP ERROR: ${HTTP_CODE}"
+            echo "BODY: $(echo "$BODY" | head -c 300)"
           fi
