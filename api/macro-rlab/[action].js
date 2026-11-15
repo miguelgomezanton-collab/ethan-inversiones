@@ -53,6 +53,20 @@ export default async function handler(req, res) {
 
   const action = req.query.action;
 
+  // edgar-ping: diagnóstico de acceso a sec.gov desde Vercel
+  if (action === 'edgar-ping') {
+    try {
+      const r = await fetch('https://www.sec.gov/robots.txt', {
+        headers: { 'User-Agent': 'ETHAN-Mercados/2.0 contact@ethan-inversiones.app' },
+        signal: AbortSignal.timeout(10000),
+      });
+      const body = await r.text();
+      return res.status(200).json({ ok: true, status: r.status, bodyLength: body.length, first100: body.substring(0, 100) });
+    } catch (err) {
+      return res.status(200).json({ ok: false, error: err.message });
+    }
+  }
+
   // 1. Acción desconocida → 404
   if (!action || !HANDLERS[action]) {
     return res.status(404).json({
