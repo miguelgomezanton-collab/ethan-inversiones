@@ -448,7 +448,6 @@ async function parseNportPFiling(filing, ticker, meta) {
     : `https://www.sec.gov/Archives/edgar/data/${cik}/${accessionFormatted}/primary_doc.xml`;
 
   const xmlText = await fetchText(xmlUrl);
-  console.log(`[edgar] ${ticker}: XML descargado — ${xmlText.length} bytes, primer tag: ${xmlText.substring(0, 60).replace(/\n/g,' ')}`);
   return parseNportXml(xmlText, ticker, periodOfReport, entityName || meta.name, accessionNo, meta);
 }
 
@@ -473,16 +472,30 @@ async function parseNportXml(xmlText, ticker, periodOfReport, entityName, access
   let workingXml = xmlText;
 
   if (meta.seriesId) {
-    // Intentar localizar el bloque <seriesInfo> o <series> para esta serie
-    // y limitar el parsing al bloque de invstOrSec siguiente
-    const seriesPattern = new RegExp(
-      `<seriesId>[^<]*${meta.seriesId}[^<]*<\\/seriesId>[\\s\\S]*?(?=<seriesId>|$)`,
-      'i'
-    );
-    const seriesMatch = xmlText.match(seriesPattern);
-    if (seriesMatch) {
-      workingXml = seriesMatch[0];
+    // FIX (2026-11-15): El regex anterior capturaba solo el bloque hasta el próximo <seriesId>,
+    // que para fondos individuales es la sección de genInfo/fundInfo, ANTES de los holdings.
+    // Resultado: 0 holdings en Vercel para todos los ETFs con seriesId.
+    //
+    // Para fondos individuales (un solo <seriesId> en el XML), no es necesario filtrar —
+    // todo el XML corresponde a esta serie. Solo filtramos en multi-series trusts (Invesco Trust I/II)
+    // donde el XML contiene holdings de varios fondos y hay que aislar el bloque correcto.
+    const seriesIdCount = (xmlText.match(/<seriesId>/gi) || []).length;
+
+    if (seriesIdCount > 1) {
+      // Multi-series: buscar el bloque <invstOrSecs> que sigue a nuestro seriesId.
+      // El patrón captura desde nuestro seriesId hasta el final del bloque <invstOrSecs>.
+      const seriesPattern = new RegExp(
+        `<seriesId>[^<]*${meta.seriesId}[^<]*<\\/seriesId>[\\s\\S]*?<invstOrSecs>[\\s\\S]*?<\\/invstOrSecs>`,
+        'i'
+      );
+      const seriesMatch = xmlText.match(seriesPattern);
+      if (seriesMatch) {
+        workingXml = seriesMatch[0];
+      }
+      // Si no hay match, workingXml sigue siendo xmlText → el regex principal lo intentará
     }
+    // Si seriesIdCount === 1 (fondo individual), workingXml = xmlText (ya asignado arriba)
+    // No hace falta filtrar: el único <invstOrSecs> del XML ya corresponde a esta serie.
   }
 
   const rawHoldings = [];
@@ -517,13 +530,7 @@ async function parseNportXml(xmlText, ticker, periodOfReport, entityName, access
   }
 
   if (rawHoldings.length === 0) {
-    // Diagnóstico: contar invstOrSec en bruto para detectar problema de regex vs XML vacío
-    const invstCount = (xmlText.match(/invstOrSec/gi) || []).length;
-    const xmlLen = xmlText.length;
-    const xmlFirst60 = xmlText.substring(0, 60).replace(/[\n\r]/g, ' ');
-    console.error(`[edgar] ${ticker}: 0 holdings. invstOrSec raw: ${invstCount}. xmlLen: ${xmlLen}. accession: ${accessionNo}. xmlStart: ${xmlFirst60}`);
-    // Incluir diagnóstico en el mensaje de error para verlo en la respuesta HTTP
-    throw new Error(`EDGAR: no se encontraron posiciones en el XML para ${ticker} (accession: ${accessionNo}, xmlLen: ${xmlLen}, invstOrSec: ${invstCount})`);
+    throw new Error(`EDGAR: no se encontraron posiciones en el XML para ${ticker} (accession: ${accessionNo})`);
   }
 
   // ── Resolver tickers faltantes vía caché Firestore + OpenFIGI ──────────────
