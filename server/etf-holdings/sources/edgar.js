@@ -447,6 +447,7 @@ async function parseNportPFiling(filing, ticker, meta) {
     : `https://www.sec.gov/Archives/edgar/data/${cik}/${accessionFormatted}/primary_doc.xml`;
 
   const xmlText = await fetchText(xmlUrl);
+  console.log(`[edgar] ${ticker}: XML descargado — ${xmlText.length} bytes, primer tag: ${xmlText.substring(0, 60).replace(/\n/g,' ')}`);
   return parseNportXml(xmlText, ticker, periodOfReport, entityName || meta.name, accessionNo, meta);
 }
 
@@ -515,6 +516,9 @@ async function parseNportXml(xmlText, ticker, periodOfReport, entityName, access
   }
 
   if (rawHoldings.length === 0) {
+    // Log de diagnóstico: contar invstOrSec en bruto para detectar problema de regex vs XML vacío
+    const invstCount = (xmlText.match(/invstOrSec/gi) || []).length;
+    console.error(`[edgar] ${ticker}: 0 holdings parseados. invstOrSec en XML: ${invstCount}. XML length: ${xmlText.length}. Accession: ${accessionNo}`);
     throw new Error(`EDGAR: no se encontraron posiciones en el XML para ${ticker} (accession: ${accessionNo})`);
   }
 
