@@ -689,44 +689,39 @@ function isValidUSCusip(cusip) {
 }
 
 /** Llama a OpenFIGI /v3/mapping con un batch de idType/idValue */
-function fetchOpenFIGI(payload) {
-  return new Promise((resolve, reject) => {
-    const body = JSON.stringify(payload);
-    const options = {
-      hostname: 'api.openfigi.com',
-      path:     '/v3/mapping',
-      method:   'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(body),
-        // Si existe OPENFIGI_API_KEY en env, incluirla para mayor rate limit
-        ...(process.env.OPENFIGI_API_KEY
-          ? { 'X-OPENFIGI-APIKEY': process.env.OPENFIGI_API_KEY }
-          : {}),
-      },
-      timeout: 15000,
-    };
+async function fetchOpenFIGI(payload) {
+  // NOTA: https module eliminado — usamos Web API fetch() para compatibilidad con Vercel Serverless
+  const headers = {
+    'Content-Type': 'application/json',
+  };
+  if (process.env.OPENFIGI_API_KEY) {
+    headers['X-OPENFIGI-APIKEY'] = process.env.OPENFIGI_API_KEY;
+  }
 
-    const req = https.request(options, (res) => {
-      if (res.statusCode === 429) {
-        return reject(new Error('OpenFIGI rate limit — esperar antes de reintentar'));
-      }
-      if (res.statusCode !== 200) {
-        return reject(new Error(`OpenFIGI HTTP ${res.statusCode}`));
-      }
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        try { resolve(JSON.parse(data)); }
-        catch (e) { reject(new Error(`OpenFIGI parse error: ${e.message}`)); }
-      });
+  let res;
+  try {
+    res = await fetch('https://api.openfigi.com/v3/mapping', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(15000),
     });
+  } catch (err) {
+    throw new Error(`OpenFIGI timeout/red: ${err.message}`);
+  }
 
-    req.on('error', reject);
-    req.on('timeout', () => { req.destroy(); reject(new Error('OpenFIGI timeout')); });
-    req.write(body);
-    req.end();
-  });
+  if (res.status === 429) {
+    throw new Error('OpenFIGI rate limit — esperar antes de reintentar');
+  }
+  if (!res.ok) {
+    throw new Error(`OpenFIGI HTTP ${res.status}`);
+  }
+
+  try {
+    return await res.json();
+  } catch (e) {
+    throw new Error(`OpenFIGI parse error: ${e.message}`);
+  }
 }
 
 /** Extrae el texto de un tag XML simple */
