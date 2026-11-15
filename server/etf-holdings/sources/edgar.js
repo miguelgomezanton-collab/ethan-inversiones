@@ -54,7 +54,8 @@
 //   Filing index:  https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type=NPORT-P&dateb=&owner=include&count=10&search_text=
 // ─────────────────────────────────────────────────────────────────────────────
 
-import https from 'https';
+// NOTA: https module eliminado — usamos Web API fetch() para compatibilidad con Vercel Serverless
+// (https.get() puede tener comportamiento diferente en el sandbox de Vercel)
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { initializeApp, getApps, cert } from 'firebase-admin/app';
 
@@ -741,52 +742,47 @@ function buildAgeWarning(effectiveDate) {
   return `⚠️ Datos regulatorios NPORT-P — fecha efectiva: ${effectiveDate}${ageStr}. Pueden tener entre 30 y 60 días de antigüedad. No son posiciones en tiempo real.`;
 }
 
-// ── Helpers HTTP ───────────────────────────────────────────────────────────────
+// ── Helpers HTTP (Web API fetch — compatible con Vercel Serverless) ───────────
+// IMPORTANTE: Se usa fetch() (Web API, Node 18+) en lugar de https.get()
+// porque https.get() puede tener comportamiento diferente en el sandbox de Vercel.
 
-function fetchJson(url) {
-  return new Promise((resolve, reject) => {
-    const req = https.get(url, {
-      headers: {
-        'User-Agent': 'ETHAN-Mercados/2.0 contact@ethan-inversiones.app',
-        'Accept': 'application/json',
-      },
-      timeout: 15000,
-    }, (res) => {
-      if (res.statusCode !== 200) {
-        return reject(new Error(`EDGAR fetchJson HTTP ${res.statusCode} para ${url}`));
-      }
-      let body = '';
-      res.on('data', chunk => body += chunk);
-      res.on('end', () => {
-        try { resolve(JSON.parse(body)); }
-        catch (e) { reject(new Error(`EDGAR fetchJson parse error: ${e.message}`)); }
-      });
+const EDGAR_HEADERS = {
+  'User-Agent': 'ETHAN-Mercados/2.0 contact@ethan-inversiones.app',
+};
+
+async function fetchJson(url) {
+  let res;
+  try {
+    res = await fetch(url, {
+      headers: { ...EDGAR_HEADERS, 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(15000),
     });
-    req.on('error', reject);
-    req.on('timeout', () => { req.destroy(); reject(new Error(`EDGAR fetchJson timeout: ${url}`)); });
-  });
+  } catch (err) {
+    throw new Error(`EDGAR fetchJson timeout/red: ${err.message} (${url})`);
+  }
+  if (!res.ok) {
+    throw new Error(`EDGAR fetchJson HTTP ${res.status} para ${url}`);
+  }
+  try {
+    return await res.json();
+  } catch (e) {
+    throw new Error(`EDGAR fetchJson parse error: ${e.message}`);
+  }
 }
 
-function fetchText(url) {
-  return new Promise((resolve, reject) => {
-    const req = https.get(url, {
-      headers: {
-        'User-Agent': 'ETHAN-Mercados/2.0 contact@ethan-inversiones.app',
-        'Accept': 'application/xml, text/html, text/plain',
-      },
-      timeout: 20000,
-    }, (res) => {
-      if (res.statusCode === 302 || res.statusCode === 301) {
-        return fetchText(res.headers.location).then(resolve).catch(reject);
-      }
-      if (res.statusCode !== 200) {
-        return reject(new Error(`EDGAR fetchText HTTP ${res.statusCode} para ${url}`));
-      }
-      let body = '';
-      res.on('data', chunk => body += chunk);
-      res.on('end', () => resolve(body));
+async function fetchText(url) {
+  let res;
+  try {
+    res = await fetch(url, {
+      headers: { ...EDGAR_HEADERS, 'Accept': 'application/xml, text/html, text/plain' },
+      signal: AbortSignal.timeout(20000),
+      redirect: 'follow', // fetch() sigue redirects automáticamente
     });
-    req.on('error', reject);
-    req.on('timeout', () => { req.destroy(); reject(new Error(`EDGAR fetchText timeout: ${url}`)); });
-  });
+  } catch (err) {
+    throw new Error(`EDGAR fetchText timeout/red: ${err.message} (${url})`);
+  }
+  if (!res.ok) {
+    throw new Error(`EDGAR fetchText HTTP ${res.status} para ${url}`);
+  }
+  return res.text();
 }
