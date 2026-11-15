@@ -1,0 +1,98 @@
+name: ETF EDGAR Diagnose — Series IDs
+
+"on":
+  workflow_dispatch: {}
+
+jobs:
+  diagnose-globalx:
+    name: Diagnose Global X (CIK 1432353)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check submissions.json
+        run: |
+          SUBS=$(curl -sf "https://data.sec.gov/submissions/CIK0001432353.json" \
+            -H "User-Agent: ETHAN-Inversiones/2.0 research@example.com" 2>/dev/null)
+          
+          echo "=== Global X Funds (CIK 1432353) ==="
+          echo "Nombre: $(echo "$SUBS" | jq -r '.name' 2>/dev/null)"
+          echo "Tiene 'series' en filings: $(echo "$SUBS" | jq 'has("filings") and (.filings.recent | has("series"))' 2>/dev/null)"
+          echo ""
+          echo "Primeros 5 NPORT-P:"
+          echo "$SUBS" | jq -r '
+            .filings.recent | 
+            to_entries | 
+            map(select(.key == "form" or .key == "accessionNumber" or .key == "reportDate" or .key == "series")) |
+            from_entries |
+            . as $r |
+            range(0; [(.form | length), 5] | min) |
+            select($r.form[.] == "NPORT-P") |
+            "\(.) — acc=\($r.accessionNumber[.]) date=\($r.reportDate[.] // "?") series=\($r.series[.] // "N/A")"
+          ' 2>/dev/null | head -10
+          
+          echo ""
+          echo "=== Búsqueda EFTS para BOTZ (S000054693) ==="
+          STARTDT=$(date -d "90 days ago" +%Y-%m-%d 2>/dev/null || date -v-90d +%Y-%m-%d 2>/dev/null)
+          EFTS=$(curl -sf "https://efts.sec.gov/LATEST/search-index?q=%22S000054693%22&forms=NPORT-P&dateRange=custom&startdt=${STARTDT}&entity=1432353&_source=period_of_report,file_date,accession_no,entity_name,series_id" \
+            -H "User-Agent: ETHAN-Inversiones/2.0 research@example.com" 2>/dev/null)
+          
+          echo "Hits EFTS: $(echo "$EFTS" | jq '.hits.total.value // .hits.hits | length' 2>/dev/null)"
+          echo "$EFTS" | jq -r '.hits.hits[0:3][] | "  acc=\(._source.accession_no) period=\(._source.period_of_report) series=\(._source.series_id // "N/A")"' 2>/dev/null
+          
+          echo ""
+          echo "=== Estructura XML del primer NPORT-P de BOTZ ==="
+          ACC=$(echo "$EFTS" | jq -r '.hits.hits[0]._source.accession_no' 2>/dev/null)
+          if [ -n "$ACC" ] && [ "$ACC" != "null" ]; then
+            ACC_FORMATTED=$(echo "$ACC" | sed 's/-//g')
+            CIK_PAD="0001432353"
+            XML_URL="https://www.sec.gov/Archives/edgar/data/1432353/${ACC_FORMATTED}/"
+            echo "Filing index URL: ${XML_URL}"
+            
+            # Descargar el índice del filing para encontrar el XML
+            INDEX=$(curl -sf "${XML_URL}" -H "User-Agent: ETHAN-Inversiones/2.0 research@example.com" 2>/dev/null)
+            NPORT_FILE=$(echo "$INDEX" | grep -o '[a-zA-Z0-9_-]*\.xml' | grep -v 'primary_doc' | head -1)
+            echo "Archivo NPORT: ${NPORT_FILE}"
+            
+            if [ -n "$NPORT_FILE" ]; then
+              # Descargar el XML y ver las primeras líneas + sección de BOTZ
+              XML=$(curl -sf "${XML_URL}${NPORT_FILE}" -H "User-Agent: ETHAN-Inversiones/2.0 research@example.com" 2>/dev/null | head -c 50000)
+              
+              echo "Número de <seriesId> en XML: $(echo "$XML" | grep -c '<seriesId>')"
+              echo "Número de <invstOrSec> en XML: $(echo "$XML" | grep -c '<invstOrSec>')"
+              
+              # Ver si S000054693 (BOTZ) está en el XML
+              echo "BOTZ S000054693 en XML: $(echo "$XML" | grep -c 'S000054693')"
+              
+              # Ver contexto alrededor de BOTZ seriesId
+              echo "$XML" | grep -B5 -A20 "S000054693" | head -30
+            fi
+          fi
+
+  diagnose-vaneck:
+    name: Diagnose VanEck (CIK 1137360) — ESPO
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check submissions.json
+        run: |
+          STARTDT=$(date -d "90 days ago" +%Y-%m-%d 2>/dev/null || date -v-90d +%Y-%m-%d 2>/dev/null)
+          EFTS=$(curl -sf "https://efts.sec.gov/LATEST/search-index?q=%22S000062930%22&forms=NPORT-P&dateRange=custom&startdt=${STARTDT}&entity=1137360" \
+            -H "User-Agent: ETHAN-Inversiones/2.0 research@example.com" 2>/dev/null)
+          
+          echo "=== VanEck ESPO (S000062930) ==="
+          echo "Hits EFTS: $(echo "$EFTS" | jq '.hits.total.value // .hits.hits | length' 2>/dev/null)"
+          echo "$EFTS" | jq -r '.hits.hits[0:3][] | "  acc=\(._source.accession_no) period=\(._source.period_of_report)"' 2>/dev/null
+          
+          ACC=$(echo "$EFTS" | jq -r '.hits.hits[0]._source.accession_no' 2>/dev/null)
+          if [ -n "$ACC" ] && [ "$ACC" != "null" ]; then
+            ACC_FORMATTED=$(echo "$ACC" | sed 's/-//g')
+            XML_URL="https://www.sec.gov/Archives/edgar/data/1137360/${ACC_FORMATTED}/"
+            INDEX=$(curl -sf "${XML_URL}" -H "User-Agent: ETHAN-Inversiones/2.0 research@example.com" 2>/dev/null)
+            NPORT_FILE=$(echo "$INDEX" | grep -o '[a-zA-Z0-9_-]*\.xml' | grep -v 'primary_doc' | head -1)
+            
+            if [ -n "$NPORT_FILE" ]; then
+              XML=$(curl -sf "${XML_URL}${NPORT_FILE}" -H "User-Agent: ETHAN-Inversiones/2.0 research@example.com" 2>/dev/null | head -c 50000)
+              echo "Número <seriesId>: $(echo "$XML" | grep -c '<seriesId>')"
+              echo "Número <invstOrSec>: $(echo "$XML" | grep -c '<invstOrSec>')"
+              echo "ESPO S000062930 en XML: $(echo "$XML" | grep -c 'S000062930')"
+              echo "$XML" | grep -B5 -A20 "S000062930" | head -30
+            fi
+          fi
