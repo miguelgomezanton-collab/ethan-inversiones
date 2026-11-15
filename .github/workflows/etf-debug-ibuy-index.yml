@@ -1,0 +1,19 @@
+name: ETF Debug IBUY Index
+on:
+  push:
+    paths:
+      - '.github/workflows/etf-debug-ibuy-index.yml'
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ver índice EDGAR de IBUY
+        run: |
+          ACC="000119312526322938"
+          CIK="1633061"
+          ACC_FMT="0001193125-26-322938"
+          URL="https://www.sec.gov/Archives/edgar/data/${CIK}/${ACC}/${ACC_FMT}-index.htm"
+          echo "URL índice: $URL"
+          CONTENT=$(curl -sf --max-time 15 -H "User-Agent: ETHAN research@ethan.app" "$URL")
+          echo "--- Todos los hrefs con .xml ---"
+          echo "$CONTENT" | grep -oi 'href="[^"]*"' | head -20
