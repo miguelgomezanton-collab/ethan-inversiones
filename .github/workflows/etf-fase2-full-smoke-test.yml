@@ -152,6 +152,11 @@ jobs:
           HAS_WARNING=$(echo "$BODY" | jq -r 'if .dataAgeWarning then "YES" else "NO" end')
           ERROR_MSG=$(echo "$BODY" | jq -r '.error // ""')
 
+          # ── FILTRO FRONTEND: replicar exactamente la lógica de rv-sectores.js ──
+          # El frontend filtra: data.holdings.filter(h => h.ticker && h.ticker !== 'null')
+          # Si este count es 0, el screener mostrará "Sin empresas" aunque holdings_count > 0
+          FRONTEND_VALID_COUNT=$(echo "$BODY" | jq -r '[.holdings[]? | select(.ticker != null and .ticker != "" and .ticker != "null")] | length | tostring')
+
           # Validar ok=true
           if [ "$OK" = "false" ]; then
             echo "❌ FAIL: ok=false"
@@ -159,10 +164,23 @@ jobs:
             exit 1
           fi
 
-          # Validar holdings > 0
+          # Validar holdings raw > 0
           if [ "$HOLDINGS_COUNT" = "0" ] || [ -z "$HOLDINGS_COUNT" ]; then
-            echo "❌ FAIL: holdings_count=0 o vacío"
+            echo "❌ FAIL: holdings_count=0 o vacío (API no devuelve holdings)"
             echo "   Body (primeros 300 chars): $(echo "$BODY" | head -c 300)"
+            exit 1
+          fi
+
+          # ── VALIDACIÓN CRÍTICA: holdings con ticker válido para el FRONTEND ──
+          # Esta es la validación que el smoke test anterior NO hacía y causó el falso positivo
+          if [ "$FRONTEND_VALID_COUNT" = "0" ] || [ -z "$FRONTEND_VALID_COUNT" ]; then
+            echo "❌ FAIL: 0 holdings con ticker válido tras filtro frontend"
+            echo "   holdings_count (raw API) = ${HOLDINGS_COUNT}"
+            echo "   frontend_valid_count     = 0"
+            echo "   DIAGNÓSTICO: La API devuelve holdings pero todos tienen ticker:null"
+            echo "   CAUSA PROBABLE: EDGAR NPORT-P sin resolución de ticker (CUSIP no resuelto)"
+            echo "   Muestra de holdings sin ticker:"
+            echo "$BODY" | jq -r '[.holdings[]? | select(.ticker == null or .ticker == "" or .ticker == "null")] | .[0:3][] | "    name=\(.name) cusip=\(.cusip // "N/A") isin=\(.isin // "N/A")"' 2>/dev/null | head -5
             exit 1
           fi
 
@@ -173,15 +191,17 @@ jobs:
 
           echo ""
           echo "✅ OK | ${TICKER}"
-          echo "   Holdings:       ${HOLDINGS_COUNT}"
-          echo "   Fuente:         ${SOURCE}"
-          echo "   Fecha efectiva: ${EFFECTIVE_DATE}"
-          echo "   Peso total:     ${TOTAL_WEIGHT}%"
-          echo "   Stale:          ${IS_STALE}"
-          echo "   Aviso antigüed: ${HAS_WARNING}"
+          echo "   Holdings raw:        ${HOLDINGS_COUNT}"
+          echo "   Holdings con ticker: ${FRONTEND_VALID_COUNT} (visible en frontend)"
+          echo "   Fuente:              ${SOURCE}"
+          echo "   Fecha efectiva:      ${EFFECTIVE_DATE}"
+          echo "   Peso total:          ${TOTAL_WEIGHT}%"
+          echo "   Stale:               ${IS_STALE}"
+          echo "   Aviso antigüed:      ${HAS_WARNING}"
 
           # Outputs para el resumen del job
           echo "holdings_count=${HOLDINGS_COUNT}" >> $GITHUB_OUTPUT
+          echo "frontend_valid_count=${FRONTEND_VALID_COUNT}" >> $GITHUB_OUTPUT
           echo "source=${SOURCE}" >> $GITHUB_OUTPUT
           echo "effective_date=${EFFECTIVE_DATE}" >> $GITHUB_OUTPUT
           echo "total_weight=${TOTAL_WEIGHT}" >> $GITHUB_OUTPUT
@@ -195,7 +215,8 @@ jobs:
             echo "### ✅ ${{ matrix.ticker }} — OK" >> $GITHUB_STEP_SUMMARY
             echo "| Campo | Valor |" >> $GITHUB_STEP_SUMMARY
             echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
-            echo "| Holdings | ${{ steps.test.outputs.holdings_count }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Holdings raw (API) | ${{ steps.test.outputs.holdings_count }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Holdings con ticker (frontend)** | **${{ steps.test.outputs.frontend_valid_count }}** |" >> $GITHUB_STEP_SUMMARY
             echo "| Fuente | \`${{ steps.test.outputs.source }}\` |" >> $GITHUB_STEP_SUMMARY
             echo "| Fecha efectiva | ${{ steps.test.outputs.effective_date }} |" >> $GITHUB_STEP_SUMMARY
             echo "| Peso total | ${{ steps.test.outputs.total_weight }}% |" >> $GITHUB_STEP_SUMMARY
@@ -220,10 +241,13 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Ver resultados individuales por ticker en los jobs anteriores." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Criterios de éxito:" >> $GITHUB_STEP_SUMMARY
+          echo "### Criterios de éxito (alineados con el frontend rv-sectores.js):" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ HTTP 200 en cada ETF" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ \`ok: true\` en la respuesta JSON" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ \`totalHoldings > 0\`" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ \`totalHoldings > 0\` (holdings raw en la API)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ **\`frontend_valid_count > 0\`** (holdings con ticker válido = visible en screener)" >> $GITHUB_STEP_SUMMARY
+          echo "  - Replica exactamente: \`data.holdings.filter(h => h.ticker && h.ticker !== 'null')\`" >> $GITHUB_STEP_SUMMARY
+          echo "  - Este check faltaba antes — causó falso positivo (65/65 OK pero 38/63 sin datos en UI)" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ \`referenceDate\` presente en la respuesta" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ ETFs con EDGAR fallback marcados con \`dataAgeWarning\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY

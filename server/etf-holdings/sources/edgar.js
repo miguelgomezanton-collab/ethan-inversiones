@@ -193,55 +193,58 @@ export async function fetchHoldings(etfTicker) {
 /**
  * Busca el NPORT-P más reciente para el ticker dado.
  * Para trusts con múltiples ETFs, filtra por seriesId para obtener el fondo correcto.
+ *
+ * Estrategia en orden de precisión:
+ *   1. EFTS search por seriesId (90 días) → resultado exacto para la serie
+ *   2. EFTS search extendida (180 días) → misma precisión pero ventana mayor
+ *   3. Submissions JSON con validación de seriesId en el XML
  */
 async function findLatestNportP(ticker, meta) {
   const { cik, seriesId } = meta;
 
-  // Calcular fecha de inicio: 90 días atrás
-  const startDate = new Date();
-  startDate.setDate(startDate.getDate() - 90);
-  const startdt = startDate.toISOString().slice(0, 10);
+  // ── Intentar EFTS full-text search (preciso, filtra por seriesId) ────────
+  for (const daysBack of [90, 180]) {
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - daysBack);
+    const startdt = startDate.toISOString().slice(0, 10);
 
-  // Intentar EFTS full-text search
-  // Si tenemos seriesId, filtramos directamente por él para evitar cruces entre fondos del mismo trust
-  try {
-    let eftsUrl;
-    if (seriesId) {
-      // Filtro preciso: buscar el seriesId exacto en filings NPORT-P de este CIK
-      eftsUrl = `https://efts.sec.gov/LATEST/search-index?q=%22${seriesId}%22&forms=NPORT-P&dateRange=custom&startdt=${startdt}&entity=${cik}&_source=period_of_report,file_date,accession_no,entity_name,period_of_report,series_id`;
-    } else {
-      // Fallback: buscar por ticker en texto del filing
-      eftsUrl = `https://efts.sec.gov/LATEST/search-index?q=%22${ticker}%22&forms=NPORT-P&dateRange=custom&startdt=${startdt}&entity=${cik}&_source=period_of_report,file_date,accession_no,entity_name,period_of_report,series_id`;
-    }
+    try {
+      // Búsqueda EFTS: si tenemos seriesId, buscarlo directamente para evitar
+      // cruces con otras series del mismo trust (crítico para Invesco Trust I/II)
+      const query = seriesId ? `%22${seriesId}%22` : `%22${ticker}%22`;
+      const eftsUrl = `https://efts.sec.gov/LATEST/search-index?q=${query}&forms=NPORT-P&dateRange=custom&startdt=${startdt}&entity=${cik}&_source=period_of_report,file_date,accession_no,entity_name,series_id`;
 
-    const eftsData = await fetchJson(eftsUrl);
+      const eftsData = await fetchJson(eftsUrl);
 
-    if (eftsData?.hits?.hits?.length > 0) {
-      const hits = eftsData.hits.hits
-        .filter(h => h._source?.accession_no)
-        .sort((a, b) => {
-          const da = a._source?.period_of_report || a._source?.file_date || '';
-          const db = b._source?.period_of_report || b._source?.file_date || '';
-          return db.localeCompare(da);
-        });
+      if (eftsData?.hits?.hits?.length > 0) {
+        const hits = eftsData.hits.hits
+          .filter(h => h._source?.accession_no)
+          .sort((a, b) => {
+            const da = a._source?.period_of_report || a._source?.file_date || '';
+            const db = b._source?.period_of_report || b._source?.file_date || '';
+            return db.localeCompare(da);
+          });
 
-      if (hits.length > 0) {
-        const hit = hits[0]._source;
-        return {
-          accessionNo: hit.accession_no,
-          periodOfReport: hit.period_of_report || hit.file_date,
-          entityName: hit.entity_name || meta.name,
-          cik,
-          seriesId,
-          source: 'efts',
-        };
+        if (hits.length > 0) {
+          const hit = hits[0]._source;
+          return {
+            accessionNo:    hit.accession_no,
+            periodOfReport: hit.period_of_report || hit.file_date,
+            entityName:     hit.entity_name || meta.name,
+            cik,
+            seriesId,
+            source: 'efts',
+          };
+        }
       }
+    } catch (err) {
+      console.warn(`EDGAR EFTS (${daysBack}d) falló para ${ticker}: ${err.message}`);
     }
-  } catch (err) {
-    console.warn(`EDGAR EFTS falló para ${ticker}: ${err.message} — intentando submissions JSON`);
   }
 
-  // Fallback: submissions JSON del CIK
+  console.warn(`EDGAR EFTS sin resultados para ${ticker} — intentando submissions JSON`);
+
+  // ── Fallback: submissions JSON del CIK ───────────────────────────────────
   return findLatestNportPFromSubmissions(ticker, meta);
 }
 
@@ -264,23 +267,58 @@ async function findLatestNportPFromSubmissions(ticker, meta) {
     throw new Error(`EDGAR: estructura de submissions inesperada para CIK ${cik}`);
   }
 
-  // Si tenemos seriesId, buscar el NPORT-P de esa serie concreta
-  for (let i = 0; i < form.length; i++) {
-    if (form[i] !== 'NPORT-P') continue;
+  // ── Caso 1: submissions incluye array 'series' por filing ──────────────────
+  // La mayoría de trusts multi-serie incluyen el seriesId por filing.
+  // Si está disponible, filtrar directamente.
+  if (seriesArr) {
+    for (let i = 0; i < form.length; i++) {
+      if (form[i] !== 'NPORT-P') continue;
+      if (seriesId && seriesArr[i] && seriesArr[i] !== seriesId) continue;
 
-    // Verificar si el filing corresponde a nuestra serie
-    if (seriesId && seriesArr && seriesArr[i] && seriesArr[i] !== seriesId) {
-      continue; // Pertenece a otra serie del mismo trust
+      return {
+        accessionNo:    accessionNumber[i],
+        periodOfReport: reportDate?.[i] || filingDate?.[i],
+        entityName:     data.name,
+        cik,
+        seriesId,
+        source: 'submissions',
+      };
     }
+  }
 
-    return {
-      accessionNo: accessionNumber[i],
-      periodOfReport: reportDate?.[i] || filingDate?.[i],
-      entityName: data.name,
-      cik,
-      seriesId,
-      source: 'submissions',
-    };
+  // ── Caso 2: submissions NO incluye 'series' por filing ────────────────────
+  // Ocurre en algunos trusts que presentan NPORT-P consolidados (un filing por trust).
+  // En ese caso el índice del filing apunta a un XML que contiene TODAS las series.
+  // Necesitamos encontrar el filing más reciente y confiar en que parseNportXml
+  // filtrará por seriesId al aislar el bloque correcto del XML.
+  if (!seriesArr && seriesId) {
+    console.warn(`[edgar] ${ticker}: submissions sin array 'series' — CIK ${cik} usa NPORT-P consolidado. Usando primer filing (parseNportXml filtrará por ${seriesId}).`);
+    for (let i = 0; i < form.length; i++) {
+      if (form[i] !== 'NPORT-P') continue;
+      return {
+        accessionNo:    accessionNumber[i],
+        periodOfReport: reportDate?.[i] || filingDate?.[i],
+        entityName:     data.name,
+        cik,
+        seriesId,
+        source: 'submissions-consolidated',
+      };
+    }
+  }
+
+  // Sin seriesId: devolver primer NPORT-P (trusts de single-series)
+  if (!seriesId) {
+    for (let i = 0; i < form.length; i++) {
+      if (form[i] !== 'NPORT-P') continue;
+      return {
+        accessionNo:    accessionNumber[i],
+        periodOfReport: reportDate?.[i] || filingDate?.[i],
+        entityName:     data.name,
+        cik,
+        seriesId: null,
+        source: 'submissions',
+      };
+    }
   }
 
   throw new Error(`EDGAR: no se encontró NPORT-P en submissions para ${ticker} (CIK ${cik}, serie ${seriesId || 'N/A'})`);
@@ -288,6 +326,7 @@ async function findLatestNportPFromSubmissions(ticker, meta) {
 
 /**
  * Descarga el índice del filing y parsea el XML de posiciones.
+ * async porque parseNportXml resuelve tickers vía OpenFIGI.
  */
 async function parseNportPFiling(filing, ticker, meta) {
   const { accessionNo, periodOfReport, entityName } = filing;
@@ -323,10 +362,18 @@ async function parseNportPFiling(filing, ticker, meta) {
  * Parsea el XML de NPORT-P y extrae holdings.
  * El XML de NPORT-P contiene elementos <invstOrSec> con los valores de posición.
  *
+ * ESTRATEGIA DE RESOLUCIÓN DE TICKERS (crítico para el screener):
+ *   1. Extraer el <ticker> del bloque <identifiers> si existe en el XML
+ *   2. Si no hay ticker en XML, resolver CUSIP → ticker vía OpenFIGI API (batch)
+ *   3. Si OpenFIGI no resuelve, dejar ticker: null (el frontend lo filtrará)
+ *
+ * IMPORTANTE: NPORT-P usa <identifiers><ticker> (anidado), no <ticker> directo.
+ * El regex de extractXmlField lo captura igualmente por ser búsqueda en texto completo.
+ *
  * Para trusts con múltiples series en un mismo filing XML, busca primero
  * la sección correspondiente al seriesId correcto.
  */
-function parseNportXml(xmlText, ticker, periodOfReport, entityName, accessionNo, meta) {
+async function parseNportXml(xmlText, ticker, periodOfReport, entityName, accessionNo, meta) {
   // Si el XML contiene múltiples series (Invesco Trust I/II), intentar aislar la sección
   // del fondo correcto usando el nombre del ETF o el seriesId
   let workingXml = xmlText;
@@ -344,7 +391,7 @@ function parseNportXml(xmlText, ticker, periodOfReport, entityName, accessionNo,
     }
   }
 
-  const holdings = [];
+  const rawHoldings = [];
   const invstRegex = /<invstOrSec>([\s\S]*?)<\/invstOrSec>/gi;
   let match;
 
@@ -356,13 +403,16 @@ function parseNportXml(xmlText, ticker, periodOfReport, entityName, accessionNo,
     const lei      = extractXmlField(block, 'lei') || '';
     const pctVal   = parseFloat(extractXmlField(block, 'pctVal') || '0');
     const valUSD   = parseFloat(extractXmlField(block, 'valUSD') || extractXmlField(block, 'val') || '0');
+
+    // NPORT-P puede incluir <ticker> dentro de <identifiers> o directamente.
+    // extractXmlField busca en todo el bloque, así que lo captura en ambos casos.
     const holdingTicker = extractXmlField(block, 'ticker') || '';
 
     if (!name) continue;
     if (pctVal === 0 && valUSD === 0) continue;
 
-    holdings.push({
-      ticker:   holdingTicker.toUpperCase() || null,
+    rawHoldings.push({
+      ticker: holdingTicker ? holdingTicker.toUpperCase() : null,
       name,
       weight:   pctVal,
       value:    valUSD,
@@ -372,28 +422,174 @@ function parseNportXml(xmlText, ticker, periodOfReport, entityName, accessionNo,
     });
   }
 
-  if (holdings.length === 0) {
+  if (rawHoldings.length === 0) {
     throw new Error(`EDGAR: no se encontraron posiciones en el XML para ${ticker} (accession: ${accessionNo})`);
   }
+
+  // ── Resolver tickers faltantes vía OpenFIGI ──────────────────────────────
+  // Holdings sin ticker pero con CUSIP válido se envían a OpenFIGI para resolución.
+  // CUSIP US válido: 9 caracteres alfanuméricos, los 2 primeros dígitos de país '0'-'9'
+  // (acciones domésticas US). CUSIPs de cash/collateral suelen ser '000000000'.
+  const holdings = await resolveTickersViaOpenFIGI(rawHoldings);
 
   const effectiveDate = periodOfReport || 'desconocida';
   const ageWarning = buildAgeWarning(effectiveDate);
   const totalWeight = holdings.reduce((s, h) => s + h.weight, 0);
 
+  // Contar cuántos tickers quedaron sin resolver (para logging)
+  const resolved   = holdings.filter(h => h.ticker).length;
+  const unresolved = holdings.length - resolved;
+  if (unresolved > 0) {
+    console.warn(`[edgar] ${ticker}: ${unresolved}/${holdings.length} holdings sin ticker tras OpenFIGI (internacionales/cash)`);
+  }
+
   return {
     ticker,
     holdings,
-    totalWeight: Math.round(totalWeight * 100) / 100,
-    holdingsCount: holdings.length,
-    source: 'SEC EDGAR NPORT-P',
-    sourceUrl: `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${meta.cik}&type=NPORT-P&dateb=&owner=include&count=10`,
-    isHistorical: true,
-    effectiveDate,
+    totalWeight:   Math.round(totalWeight * 100) / 100,
+    totalHoldings: holdings.length,          // ← corregido (era holdingsCount)
+    source:        'SEC EDGAR NPORT-P',
+    sourceUrl:     `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${meta.cik}&type=NPORT-P&dateb=&owner=include&count=10`,
+    isHistorical:  true,
+    referenceDate: effectiveDate,            // ← corregido (era effectiveDate)
     dataAgeWarning: ageWarning,
     entityName,
     accessionNo,
     seriesId: meta.seriesId || null,
   };
+}
+
+// ── OpenFIGI ticker resolution ─────────────────────────────────────────────────
+
+/**
+ * Resuelve tickers de acciones domésticas US a partir de CUSIPs vía OpenFIGI.
+ * API pública, sin API key: máx 10 items/request, ~1 req/seg.
+ * Con API key: 25 items/request, mayor rate limit.
+ *
+ * Solo se resuelven CUSIPs que:
+ *   - No tienen ticker en el XML
+ *   - Son CUSIPs US válidos (9 chars, no '000000000')
+ *   - Corresponden a acciones (assetClass: 'Common Stock' en resultado)
+ *
+ * @param {Array} rawHoldings  — holdings con ticker posiblemente null
+ * @returns {Promise<Array>}   — holdings con tickers rellenados donde fue posible
+ */
+async function resolveTickersViaOpenFIGI(rawHoldings) {
+  // Separar holdings con y sin ticker
+  const needsResolution = rawHoldings
+    .map((h, idx) => ({ h, idx }))
+    .filter(({ h }) => !h.ticker && isValidUSCusip(h.cusip));
+
+  if (needsResolution.length === 0) {
+    return rawHoldings;
+  }
+
+  console.log(`[edgar/openfigi] Resolviendo ${needsResolution.length} CUSIPs vía OpenFIGI...`);
+
+  // Mapear CUSIP → array de índices (puede haber duplicados en el portfolio)
+  const cusipToIndices = {};
+  for (const { h, idx } of needsResolution) {
+    if (!cusipToIndices[h.cusip]) cusipToIndices[h.cusip] = [];
+    cusipToIndices[h.cusip].push(idx);
+  }
+
+  const uniqueCusips = Object.keys(cusipToIndices);
+  const cusipToTicker = {};
+
+  // OpenFIGI: máx 10 items por request sin API key
+  const BATCH_SIZE = 10;
+  for (let i = 0; i < uniqueCusips.length; i += BATCH_SIZE) {
+    const batch = uniqueCusips.slice(i, i + BATCH_SIZE);
+    const payload = batch.map(c => ({
+      idType:    'ID_CUSIP',
+      idValue:   c,
+      exchCode:  'US',      // solo acciones US
+      marketSecDes: 'Equity', // solo equity
+    }));
+
+    try {
+      const results = await fetchOpenFIGI(payload);
+      for (let j = 0; j < batch.length; j++) {
+        const cusip = batch[j];
+        const result = results[j];
+        if (result?.data?.length > 0) {
+          // Preferir Common Stock sobre otros tipos
+          const best = result.data.find(r => r.securityType === 'Common Stock') || result.data[0];
+          if (best?.ticker) {
+            cusipToTicker[cusip] = best.ticker.toUpperCase();
+          }
+        }
+      }
+      // Pausa entre batches para respetar rate limit (~1 req/seg)
+      if (i + BATCH_SIZE < uniqueCusips.length) {
+        await new Promise(r => setTimeout(r, 1100));
+      }
+    } catch (err) {
+      console.warn(`[edgar/openfigi] batch ${i/BATCH_SIZE + 1} falló: ${err.message} — continuando sin resolver ese batch`);
+    }
+  }
+
+  // Aplicar resolución a los holdings
+  const resolved = rawHoldings.map((h, idx) => {
+    if (h.ticker) return h; // ya tenía ticker
+    if (!h.cusip || !cusipToTicker[h.cusip]) return h; // no resolvible
+    return { ...h, ticker: cusipToTicker[h.cusip] };
+  });
+
+  const nResolved = needsResolution.filter(({ idx }) => resolved[idx].ticker).length;
+  console.log(`[edgar/openfigi] ${nResolved}/${needsResolution.length} CUSIPs resueltos a tickers`);
+
+  return resolved;
+}
+
+/** Verifica si un CUSIP es de acción doméstica US válida */
+function isValidUSCusip(cusip) {
+  if (!cusip || cusip.length !== 9) return false;
+  if (cusip === '000000000') return false;  // cash/collateral placeholder
+  if (cusip.startsWith('9')) return false;  // CUSIPs que comienzan con 9 son típicamente bonds/options
+  // CUSIPs US válidos comienzan con dígito 0-8
+  return /^[0-8][A-Z0-9]{8}$/.test(cusip);
+}
+
+/** Llama a OpenFIGI /v3/mapping con un batch de idType/idValue */
+function fetchOpenFIGI(payload) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify(payload);
+    const options = {
+      hostname: 'api.openfigi.com',
+      path:     '/v3/mapping',
+      method:   'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        // Si existe OPENFIGI_API_KEY en env, incluirla para mayor rate limit
+        ...(process.env.OPENFIGI_API_KEY
+          ? { 'X-OPENFIGI-APIKEY': process.env.OPENFIGI_API_KEY }
+          : {}),
+      },
+      timeout: 15000,
+    };
+
+    const req = https.request(options, (res) => {
+      if (res.statusCode === 429) {
+        return reject(new Error('OpenFIGI rate limit — esperar antes de reintentar'));
+      }
+      if (res.statusCode !== 200) {
+        return reject(new Error(`OpenFIGI HTTP ${res.statusCode}`));
+      }
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); }
+        catch (e) { reject(new Error(`OpenFIGI parse error: ${e.message}`)); }
+      });
+    });
+
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('OpenFIGI timeout')); });
+    req.write(body);
+    req.end();
+  });
 }
 
 /** Extrae el texto de un tag XML simple */
