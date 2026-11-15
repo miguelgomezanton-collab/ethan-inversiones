@@ -1,0 +1,34 @@
+name: ETF EDGAR Ping — Verifica acceso sec.gov desde Vercel
+
+on:
+  workflow_dispatch:
+    inputs:
+      vercel_url:
+        description: 'URL de Vercel'
+        required: true
+        default: 'https://ethan-inversiones.vercel.app'
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping sec.gov desde Vercel
+        env:
+          BYPASS: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: |
+          echo "=== Verificando acceso a sec.gov desde Vercel ==="
+          echo "URL: ${{ github.event.inputs.vercel_url }}/api/macro-rlab/edgar-ping"
+          
+          RESPONSE=$(curl -s \
+            -H "x-vercel-protection-bypass: ${BYPASS}" \
+            "${{ github.event.inputs.vercel_url }}/api/macro-rlab/edgar-ping")
+          
+          echo "Respuesta: $RESPONSE"
+          
+          # También probar con fetch() vs https.get para sec.gov directamente
+          node -e "
+          fetch('https://www.sec.gov/robots.txt', {
+            headers: {'User-Agent': 'test/1.0'}
+          }).then(r => console.log('fetch(): HTTP', r.status))
+            .catch(e => console.error('fetch() ERROR:', e.message));
+          " 2>/dev/null || echo "fetch no disponible en esta versión de Node"
