@@ -1,0 +1,95 @@
+name: ETF EDGAR Node.js Debug
+
+on:
+  workflow_dispatch:
+    inputs:
+      ticker:
+        description: 'Ticker'
+        required: true
+        default: 'FDN'
+      cik:
+        description: 'CIK del registrante'
+        required: true
+        default: '1329377'
+      accession:
+        description: 'AccessionNo (con guiones)'
+        required: true
+        default: '0000940400-26-033095'
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run Node.js XML parser debug
+        run: |
+          cat > test.mjs << 'JS'
+          const accessionNo = '${{ github.event.inputs.accession }}';
+          const cik = '${{ github.event.inputs.cik }}';
+          const ticker = '${{ github.event.inputs.ticker }}';
+          const accessionFormatted = accessionNo.replace(/-/g, '');
+
+          const indexUrl = `https://www.sec.gov/Archives/edgar/data/${cik}/${accessionFormatted}/${accessionNo}-index.htm`;
+          console.log('=== TEST EDGAR XML PARSER ===');
+          console.log('Ticker:', ticker, 'CIK:', cik);
+          console.log('AccessionNo:', accessionNo, '→', accessionFormatted);
+          console.log('Index URL:', indexUrl);
+
+          async function fetchText(url) {
+            const res = await fetch(url, {
+              headers: {
+                'User-Agent': 'Mozilla/5.0 (compatible; ethan-research/1.0; research@ethan.com)'
+              }
+            });
+            console.log(`HTTP ${res.status} for ${url}`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return res.text();
+          }
+
+          try {
+            // 1. Obtener índice
+            const indexHtml = await fetchText(indexUrl);
+            console.log('Index HTML length:', indexHtml.length);
+            
+            // Buscar XML files en índice
+            const xmlMatches = [...indexHtml.matchAll(/href="([^"]*\.xml)"/gi)];
+            console.log('XML files en índice:', xmlMatches.map(m => m[1]));
+            
+            const xmlMatch = indexHtml.match(/href="([^"]*\.xml)"/i);
+            const xmlFilename = xmlMatch ? xmlMatch[1].split('/').pop() : null;
+            console.log('xmlFilename seleccionado:', xmlFilename);
+            
+            const xmlUrl = xmlFilename
+              ? `https://www.sec.gov/Archives/edgar/data/${cik}/${accessionFormatted}/${xmlFilename}`
+              : `https://www.sec.gov/Archives/edgar/data/${cik}/${accessionFormatted}/primary_doc.xml`;
+            console.log('XML URL:', xmlUrl);
+            
+            // 2. Descargar XML
+            const xmlText = await fetchText(xmlUrl);
+            console.log('XML length:', xmlText.length);
+            console.log('XML first 300 chars:', xmlText.substring(0, 300));
+            
+            // 3. Contar invstOrSec con distintos patrones
+            const r1 = /<invstOrSec>([\s\S]*?)<\/invstOrSec>/gi;
+            let c1 = 0;
+            while (r1.exec(xmlText) !== null) c1++;
+            console.log('Regex exacto <invstOrSec>:', c1);
+            
+            const r2 = /invstOrSec/gi;
+            const c2 = (xmlText.match(r2) || []).length;
+            console.log('Busqueda simple invstOrSec:', c2);
+            
+            // 4. Ver si hay namespace en los tags
+            const nsMatch = xmlText.match(/<[a-z]+:invstOrSec/i);
+            console.log('¿Namespace en invstOrSec?:', nsMatch ? nsMatch[0] : 'NO');
+            
+            // 5. Ver el primer invstOrSec real
+            const firstMatch = xmlText.match(/invstOrSec[\s\S]*?\/invstOrSec/i);
+            if (firstMatch) {
+              console.log('Primer invstOrSec (100 chars):', firstMatch[0].substring(0, 100));
+            }
+            
+          } catch (e) {
+            console.error('ERROR:', e.message);
+          }
+          JS
+          node --experimental-vm-modules test.mjs 2>/dev/null || node test.mjs
