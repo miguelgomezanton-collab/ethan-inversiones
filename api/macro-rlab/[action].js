@@ -53,18 +53,35 @@ export default async function handler(req, res) {
 
   const action = req.query.action;
 
-  // edgar-ping: diagnóstico de acceso a sec.gov desde Vercel
+  // edgar-ping: diagnóstico de acceso a sec.gov y api.openfigi.com desde Vercel
   if (action === 'edgar-ping') {
+    const results = {};
+    // Test sec.gov
     try {
       const r = await fetch('https://www.sec.gov/robots.txt', {
         headers: { 'User-Agent': 'ETHAN-Mercados/2.0 contact@ethan-inversiones.app' },
         signal: AbortSignal.timeout(10000),
       });
       const body = await r.text();
-      return res.status(200).json({ ok: true, status: r.status, bodyLength: body.length, first100: body.substring(0, 100) });
+      results.edgar = { ok: true, status: r.status, bodyLength: body.length };
     } catch (err) {
-      return res.status(200).json({ ok: false, error: err.message });
+      results.edgar = { ok: false, error: err.message };
     }
+    // Test api.openfigi.com
+    try {
+      const r = await fetch('https://api.openfigi.com/v3/mapping', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify([{ idType: 'ID_CUSIP', idValue: '17275R102', exchCode: 'US', marketSecDes: 'Equity' }]),
+        signal: AbortSignal.timeout(10000),
+      });
+      const data = await r.json();
+      const ticker = data?.[0]?.data?.[0]?.ticker || null;
+      results.openfigi = { ok: r.ok, status: r.status, ticker, testCusip: '17275R102 (Cisco)' };
+    } catch (err) {
+      results.openfigi = { ok: false, error: err.message };
+    }
+    return res.status(200).json(results);
   }
 
   // 1. Acción desconocida → 404
