@@ -34,7 +34,7 @@ const ISHARES_CONFIG = {
   // Salud
   IBB:  { id: '239699', slug: 'ishares-nasdaq-biotechnology-etf' },   // verificado 2026-11 (bug anterior: 239458)
   IHE:  { id: '239519', slug: 'ishares-us-pharmaceuticals-etf' },     // verificado 2026-11
-  IHI:  { id: '239520', slug: 'ishares-us-medical-devices-etf' },     // verificado 2026-11
+  IHI:  { id: '239516', slug: 'ishares-us-medical-devices-etf' },     // corregido 2026-11-15 (239520 era ID incorrecto → devolvía IYR)
   IHF:  { id: '239510', slug: 'ishares-us-healthcare-providers-etf' }, // verificado 2026-11 (bug anterior: 239519)
   // Industriales / Defensa
   ITA:  { id: '239502', slug: 'ishares-us-aerospace-defense-etf' },   // verificado 2026-11 (bug anterior: 239512)
