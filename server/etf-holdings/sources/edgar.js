@@ -436,7 +436,9 @@ async function parseNportPFiling(filing, ticker, meta) {
     // Buscar archivos XML en el índice (NPORT-P suele llamarse primary_doc.xml o similar)
     const xmlMatch = indexHtml.match(/href="([^"]*\.xml)"/i);
     if (xmlMatch) {
-      xmlFilename = xmlMatch[1].split('/').pop();
+      // FIX (2026-11-15): conservar el path relativo completo (ej: xslFormNPORT-P_X01/primary_doc.xml)
+      // No usar .split('/').pop() — eso descarta subdirectorios y genera HTTP 404
+      xmlFilename = xmlMatch[1];
     }
   } catch {
     // Continuar con nombre canónico
