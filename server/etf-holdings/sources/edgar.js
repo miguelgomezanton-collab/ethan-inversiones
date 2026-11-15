@@ -433,24 +433,33 @@ async function parseNportPFiling(filing, ticker, meta) {
   try {
     const indexUrl = `https://www.sec.gov/Archives/edgar/data/${cik}/${accessionFormatted}/${accessionNo}-index.htm`;
     const indexHtml = await fetchText(indexUrl);
-    // Buscar archivos XML en el índice (NPORT-P suele llamarse primary_doc.xml o similar)
-    // Preferir la versión con estilo xslFormNPORT-P_X01 si existe, si no la raíz
-    const xmlMatchStyled = indexHtml.match(/href="([^"]*xslFormNPORT[^"]*\.xml)"/i);
-    const xmlMatchPlain  = indexHtml.match(/href="([^"]*\.xml)"/i);
-    const xmlMatch = xmlMatchStyled || xmlMatchPlain;
-    if (xmlMatch) {
-      // FIX (2026-11-15): el href puede ser una ruta absoluta del servidor (empieza con '/')
-      // ej: /Archives/edgar/data/1658645/000119312526322938/xslFormNPORT-P_X01/primary_doc.xml
-      // En ese caso, construir la URL completa directamente desde sec.gov
-      const href = xmlMatch[1];
-      xmlFilename = href.startsWith('/') ? href : href;
+    // FIX (2026-11-15): buscar primary_doc.xml en el índice HTML
+    // El href puede ser:
+    //   a) relativo simple:   primary_doc.xml
+    //   b) relativo con dir:  xslFormNPORT-P_X01/primary_doc.xml  ← EDGAR viewer (XSL) — IGNORAR
+    //   c) absoluto puro:     /Archives/edgar/data/<CIK>/<ACC>/primary_doc.xml   ← VÁLIDO
+    //   d) absoluto con dir:  /Archives/edgar/data/<CIK>/<ACC>/xslFormNPORT.../primary_doc.xml ← IGNORAR
+    //
+    // Estrategia: extraer TODOS los hrefs con primary_doc.xml, y quedarnos con el primero
+    // cuya ruta NO incluya 'xslFormNPORT' (viewer XSL que devuelve HTML, no XML puro).
+    const allXmlHrefs = [...indexHtml.matchAll(/href="([^"]*primary_doc\.xml)"/gi)]
+      .map(m => m[1])
+      .filter(href => !href.toLowerCase().includes('xslformnport'));
+    if (allXmlHrefs.length > 0) {
+      xmlFilename = allXmlHrefs[0];
+    } else {
+      // Fallback: cualquier .xml que no sea XSL viewer
+      const anyXml = indexHtml.match(/href="([^"]*\.xml)"/i);
+      if (anyXml && !anyXml[1].toLowerCase().includes('xslformnport')) {
+        xmlFilename = anyXml[1];
+      }
     }
   } catch {
     // Continuar con nombre canónico
   }
 
   // URL del XML
-  // Si xmlFilename empieza con '/', es ruta absoluta → usar sec.gov como base
+  // Si xmlFilename empieza con '/', es ruta absoluta del servidor EDGAR → usar sec.gov como base
   const xmlUrl = xmlFilename
     ? (xmlFilename.startsWith('/')
         ? `https://www.sec.gov${xmlFilename}`
