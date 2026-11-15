@@ -1,0 +1,65 @@
+name: ETF Diagnostic — 21 Failed ETFs
+
+"on":
+  workflow_dispatch: {}
+
+jobs:
+  diagnose:
+    name: Diagnose ${{ matrix.ticker }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ticker: [PBS, AIQ, IHI, PAVE, BOTZ, ESPO, FINX, IBUY, AMLP, LIT, NLR, TAN, URA, SIL, REMX, COPX, DTCR, PEJ, PSP, SOCL, KBWB]
+    steps:
+      - name: Test ${{ matrix.ticker }}
+        env:
+          TICKER: ${{ matrix.ticker }}
+          BYPASS: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+          PROD: "https://ethan-inversiones.vercel.app"
+        run: |
+          BODY=$(curl -sf \
+            -H "x-vercel-protection-bypass: ${BYPASS}" \
+            "${PROD}/api/etf-holdings?ticker=${TICKER}" 2>/dev/null)
+          
+          if [ -z "$BODY" ]; then
+            echo "❌ ${TICKER}: Sin respuesta de la API"
+            exit 1
+          fi
+          
+          HTTP_OK=$(echo "$BODY" | jq -r '.ok' 2>/dev/null)
+          SOURCE=$(echo "$BODY" | jq -r '.source // "?"' 2>/dev/null)
+          TOTAL=$(echo "$BODY" | jq -r '.totalHoldings // (.holdings | length) // 0' 2>/dev/null)
+          RESOLVED=$(echo "$BODY" | jq -r '.resolvedHoldings // "?"' 2>/dev/null)
+          FRONTEND_VALID=$(echo "$BODY" | jq -r '[.holdings[]? | select(.ticker != null and .ticker != "" and .ticker != "null")] | length' 2>/dev/null)
+          UNRESOLVED_COUNT=$(echo "$BODY" | jq -r '.unresolvedHoldings | length // 0' 2>/dev/null)
+          REF_DATE=$(echo "$BODY" | jq -r '.referenceDate // "?"' 2>/dev/null)
+          ERROR=$(echo "$BODY" | jq -r '.error // ""' 2>/dev/null)
+          
+          echo "=== ${TICKER} ==="
+          echo "  ok=${HTTP_OK}"
+          echo "  source=${SOURCE}"
+          echo "  referenceDate=${REF_DATE}"
+          echo "  totalHoldings=${TOTAL}"
+          echo "  resolvedHoldings=${RESOLVED}"
+          echo "  frontendValid=${FRONTEND_VALID}"
+          echo "  unresolvedHoldings=${UNRESOLVED_COUNT}"
+          if [ -n "$ERROR" ]; then
+            echo "  error=${ERROR}"
+          fi
+          
+          # Muestra de los primeros 3 holdings (con y sin ticker)
+          echo "  --- Muestra holdings (con ticker) ---"
+          echo "$BODY" | jq -r '[.holdings[]? | select(.ticker != null and .ticker != "" and .ticker != "null")] | .[0:3][] | "    ticker=\(.ticker) name=\(.name) w=\(.weight)"' 2>/dev/null || echo "    (ninguno)"
+          
+          echo "  --- Muestra holdings (sin ticker) ---"
+          echo "$BODY" | jq -r '[.holdings[]? | select(.ticker == null or .ticker == "" or .ticker == "null")] | .[0:3][] | "    name=\(.name) cusip=\(.cusip // "N/A")"' 2>/dev/null || echo "    (ninguno)"
+          
+          if [ "$FRONTEND_VALID" = "0" ] || [ -z "$FRONTEND_VALID" ]; then
+            echo ""
+            echo "❌ FAIL: 0 holdings válidos para el frontend"
+            exit 1
+          else
+            echo ""
+            echo "✅ OK: ${FRONTEND_VALID} holdings válidos para el frontend"
+          fi
