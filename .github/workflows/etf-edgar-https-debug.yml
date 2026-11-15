@@ -1,0 +1,85 @@
+name: ETF EDGAR HTTPS Debug (como servidor)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ticker:
+        description: 'Ticker'
+        required: true
+        default: 'FDN'
+      cik:
+        description: 'CIK'
+        required: true
+        default: '1329377'
+      accession:
+        description: 'AccessionNo'
+        required: true
+        default: '0000940400-26-033095'
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run https.get Node.js test (exactamente como el servidor)
+        run: |
+          cat > test.mjs << 'JS'
+          import https from 'https';
+          
+          const accessionNo = '${{ github.event.inputs.accession }}';
+          const cik = '${{ github.event.inputs.cik }}';
+          const accessionFormatted = accessionNo.replace(/-/g, '');
+          
+          function fetchText(url) {
+            return new Promise((resolve, reject) => {
+              const req = https.get(url, {
+                headers: {
+                  'User-Agent': 'ETHAN-Mercados/2.0 contact@ethan-inversiones.app',
+                  'Accept': 'application/xml, text/html, text/plain',
+                },
+                timeout: 20000,
+              }, (res) => {
+                console.log(`HTTP ${res.statusCode} for ${url}`);
+                if (res.statusCode === 302 || res.statusCode === 301) {
+                  const loc = res.headers.location;
+                  console.log(`Redirect → ${loc}`);
+                  return fetchText(loc).then(resolve).catch(reject);
+                }
+                if (res.statusCode !== 200) {
+                  return reject(new Error(`EDGAR fetchText HTTP ${res.statusCode} para ${url}`));
+                }
+                let body = '';
+                res.on('data', chunk => body += chunk);
+                res.on('end', () => {
+                  console.log(`Body length: ${body.length}`);
+                  console.log(`Body first 200 chars: ${body.substring(0, 200)}`);
+                  resolve(body);
+                });
+              });
+              req.on('error', reject);
+              req.on('timeout', () => { req.destroy(); reject(new Error(`timeout: ${url}`)); });
+            });
+          }
+          
+          const indexUrl = `https://www.sec.gov/Archives/edgar/data/${cik}/${accessionFormatted}/${accessionNo}-index.htm`;
+          console.log('=== https.get debug ===');
+          console.log('Index URL:', indexUrl);
+          
+          try {
+            const indexHtml = await fetchText(indexUrl);
+            const xmlMatch = indexHtml.match(/href="([^"]*\.xml)"/i);
+            const xmlFilename = xmlMatch ? xmlMatch[1].split('/').pop() : null;
+            console.log('xmlFilename:', xmlFilename);
+            
+            const xmlUrl = `https://www.sec.gov/Archives/edgar/data/${cik}/${accessionFormatted}/${xmlFilename || 'primary_doc.xml'}`;
+            console.log('XML URL:', xmlUrl);
+            
+            const xmlText = await fetchText(xmlUrl);
+            const invstRegex = /<invstOrSec>([\s\S]*?)<\/invstOrSec>/gi;
+            let count = 0;
+            while (invstRegex.exec(xmlText) !== null) count++;
+            console.log(`invstOrSec count: ${count}`);
+          } catch(e) {
+            console.error('ERROR:', e.message);
+          }
+          JS
+          node test.mjs
