@@ -1,0 +1,87 @@
+name: ETF Debug — seriesId count in XML
+
+on:
+  workflow_dispatch:
+
+jobs:
+  debug-fdn:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Analyze FDN XML structure
+        run: |
+          CIK="1329377"
+          ACC="0000940400-26-033095"
+          ACCF="${ACC//-/}"
+          URL="https://www.sec.gov/Archives/edgar/data/${CIK}/${ACCF}/primary_doc.xml"
+          
+          XML=$(curl -s "$URL" -A "ETHAN-Mercados/2.0 contact@ethan-inversiones.app")
+          echo "XML length: ${#XML}"
+          echo ""
+          
+          # Contar ocurrencias de seriesId
+          SERIES_COUNT=$(echo "$XML" | grep -c "<seriesId>" || echo "0")
+          echo "seriesId count: $SERIES_COUNT"
+          echo ""
+          
+          # Mostrar contexto alrededor de cada seriesId
+          echo "=== Contexto seriesId ==="
+          echo "$XML" | grep -o '.\{0,30\}<seriesId>.\{0,50\}</seriesId>.\{0,30\}' | head -5
+          echo ""
+          
+          # ¿Hay invstOrSecs en el XML?
+          INVST_SECS=$(echo "$XML" | grep -c "<invstOrSecs>" || echo "0")
+          echo "invstOrSecs blocks: $INVST_SECS"
+          echo ""
+          
+          # Mostrar estructura de alto nivel (primeras etiquetas)
+          echo "=== Top-level structure ==="
+          echo "$XML" | grep -oE '<[a-zA-Z][^/][^>]*>' | head -20
+          echo ""
+          
+          # Test del nuevo regex desde Node.js
+          echo "$XML" > /tmp/fdn.xml
+          
+      - name: Run Node.js regex test
+        run: |
+          cat > /tmp/test_regex.mjs << 'JSEOF'
+          import { readFileSync } from 'fs';
+          
+          const xmlText = readFileSync('/tmp/fdn.xml', 'utf8');
+          const seriesId = 'S000012479';
+          
+          const seriesIdCount = (xmlText.match(/<seriesId>/gi) || []).length;
+          console.log(`seriesIdCount: ${seriesIdCount}`);
+          console.log(`xmlText length: ${xmlText.length}`);
+          
+          let workingXml = xmlText;
+          
+          if (seriesIdCount > 1) {
+            const seriesPattern = new RegExp(
+              `<seriesId>[^<]*${seriesId}[^<]*<\\/seriesId>[\\s\\S]*?<invstOrSecs>[\\s\\S]*?<\\/invstOrSecs>`,
+              'i'
+            );
+            const seriesMatch = xmlText.match(seriesPattern);
+            console.log(`Multi-series match: ${seriesMatch ? 'YES' : 'NO'}`);
+            if (seriesMatch) {
+              workingXml = seriesMatch[0];
+              console.log(`workingXml length: ${workingXml.length}`);
+            } else {
+              console.log('NO MATCH - using full xmlText');
+            }
+          } else {
+            console.log('Single series - using full XML');
+          }
+          
+          const invstRegex = /<invstOrSec>([\s\S]*?)<\/invstOrSec>/gi;
+          let count = 0;
+          let m;
+          while ((m = invstRegex.exec(workingXml)) !== null) count++;
+          console.log(`Holdings found: ${count}`);
+          console.log(count > 0 ? '✅ PASS' : '❌ FAIL');
+          
+          // Show first few invstOrSec from full XML
+          const allInvst = xmlText.match(/<invstOrSec>/gi) || [];
+          console.log(`Total <invstOrSec> in full XML: ${allInvst.length}`);
+          JSEOF
+          
+          node /tmp/test_regex.mjs
