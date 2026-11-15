@@ -271,16 +271,18 @@ function extractPublicFields(data) {
        );
 
   return {
-    source:        data.source,
-    sourceUrl:     data.sourceUrl,
-    referenceDate: data.referenceDate,
-    fetchedAt:     data.fetchedAt,
-    totalHoldings: data.totalHoldings,
-    cashRows:      data.cashRows,
-    totalWeight:   data.totalWeight,
+    source:              data.source,
+    sourceUrl:           data.sourceUrl,
+    referenceDate:       data.referenceDate,
+    fetchedAt:           data.fetchedAt,
+    totalHoldings:       data.totalHoldings,
+    resolvedHoldings:    data.resolvedHoldings,     // con ticker → analizables por ETHAN
+    unresolvedHoldings:  data.unresolvedHoldings,   // sin ticker → pendientes (internacionales/bonds)
+    cashRows:            data.cashRows,
+    totalWeight:         data.totalWeight,
     integrityOk,
     integrityNote,
-    holdings:      data.holdings,
+    holdings:            data.holdings,
   };
 }
 

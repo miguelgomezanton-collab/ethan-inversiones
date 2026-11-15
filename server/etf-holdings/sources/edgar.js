@@ -55,6 +55,87 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import https from 'https';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import { initializeApp, getApps, cert } from 'firebase-admin/app';
+
+// ── Caché Firestore CUSIP→ticker ───────────────────────────────────────────────
+// Colección: cusip_ticker_cache / Documento: {cusip}
+// Evita consultas repetidas a OpenFIGI para los mismos CUSIPs.
+// TTL: 90 días (los tickers de acciones domésticas US son muy estables).
+const COL_CUSIP = 'cusip_ticker_cache';
+const CUSIP_TTL_MS = 90 * 24 * 60 * 60 * 1000; // 90 días
+
+function getDB() {
+  if (!getApps().length) {
+    initializeApp({
+      credential: cert({
+        projectId:   process.env.FIREBASE_ADMIN_PROJECT_ID,
+        clientEmail: process.env.FIREBASE_ADMIN_CLIENT_EMAIL,
+        privateKey:  process.env.FIREBASE_ADMIN_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+      }),
+    });
+  }
+  return getFirestore();
+}
+
+/**
+ * Lee el caché de CUSIP→ticker desde Firestore.
+ * @param {string[]} cusips
+ * @returns {Promise<Map<string,string>>} cusip → ticker
+ */
+async function getCachedCusips(cusips) {
+  const result = new Map();
+  if (!cusips.length) return result;
+  try {
+    const db  = getDB();
+    const col = db.collection(COL_CUSIP);
+    // Firestore permite hasta 30 docs en getAll
+    const BATCH = 30;
+    for (let i = 0; i < cusips.length; i += BATCH) {
+      const slice = cusips.slice(i, i + BATCH);
+      const refs  = slice.map(c => col.doc(c));
+      const snaps = await db.getAll(...refs);
+      for (const snap of snaps) {
+        if (!snap.exists) continue;
+        const data = snap.data();
+        const age  = Date.now() - (data.cachedAt || 0);
+        if (age < CUSIP_TTL_MS && data.ticker) {
+          result.set(snap.id, data.ticker);
+        }
+      }
+    }
+    if (result.size > 0) {
+      console.log(`[edgar/cusip-cache] ${result.size}/${cusips.length} CUSIPs resueltos desde caché Firestore`);
+    }
+  } catch (err) {
+    console.warn(`[edgar/cusip-cache] Error leyendo caché: ${err.message} — continuando sin caché`);
+  }
+  return result;
+}
+
+/**
+ * Guarda resoluciones CUSIP→ticker en Firestore.
+ * @param {Map<string,string>} cusipToTicker
+ */
+async function setCachedCusips(cusipToTicker) {
+  if (!cusipToTicker.size) return;
+  try {
+    const db    = getDB();
+    const batch = db.batch();
+    for (const [cusip, ticker] of cusipToTicker) {
+      const ref = db.collection(COL_CUSIP).doc(cusip);
+      batch.set(ref, {
+        ticker,
+        cachedAt:    Date.now(),
+        updatedAt:   FieldValue.serverTimestamp(),
+      }, { merge: true });
+    }
+    await batch.commit();
+    console.log(`[edgar/cusip-cache] ${cusipToTicker.size} CUSIPs guardados en caché Firestore`);
+  } catch (err) {
+    console.warn(`[edgar/cusip-cache] Error guardando caché: ${err.message}`);
+  }
+}
 
 // Mapa completo: ticker → { cik, seriesId?, entityName }
 // CIKs verificados contra SEC EDGAR (noviembre 2026)
@@ -426,36 +507,57 @@ async function parseNportXml(xmlText, ticker, periodOfReport, entityName, access
     throw new Error(`EDGAR: no se encontraron posiciones en el XML para ${ticker} (accession: ${accessionNo})`);
   }
 
-  // ── Resolver tickers faltantes vía OpenFIGI ──────────────────────────────
-  // Holdings sin ticker pero con CUSIP válido se envían a OpenFIGI para resolución.
-  // CUSIP US válido: 9 caracteres alfanuméricos, los 2 primeros dígitos de país '0'-'9'
-  // (acciones domésticas US). CUSIPs de cash/collateral suelen ser '000000000'.
+  // ── Resolver tickers faltantes vía caché Firestore + OpenFIGI ──────────────
+  // Holdings sin ticker pero con CUSIP válido se resuelven en dos etapas:
+  //   1. Caché Firestore (COL_CUSIP) → resolución instantánea, sin coste de API
+  //   2. OpenFIGI para los CUSIPs no cacheados → guarda resultado en caché
+  //
+  // Holdings sin CUSIP US válido (internacionales, bonds, cash) quedan con
+  // ticker:null y se contabilizan en unresolvedHoldings. NO se eliminan.
   const holdings = await resolveTickersViaOpenFIGI(rawHoldings);
 
   const effectiveDate = periodOfReport || 'desconocida';
   const ageWarning = buildAgeWarning(effectiveDate);
   const totalWeight = holdings.reduce((s, h) => s + h.weight, 0);
 
-  // Contar cuántos tickers quedaron sin resolver (para logging)
-  const resolved   = holdings.filter(h => h.ticker).length;
-  const unresolved = holdings.length - resolved;
-  if (unresolved > 0) {
-    console.warn(`[edgar] ${ticker}: ${unresolved}/${holdings.length} holdings sin ticker tras OpenFIGI (internacionales/cash)`);
+  // ── Separar holdings con y sin ticker para contabilidad transparente ──────
+  // Los holdings sin ticker permanecen en el array completo para trazabilidad.
+  // El frontend filtrará los que no pueda analizar; aquí los contabilizamos.
+  const resolvedHoldings   = holdings.filter(h => h.ticker);
+  const unresolvedHoldings = holdings.filter(h => !h.ticker).map(h => ({
+    name:   h.name,
+    weight: h.weight,
+    cusip:  h.cusip  || null,
+    isin:   h.isin   || null,
+    reason: h.cusip && !isValidUSCusip(h.cusip)
+      ? 'CUSIP no-US (internacional/bond)'
+      : !h.cusip
+        ? 'Sin identificador CUSIP'
+        : 'CUSIP no resuelto por OpenFIGI',
+  }));
+
+  if (unresolvedHoldings.length > 0) {
+    console.warn(
+      `[edgar] ${ticker}: ${unresolvedHoldings.length}/${holdings.length} holdings sin ticker ` +
+      `(internacionales/cash/no resueltos) — se contabilizan como pendientes`
+    );
   }
 
   return {
     ticker,
-    holdings,
-    totalWeight:   Math.round(totalWeight * 100) / 100,
-    totalHoldings: holdings.length,          // ← corregido (era holdingsCount)
-    source:        'SEC EDGAR NPORT-P',
-    sourceUrl:     `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${meta.cik}&type=NPORT-P&dateb=&owner=include&count=10`,
-    isHistorical:  true,
-    referenceDate: effectiveDate,            // ← corregido (era effectiveDate)
-    dataAgeWarning: ageWarning,
+    holdings,                                // Array completo — el frontend filtra por ticker
+    totalWeight:          Math.round(totalWeight * 100) / 100,
+    totalHoldings:        holdings.length,          // Total posiciones en el NPORT-P
+    resolvedHoldings:     resolvedHoldings.length,  // Con ticker → analizables por ETHAN
+    unresolvedHoldings,                             // Sin ticker → pendientes de resolución
+    source:               'SEC EDGAR NPORT-P',
+    sourceUrl:            `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${meta.cik}&type=NPORT-P&dateb=&owner=include&count=10`,
+    isHistorical:         true,
+    referenceDate:        effectiveDate,
+    dataAgeWarning:       ageWarning,
     entityName,
     accessionNo,
-    seriesId: meta.seriesId || null,
+    seriesId:             meta.seriesId || null,
   };
 }
 
@@ -475,7 +577,7 @@ async function parseNportXml(xmlText, ticker, periodOfReport, entityName, access
  * @returns {Promise<Array>}   — holdings con tickers rellenados donde fue posible
  */
 async function resolveTickersViaOpenFIGI(rawHoldings) {
-  // Separar holdings con y sin ticker
+  // Holdings que necesitan resolución: sin ticker, con CUSIP US válido
   const needsResolution = rawHoldings
     .map((h, idx) => ({ h, idx }))
     .filter(({ h }) => !h.ticker && isValidUSCusip(h.cusip));
@@ -484,60 +586,69 @@ async function resolveTickersViaOpenFIGI(rawHoldings) {
     return rawHoldings;
   }
 
-  console.log(`[edgar/openfigi] Resolviendo ${needsResolution.length} CUSIPs vía OpenFIGI...`);
+  // Deduplicar CUSIPs (un CUSIP puede aparecer varias veces en el portfolio)
+  const uniqueCusips = [...new Set(needsResolution.map(({ h }) => h.cusip))];
 
-  // Mapear CUSIP → array de índices (puede haber duplicados en el portfolio)
-  const cusipToIndices = {};
-  for (const { h, idx } of needsResolution) {
-    if (!cusipToIndices[h.cusip]) cusipToIndices[h.cusip] = [];
-    cusipToIndices[h.cusip].push(idx);
-  }
+  // ── Etapa 1: Caché Firestore ───────────────────────────────────────────────
+  const cachedMap = await getCachedCusips(uniqueCusips);
+  const stillNeeded = uniqueCusips.filter(c => !cachedMap.has(c));
 
-  const uniqueCusips = Object.keys(cusipToIndices);
-  const cusipToTicker = {};
+  // ── Etapa 2: OpenFIGI para CUSIPs no cacheados ────────────────────────────
+  const freshMap = new Map();
+  if (stillNeeded.length > 0) {
+    console.log(`[edgar/openfigi] Resolviendo ${stillNeeded.length} CUSIPs vía OpenFIGI (${cachedMap.size} ya en caché)...`);
 
-  // OpenFIGI: máx 10 items por request sin API key
-  const BATCH_SIZE = 10;
-  for (let i = 0; i < uniqueCusips.length; i += BATCH_SIZE) {
-    const batch = uniqueCusips.slice(i, i + BATCH_SIZE);
-    const payload = batch.map(c => ({
-      idType:    'ID_CUSIP',
-      idValue:   c,
-      exchCode:  'US',      // solo acciones US
-      marketSecDes: 'Equity', // solo equity
-    }));
+    // OpenFIGI: máx 10 items por request sin API key (25 con key)
+    const BATCH_SIZE = process.env.OPENFIGI_API_KEY ? 25 : 10;
+    for (let i = 0; i < stillNeeded.length; i += BATCH_SIZE) {
+      const batch = stillNeeded.slice(i, i + BATCH_SIZE);
+      const payload = batch.map(c => ({
+        idType:       'ID_CUSIP',
+        idValue:      c,
+        exchCode:     'US',
+        marketSecDes: 'Equity',
+      }));
 
-    try {
-      const results = await fetchOpenFIGI(payload);
-      for (let j = 0; j < batch.length; j++) {
-        const cusip = batch[j];
-        const result = results[j];
-        if (result?.data?.length > 0) {
-          // Preferir Common Stock sobre otros tipos
-          const best = result.data.find(r => r.securityType === 'Common Stock') || result.data[0];
-          if (best?.ticker) {
-            cusipToTicker[cusip] = best.ticker.toUpperCase();
+      try {
+        const results = await fetchOpenFIGI(payload);
+        for (let j = 0; j < batch.length; j++) {
+          const cusip  = batch[j];
+          const result = results[j];
+          if (result?.data?.length > 0) {
+            const best = result.data.find(r => r.securityType === 'Common Stock') || result.data[0];
+            if (best?.ticker) {
+              freshMap.set(cusip, best.ticker.toUpperCase());
+            }
           }
         }
+        // Pausa entre batches para respetar rate limit (~1 req/seg sin key)
+        if (i + BATCH_SIZE < stillNeeded.length) {
+          await new Promise(r => setTimeout(r, process.env.OPENFIGI_API_KEY ? 200 : 1100));
+        }
+      } catch (err) {
+        console.warn(`[edgar/openfigi] batch ${Math.floor(i/BATCH_SIZE) + 1} falló: ${err.message} — continuando`);
       }
-      // Pausa entre batches para respetar rate limit (~1 req/seg)
-      if (i + BATCH_SIZE < uniqueCusips.length) {
-        await new Promise(r => setTimeout(r, 1100));
-      }
-    } catch (err) {
-      console.warn(`[edgar/openfigi] batch ${i/BATCH_SIZE + 1} falló: ${err.message} — continuando sin resolver ese batch`);
     }
+
+    // Persistir nuevas resoluciones en Firestore
+    if (freshMap.size > 0) {
+      await setCachedCusips(freshMap);
+    }
+    console.log(`[edgar/openfigi] ${freshMap.size}/${stillNeeded.length} CUSIPs nuevos resueltos`);
   }
 
-  // Aplicar resolución a los holdings
-  const resolved = rawHoldings.map((h, idx) => {
-    if (h.ticker) return h; // ya tenía ticker
-    if (!h.cusip || !cusipToTicker[h.cusip]) return h; // no resolvible
-    return { ...h, ticker: cusipToTicker[h.cusip] };
+  // ── Combinar caché + fresh ─────────────────────────────────────────────────
+  const allResolved = new Map([...cachedMap, ...freshMap]);
+
+  // Aplicar a los holdings
+  const resolved = rawHoldings.map(h => {
+    if (h.ticker) return h;
+    if (!h.cusip || !allResolved.has(h.cusip)) return h;
+    return { ...h, ticker: allResolved.get(h.cusip) };
   });
 
-  const nResolved = needsResolution.filter(({ idx }) => resolved[idx].ticker).length;
-  console.log(`[edgar/openfigi] ${nResolved}/${needsResolution.length} CUSIPs resueltos a tickers`);
+  const nResolved = resolved.filter((h, i) => !rawHoldings[i].ticker && h.ticker).length;
+  console.log(`[edgar/openfigi] Total resueltos: ${nResolved}/${needsResolution.length} (${cachedMap.size} caché + ${freshMap.size} nuevos)`);
 
   return resolved;
 }

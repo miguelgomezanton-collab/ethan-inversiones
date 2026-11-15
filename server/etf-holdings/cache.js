@@ -80,7 +80,8 @@ export async function getCached(ticker) {
 export async function setCached(ticker, holdingsResult) {
   const {
     source, sourceUrl, referenceDate,
-    totalHoldings, cashRows, totalWeight, holdings,
+    totalHoldings, resolvedHoldings, unresolvedHoldings,
+    cashRows, totalWeight, holdings,
   } = holdingsResult;
 
   // Calcular integridad (Condición #7)
@@ -88,13 +89,15 @@ export async function setCached(ticker, holdingsResult) {
   const integrityNote = buildIntegrityNote(totalHoldings, cashRows, totalWeight, source);
 
   const doc = {
-    ticker:        ticker.toUpperCase(),
+    ticker:             ticker.toUpperCase(),
     source,
     sourceUrl,
     referenceDate,
-    downloadedAt:  FieldValue.serverTimestamp(),
-    fetchedAt:     Date.now(),
+    downloadedAt:       FieldValue.serverTimestamp(),
+    fetchedAt:          Date.now(),
     totalHoldings,
+    resolvedHoldings:   resolvedHoldings   ?? null,
+    unresolvedHoldings: unresolvedHoldings ?? null,
     cashRows,
     totalWeight,
     integrityOk,
