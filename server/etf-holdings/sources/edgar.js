@@ -517,10 +517,13 @@ async function parseNportXml(xmlText, ticker, periodOfReport, entityName, access
   }
 
   if (rawHoldings.length === 0) {
-    // Log de diagnóstico: contar invstOrSec en bruto para detectar problema de regex vs XML vacío
+    // Diagnóstico: contar invstOrSec en bruto para detectar problema de regex vs XML vacío
     const invstCount = (xmlText.match(/invstOrSec/gi) || []).length;
-    console.error(`[edgar] ${ticker}: 0 holdings parseados. invstOrSec en XML: ${invstCount}. XML length: ${xmlText.length}. Accession: ${accessionNo}`);
-    throw new Error(`EDGAR: no se encontraron posiciones en el XML para ${ticker} (accession: ${accessionNo})`);
+    const xmlLen = xmlText.length;
+    const xmlFirst60 = xmlText.substring(0, 60).replace(/[\n\r]/g, ' ');
+    console.error(`[edgar] ${ticker}: 0 holdings. invstOrSec raw: ${invstCount}. xmlLen: ${xmlLen}. accession: ${accessionNo}. xmlStart: ${xmlFirst60}`);
+    // Incluir diagnóstico en el mensaje de error para verlo en la respuesta HTTP
+    throw new Error(`EDGAR: no se encontraron posiciones en el XML para ${ticker} (accession: ${accessionNo}, xmlLen: ${xmlLen}, invstOrSec: ${invstCount})`);
   }
 
   // ── Resolver tickers faltantes vía caché Firestore + OpenFIGI ──────────────
