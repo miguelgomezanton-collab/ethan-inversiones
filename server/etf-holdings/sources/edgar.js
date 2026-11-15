@@ -293,25 +293,36 @@ async function findLatestNportP(ticker, meta) {
       // Búsqueda EFTS: si tenemos seriesId, buscarlo directamente para evitar
       // cruces con otras series del mismo trust (crítico para Invesco Trust I/II)
       const query = seriesId ? `%22${seriesId}%22` : `%22${ticker}%22`;
-      const eftsUrl = `https://efts.sec.gov/LATEST/search-index?q=${query}&forms=NPORT-P&dateRange=custom&startdt=${startdt}&entity=${cik}&_source=period_of_report,file_date,accession_no,entity_name,series_id`;
+      // NOTA: El campo _source.accession_no NO existe en la API EFTS de SEC EDGAR.
+      // El accessionNo está en:
+      //   - _source.adsh  (formato: 0001234567-YY-NNNNNN)
+      //   - _id           (formato: 0001234567-YY-NNNNNN:primary_doc.xml)
+      // Solicitamos 'adsh' en _source para obtenerlo directamente.
+      // También solicitamos 'period_ending' (el campo correcto para la fecha del periodo).
+      const eftsUrl = `https://efts.sec.gov/LATEST/search-index?q=${query}&forms=NPORT-P&dateRange=custom&startdt=${startdt}&entity=${cik}&_source=adsh,period_ending,file_date,display_names`;
 
       const eftsData = await fetchJson(eftsUrl);
 
       if (eftsData?.hits?.hits?.length > 0) {
+        // Extraer accessionNo desde _source.adsh o desde _id (antes del ":")
         const hits = eftsData.hits.hits
-          .filter(h => h._source?.accession_no)
+          .map(h => ({
+            ...h,
+            _accessionNo: h._source?.adsh || (h._id ? h._id.split(':')[0] : null),
+          }))
+          .filter(h => h._accessionNo)
           .sort((a, b) => {
-            const da = a._source?.period_of_report || a._source?.file_date || '';
-            const db = b._source?.period_of_report || b._source?.file_date || '';
+            const da = a._source?.period_ending || a._source?.file_date || '';
+            const db = b._source?.period_ending || b._source?.file_date || '';
             return db.localeCompare(da);
           });
 
         if (hits.length > 0) {
-          const hit = hits[0]._source;
+          const hit = hits[0];
           return {
-            accessionNo:    hit.accession_no,
-            periodOfReport: hit.period_of_report || hit.file_date,
-            entityName:     hit.entity_name || meta.name,
+            accessionNo:    hit._accessionNo,
+            periodOfReport: hit._source?.period_ending || hit._source?.file_date,
+            entityName:     (hit._source?.display_names?.[0] || meta.name),
             cik,
             seriesId,
             source: 'efts',
