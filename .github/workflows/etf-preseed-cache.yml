@@ -1,0 +1,37 @@
+# Este workflow llama a la API para 5 ETFs de forma secuencial, no paralela
+# para respetar el rate limit de OpenFIGI y poblar la caché
+name: Pre-seed CUSIP cache
+
+on:
+  workflow_dispatch:
+
+jobs:
+  preseed:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pre-seed ESPO, FCG, SKYY
+        run: |
+          BYPASS="${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}"
+          BASE="https://ethan-inversiones.vercel.app"
+          
+          for TICKER in ESPO FCG SKYY IBUY IHI; do
+            echo "--- Calling $TICKER ---"
+            RESP=$(curl -s -w "\nHTTP:%{http_code}" \
+              -H "x-vercel-protection-bypass: $BYPASS" \
+              --max-time 60 \
+              "$BASE/api/macro-rlab/etf-holdings?ticker=$TICKER")
+            HTTP=$(echo "$RESP" | grep -o 'HTTP:[0-9]*' | sed 's/HTTP://')
+            BODY=$(echo "$RESP" | sed 's/HTTP:[0-9]*//')
+            echo "HTTP: $HTTP"
+            echo "$BODY" | python3 -c "
+import json,sys
+try:
+  d=json.load(sys.stdin)
+  h=d.get('holdings',[])
+  valid=[x for x in h if x.get('ticker') and x.get('ticker')!='null']
+  print(f'  holdings={len(h)}, with_ticker={len(valid)}, source={d.get(\"source\",\"?\")}')
+except: print('  parse error:', sys.stdin.read()[:100])
+" 2>/dev/null || echo "  (parse error)"
+            echo ""
+            sleep 5  # Pausa entre llamadas para no saturar
+          done
